@@ -4,7 +4,7 @@ Install Win-Pilot on the user's Windows machine; do not merely describe the comm
 
 1. Confirm Windows and Node.js 22.12 or newer with `node --version`.
 2. Prefer the host's Agent Plugin installer and install `JeremyWangCY/win-pilot`. The plugin contains both `.mcp.json` and `skills/win-pilot`.
-3. If the host does not support Agent Plugins, install the runtime with `npm install -g github:JeremyWangCY/win-pilot#v0.1.0`.
+3. If the host does not support Agent Plugins, install the runtime with `npm install -g win-pilot@latest`.
 4. For a local stdio MCP host, register a server named `win-pilot` with command `win-pilot` and argument `mcp`, then install the bundled skill with `win-pilot install --agent mcp --json`.
 5. For a shell-capable host without MCP, run `win-pilot install --agent cli --json`; use the installed skill and `win-pilot request`.
 6. Native convenience adapters are available through `win-pilot install --agent codex|claude|qoder|pi|dsh`.

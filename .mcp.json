@@ -2,7 +2,7 @@
   "mcpServers": {
     "win-pilot": {
       "command": "npx",
-      "args": ["-y", "github:JeremyWangCY/win-pilot#v0.1.0", "mcp"]
+      "args": ["-y", "win-pilot@0.1.0", "mcp"]
     }
   }
 }
