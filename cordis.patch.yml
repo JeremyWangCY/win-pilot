@@ -1,0 +1,5 @@
+# Win-Pilot bundle patch: one host row over the web profile.
+# `id` is the stable DSH loader entry identity; `name` is the npm bundle.
+- insert:
+    - id: win-pilot
+      name: win-pilot

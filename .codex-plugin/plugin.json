@@ -1,0 +1,29 @@
+{
+  "name": "win-pilot",
+  "version": "0.1.0",
+  "description": "Windows Computer Use for agents through one MCP tool and a shared operating skill.",
+  "author": {
+    "name": "JeremyWangCY",
+    "url": "https://github.com/JeremyWangCY"
+  },
+  "homepage": "https://github.com/JeremyWangCY/win-pilot",
+  "repository": "https://github.com/JeremyWangCY/win-pilot",
+  "license": "MIT",
+  "keywords": ["windows", "computer-use", "mcp", "agent-skill"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Win-Pilot",
+    "shortDescription": "Computer Use for Windows agents",
+    "longDescription": "Operate Windows applications and isolated Chromium sessions through one observable, recoverable computer interface.",
+    "developerName": "JeremyWangCY",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/JeremyWangCY/win-pilot",
+    "defaultPrompt": [
+      "List the open Windows applications without changing anything.",
+      "Open an isolated browser and inspect the requested page."
+    ],
+    "brandColor": "#2563EB"
+  }
+}
