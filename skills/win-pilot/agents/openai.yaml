@@ -1,0 +1,7 @@
+interface:
+  display_name: "Win-Pilot"
+  short_description: "Control Windows apps and isolated Chromium sessions"
+  brand_color: "#2563EB"
+  default_prompt: "Use $win-pilot to inspect and operate the requested Windows application."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+node_modules/
+*.log
+*.tmp
+native/**/bin/
+native/**/obj/
+artifacts/
+lib/wgc/*.pdb
