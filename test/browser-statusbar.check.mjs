@@ -4,9 +4,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { defineComputerTool, stopDaemon } from '../lib/index.js'
 
-const statePath = path.join(os.tmpdir(), 'dsh-cua', 'status.state')
+const statePath = path.join(os.tmpdir(), 'win-pilot', 'status.state')
 try { fs.unlinkSync(statePath) } catch { }
-const endpoint = 'ws://127.0.0.1:9/devtools/browser/pc-pilot-status-test'
+const endpoint = 'ws://127.0.0.1:9/devtools/browser/win-pilot-status-test'
 const tool = defineComputerTool(value => value, {})
 try {
   await tool.execute({ action: 'browser_state', browser_endpoint: endpoint })

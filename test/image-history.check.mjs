@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { defineComputerTool, prunePcPilotImageHistory, suppressDuplicatePcPilotScreenshot } from '../lib/index.js'
+import { defineComputerTool, pruneWinPilotImageHistory, suppressDuplicateWinPilotScreenshot } from '../lib/index.js'
 
 const imageBlock = (id) => ({
   type: 'image',
@@ -75,7 +75,7 @@ const events = [
 ]
 const session = new FakeSession(events, [1, 3, 5, 7])
 
-const first = prunePcPilotImageHistory(session, 2)
+const first = pruneWinPilotImageHistory(session, 2)
 assert.equal(first.pruned, 1)
 assert.equal(first.remaining, 2)
 assert.equal(first.replacements[0].originalSeq, 1)
@@ -85,18 +85,18 @@ assert.equal(replacement.data.message.id, 'msg-pc-1')
 assert.equal(replacement.data.message.source.callId, 'pc-1')
 assert.equal(replacement.data.message.content[0].toolCallId, 'pc-1')
 assert.equal(replacement.data.message.content[0].content.some((b) => b.type === 'image'), false)
-assert.match(replacement.data.message.content[0].content.at(-1).text, /Older PC-Pilot screenshot omitted/)
+assert.match(replacement.data.message.content[0].content.at(-1).text, /Older Win-Pilot screenshot omitted/)
 
-// A non-PC-Pilot tool image must never be touched.
+// A non-Win-Pilot tool image must never be touched.
 assert.equal(session.eventAt(7).data.message.content[0].content.some((b) => b.type === 'image'), true)
 
-const second = prunePcPilotImageHistory(session, 1)
+const second = pruneWinPilotImageHistory(session, 1)
 assert.equal(second.pruned, 1)
 assert.equal(second.remaining, 1)
 assert.equal(second.replacements[0].originalSeq, 3)
 
 // Missing session capabilities are a no-op rather than a tool failure.
-assert.deepEqual(prunePcPilotImageHistory(null, 2), { pruned: 0, remaining: 0 })
+assert.deepEqual(pruneWinPilotImageHistory(null, 2), { pruned: 0, remaining: 0 })
 
 // Attachment metadata is internal; the model receives the actual image block once.
 const tool = defineComputerTool((definition) => definition, {})
@@ -112,7 +112,7 @@ const duplicateSession = new FakeSession([
   toolCall(0, 'same-1'),
   toolResult(1, 'same-1'),
 ], [1])
-const duplicate = suppressDuplicatePcPilotScreenshot({
+const duplicate = suppressDuplicateWinPilotScreenshot({
   ok: true,
   screenshot_id: 'fresh-shot',
   screenshot_attachment: { attachmentId: 'img-same-1', mediaType: 'image/png', bytes: 100, width: 20, height: 10 },
@@ -121,7 +121,7 @@ assert.equal(duplicate.screenshot_attachment, undefined)
 assert.equal(duplicate.visual_unchanged_from_previous, true)
 assert.equal(duplicate.screenshot_id, 'fresh-shot')
 
-const changed = suppressDuplicatePcPilotScreenshot({
+const changed = suppressDuplicateWinPilotScreenshot({
   ok: true,
   screenshot_attachment: { attachmentId: 'different', mediaType: 'image/png', bytes: 100, width: 20, height: 10 },
 }, duplicateSession)

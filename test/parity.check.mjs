@@ -7,7 +7,7 @@ import { defineComputerTool, stopDaemon } from '../lib/index.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// 1. Schema assertions: canonical Windows Computer Use plus PC-Pilot extensions.
+// 1. Schema assertions: canonical Windows Computer Use plus Win-Pilot extensions.
 const tool = defineComputerTool((def) => def)
 assert.equal(tool.name, 'computer')
 const params = tool.parameters.properties
@@ -16,7 +16,7 @@ const expectedActions = [
   // Windows Computer Use desktop actions
   'list_apps', 'list_windows', 'get_window', 'launch_app', 'get_window_state',
   'click', 'press_key', 'type_text', 'scroll', 'drag', 'set_value', 'perform_secondary_action', 'activate_window', 'minimize_window',
-  // PC-Pilot extensions
+  // Win-Pilot extensions
   'read_clipboard', 'write_clipboard', 'mouse_down', 'mouse_up', 'hold_key', 'list_displays',
   'select_text', 'screenshot', 'zoom', 'switch_display', 'cursor_position', 'wait', 'close_window',
 ]
@@ -98,7 +98,7 @@ assert.ok(waitRes, 'wait must return a result object')
 assert.equal(waitRes.ok, true, `wait should succeed: ${JSON.stringify(waitRes)}`)
 assert.equal(waitRes.action, 'wait')
 
-// screenshot: full-screen capture saved to %TEMP%\dsh-cua\disp-*.png
+// screenshot: full-screen capture saved to %TEMP%\win-pilot\disp-*.png
 const shotRes = await tool.execute({ action: 'screenshot' })
 assert.ok(shotRes, 'screenshot must return a result object')
 assert.equal(shotRes.ok, true, `screenshot should succeed: ${JSON.stringify(shotRes)}`)
@@ -142,7 +142,7 @@ try {
   fixturePid = Number.isSafeInteger(launched.pid) ? launched.pid : 0
   for (let attempt = 0; attempt < 20; attempt++) {
     const windows = await tool.execute({ action: 'list_windows', app: String(fixturePid) })
-    const fixture = windows.windows?.find((window) => window.title === 'PC-Pilot native test fixture')
+    const fixture = windows.windows?.find((window) => window.title === 'Win-Pilot native test fixture')
     if (fixture) {
       const candidate = await tool.execute({ action: 'get_window_state', app: String(fixturePid), hwnd: fixture.hwnd, screenshot: true, include_text: true, dispatch: 'foreground' })
       if (candidate.ok && candidate.elements?.length > 0 && candidate.screenshot?.path) {

@@ -4,8 +4,8 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>dsh-pc-pilot-wgc</AssemblyName>
-    <RootNamespace>DshPcPilotWgc</RootNamespace>
+    <AssemblyName>win-pilot-wgc</AssemblyName>
+    <RootNamespace>WinPilotWgc</RootNamespace>
     <SupportedOSPlatformVersion>10.0.18362.0</SupportedOSPlatformVersion>
   </PropertyGroup>
   <ItemGroup>

@@ -1,7 +1,7 @@
-# PC-Pilot smoke test (read-only). Prefer pwsh 7; PS 5.1 works because this file is ASCII-only.
+# Win-Pilot smoke test (read-only). Prefer pwsh 7; PS 5.1 works because this file is ASCII-only.
 # Usage: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-test.ps1
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-$helper = Join-Path $here "..\lib\pc-pilot-helper.ps1"
+$helper = Join-Path $here "..\lib\win-pilot-helper.ps1"
 $ps = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 function Get-HelperJson($lines, [string]$step) {

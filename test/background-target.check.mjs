@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-const helper = fileURLToPath(new URL('../lib/pc-pilot-helper.ps1', import.meta.url))
+const helper = fileURLToPath(new URL('../lib/win-pilot-helper.ps1', import.meta.url))
 // Load real function ASTs only: no daemon, desktop initialization or user input.
 const ps = String.raw`
 $ErrorActionPreference='Stop'

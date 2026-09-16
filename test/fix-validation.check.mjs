@@ -7,7 +7,7 @@ import { defineComputerTool, stopDaemon } from '../lib/index.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
-const helperPath = path.join(rootDir, 'lib', 'pc-pilot-helper.ps1')
+const helperPath = path.join(rootDir, 'lib', 'win-pilot-helper.ps1')
 const overlayPath = path.join(rootDir, 'lib', 'virtual-cursor-overlay.ps1')
 const helperSrc = fs.readFileSync(helperPath, 'utf8')
 const overlaySrc = fs.readFileSync(overlayPath, 'utf8')

@@ -7,16 +7,16 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
 
-const helperPath = path.join(rootDir, 'lib', 'pc-pilot-helper.ps1')
+const helperPath = path.join(rootDir, 'lib', 'win-pilot-helper.ps1')
 const overlayPath = path.join(rootDir, 'lib', 'virtual-cursor-overlay.ps1')
 
-assert.ok(fs.existsSync(helperPath), 'pc-pilot-helper.ps1 exists')
+assert.ok(fs.existsSync(helperPath), 'win-pilot-helper.ps1 exists')
 assert.ok(fs.existsSync(overlayPath), 'virtual-cursor-overlay.ps1 exists')
 
 const helperContent = fs.readFileSync(helperPath, 'utf8')
 const overlayContent = fs.readFileSync(overlayPath, 'utf8')
 
-// 1. DPI Awareness in pc-pilot-helper.ps1
+// 1. DPI Awareness in win-pilot-helper.ps1
 assert.ok(
   helperContent.includes('SetProcessDpiAwarenessContext((IntPtr)(-4))'),
   'helper should call SetProcessDpiAwarenessContext((IntPtr)(-4))'
@@ -30,7 +30,7 @@ assert.ok(
   'helper should invoke InitDpiAwareness at startup'
 )
 
-// 2. Win32 SendMessage Hang Protection & Unicode in pc-pilot-helper.ps1
+// 2. Win32 SendMessage Hang Protection & Unicode in win-pilot-helper.ps1
 assert.match(
   helperContent,
   /\[DllImport\("user32\.dll",\s*CharSet\s*=\s*CharSet\.Unicode\)\].*?SendMessage\(/s,
@@ -57,7 +57,7 @@ assert.match(
   'Send-BackgroundKey must use SendMessageTimeout with 3000ms timeout'
 )
 
-// 3. Target Window Search Escaping in pc-pilot-helper.ps1
+// 3. Target Window Search Escaping in win-pilot-helper.ps1
 assert.ok(
   helperContent.includes('.IndexOf($App, [System.StringComparison]::OrdinalIgnoreCase) -ge 0'),
   'Resolve-TargetWindow must use IndexOf with OrdinalIgnoreCase instead of -like wildcard'
@@ -85,7 +85,7 @@ assert.ok(helperContent.includes('$script:windowBackgroundCapabilities'), 'helpe
 assert.match(helperContent, /function\s+Resolve-BackgroundPattern/, 'helper must centralize cached UIA pattern resolution')
 assert.match(helperContent, /capability_cache_update/, 'unsupported background paths must be remembered instead of reprobed every action')
 
-// 5. Dark Mode / Black Screenshot Detection in pc-pilot-helper.ps1
+// 5. Dark Mode / Black Screenshot Detection in win-pilot-helper.ps1
 assert.ok(
   helperContent.includes('$w * 0.25') && helperContent.includes('$w * 0.75'),
   'Do-AppState must sample quadrant points (25% and 75%)'
@@ -103,7 +103,7 @@ assert.match(
   'Do-AppState must prefer the optional Windows Graphics Capture HWND bridge'
 )
 assert.ok(
-  fs.existsSync(path.join(rootDir, 'lib', 'wgc', 'dsh-pc-pilot-wgc.exe')),
+  fs.existsSync(path.join(rootDir, 'lib', 'wgc', 'win-pilot-wgc.exe')),
   'the packaged WGC bridge executable must be present'
 )
 assert.match(
@@ -314,8 +314,8 @@ assert.doesNotMatch(
 )
 assert.match(
   helperContent,
-  /catch\s*\{[\s\S]*?\$invalidReply\s*=\s*@\{\s*ok\s*=\s*\$false;\s*action\s*=\s*\$Action;\s*message\s*=\s*"Invalid JSON payload:[\s\S]*?\[PcPilotDeadline\]::WriteReply\(\$invalidReply\)/s,
-  'pc-pilot-helper.ps1 must catch JSON parse errors and return compressed UTF-8 JSON with ok: false'
+  /catch\s*\{[\s\S]*?\$invalidReply\s*=\s*@\{\s*ok\s*=\s*\$false;\s*action\s*=\s*\$Action;\s*message\s*=\s*"Invalid JSON payload:[\s\S]*?\[WinPilotDeadline\]::WriteReply\(\$invalidReply\)/s,
+  'win-pilot-helper.ps1 must catch JSON parse errors and return compressed UTF-8 JSON with ok: false'
 )
 
 const b64Match = overlayContent.match(/\$b64\s*=\s*"([^"]+)"/)
@@ -373,7 +373,7 @@ const testScript = `powershell -NoProfile -Command "
   if (-not $json.ok) { exit 11 }
 
   # Test Ensure-OverlayProcess PID guard logic with 0, whitespace, corrupt PID, and valid PID
-  $tempDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'dsh-cua-test-' + [System.Guid]::NewGuid().ToString('N'))
+  $tempDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'win-pilot-test-' + [System.Guid]::NewGuid().ToString('N'))
   $null = New-Item -ItemType Directory -Path $tempDir -Force
   try {
     $pidFile = [System.IO.Path]::Combine($tempDir, 'overlay.pid')

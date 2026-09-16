@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
 
 const indexPath = path.join(rootDir, 'lib', 'index.js')
-const helperPath = path.join(rootDir, 'lib', 'pc-pilot-helper.ps1')
+const helperPath = path.join(rootDir, 'lib', 'win-pilot-helper.ps1')
 const patchPath = path.join(rootDir, 'cordis.patch.yml')
 
 // 1. Export & schema verification
@@ -65,36 +65,36 @@ assert.ok(
   "lib/index.js must protect child.stdin with an error handler"
 )
 
-// lib/pc-pilot-helper.ps1 parameter & encoding checks
+// lib/win-pilot-helper.ps1 parameter & encoding checks
 assert.equal(
   helperSrc.charCodeAt(0),
   0xFEFF,
-  'pc-pilot-helper.ps1 must carry a UTF-8 BOM for Windows PowerShell 5.1 source decoding'
+  'win-pilot-helper.ps1 must carry a UTF-8 BOM for Windows PowerShell 5.1 source decoding'
 )
 assert.ok(
   helperSrc.includes('[switch]$PayloadStdin'),
-  'pc-pilot-helper.ps1 must declare [switch]$PayloadStdin parameter'
+  'win-pilot-helper.ps1 must declare [switch]$PayloadStdin parameter'
 )
 assert.ok(
   helperSrc.includes('[Console]::InputEncoding = [System.Text.Encoding]::UTF8'),
-  'pc-pilot-helper.ps1 must set [Console]::InputEncoding to UTF-8'
+  'win-pilot-helper.ps1 must set [Console]::InputEncoding to UTF-8'
 )
 assert.ok(
   helperSrc.includes('[Console]::OutputEncoding = [System.Text.Encoding]::UTF8'),
-  'pc-pilot-helper.ps1 must set [Console]::OutputEncoding to UTF-8'
+  'win-pilot-helper.ps1 must set [Console]::OutputEncoding to UTF-8'
 )
 assert.ok(
-  helperSrc.includes('[PcPilotDeadline]::ReadUtf8ToEnd()')
+  helperSrc.includes('[WinPilotDeadline]::ReadUtf8ToEnd()')
     && helperSrc.includes('Console.OpenStandardInput()'),
-  'pc-pilot-helper.ps1 must decode redirected stdin explicitly as UTF-8'
+  'win-pilot-helper.ps1 must decode redirected stdin explicitly as UTF-8'
 )
 assert.ok(
   helperSrc.includes('Console.OpenStandardOutput()')
     && helperSrc.includes('new UTF8Encoding(false).GetBytes'),
-  'pc-pilot-helper.ps1 must encode JSON stdout explicitly as UTF-8'
+  'win-pilot-helper.ps1 must encode JSON stdout explicitly as UTF-8'
 )
 
-// lib/pc-pilot-helper.ps1 scroll WM_MOUSEWHEEL & dead overload checks
+// lib/win-pilot-helper.ps1 scroll WM_MOUSEWHEEL & dead overload checks
 assert.match(
   helperSrc,
   /SendMessageTimeout\(\$h,\s*0x020A,\s*\$wParam,\s*\$lParam,\s*\[DshWin32\]::SMTO_ABORTIFHUNG,\s*3000,\s*\[ref\]\$res\)/,

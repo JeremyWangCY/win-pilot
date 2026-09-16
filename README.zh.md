@@ -79,7 +79,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-预期版本为 `0.1.0`、平台为 `win32`，doctor 的必要检查全部为 `ok`。
+预期版本为 `0.1.1`、平台为 `win32`，doctor 的必要检查全部为 `ok`。
 
 ### 更新
 
@@ -144,7 +144,7 @@ Win-Pilot 以当前 Windows 用户权限运行，不包含遥测，也不会上�
 | 令牌过期 | 目标状态变化或令牌到期 | 重新观察同一目标 |
 | doctor 失败 | runtime 条件缺失 | 查看 `win-pilot doctor --probe --json` |
 
-当前兼容构建的诊断文件仍位于 `%TEMP%\dsh-cua-diag.log`。
+当前兼容构建的诊断文件仍位于 `%TEMP%\win-pilot-diag.log`。
 
 ## 开发
 

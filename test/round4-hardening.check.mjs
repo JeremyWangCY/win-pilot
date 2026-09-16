@@ -9,7 +9,7 @@ import { runAction, extractHelperJson } from '../lib/index.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
 
-const helperPath = path.join(rootDir, 'lib', 'pc-pilot-helper.ps1')
+const helperPath = path.join(rootDir, 'lib', 'win-pilot-helper.ps1')
 const indexPath = path.join(rootDir, 'lib', 'index.js')
 
 const helperSrc = fs.readFileSync(helperPath, 'utf8')

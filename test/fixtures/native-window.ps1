@@ -7,7 +7,7 @@ public class PilotTestWindow : Form {
   protected override bool ShowWithoutActivation { get { return true; } }
   [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int height, uint flags);
   public PilotTestWindow() {
-    Text = "PC-Pilot native test fixture"; Width = 480; Height = 260;
+    Text = "Win-Pilot native test fixture"; Width = 480; Height = 260;
     StartPosition = FormStartPosition.Manual; Left = 80; Top = 120;
     var editor = new TextBox { Left=20, Top=20, Width=400, Text="fixture text" };
     var button = new Button { Left=20, Top=80, Text="Minimize", Width=120 };

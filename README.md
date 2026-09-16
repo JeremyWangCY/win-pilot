@@ -79,7 +79,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected: version `0.1.0`, platform `win32`, and every required doctor check marked `ok`.
+Expected: version `0.1.1`, platform `win32`, and every required doctor check marked `ok`.
 
 ### Updating
 
@@ -144,7 +144,7 @@ Win-Pilot runs with the Windows user's permissions. It contains no telemetry and
 | Token is stale | Target state changed or token expired | Observe the same target again |
 | Doctor fails | Runtime prerequisite missing | Inspect `win-pilot doctor --probe --json` |
 
-Compatibility-build diagnostics currently use `%TEMP%\dsh-cua-diag.log`.
+Compatibility-build diagnostics currently use `%TEMP%\win-pilot-diag.log`.
 
 ## Development
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-const helper = fileURLToPath(new URL('../lib/pc-pilot-helper.ps1', import.meta.url)).replaceAll("'", "''")
+const helper = fileURLToPath(new URL('../lib/win-pilot-helper.ps1', import.meta.url)).replaceAll("'", "''")
 // Execute the real helper functions against a deterministic provider double.
 // No desktop input or process-wide UIA initialization is performed here.
 const ps = `

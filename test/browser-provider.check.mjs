@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createBrowserProvider } from '../lib/browser-provider.js'
-import { createPcPilotRuntime } from '../lib/runtime.js'
+import { createWinPilotRuntime } from '../lib/runtime.js'
 
 const calls = []
 const provider = createBrowserProvider({
@@ -17,9 +17,9 @@ const provider = createBrowserProvider({
   },
 })
 
-const runtime = createPcPilotRuntime({ browserProvider: provider })
+const runtime = createWinPilotRuntime({ browserProvider: provider })
 try {
-  const defaultRuntime = createPcPilotRuntime()
+  const defaultRuntime = createWinPilotRuntime()
   try {
     const missingEndpoint = await defaultRuntime.act('browser_open', { url: 'https://example.test/' })
     assert.equal(missingEndpoint.error_code, 'browser_action_rejected')
@@ -79,7 +79,7 @@ try {
   }
 
   const conditionalCalls = []
-  const conditional = createPcPilotRuntime({
+  const conditional = createWinPilotRuntime({
     browserProvider: createBrowserProvider({
       name: 'conditional-provider',
       execute: async (action, args) => {
@@ -113,7 +113,7 @@ try {
   }
 
   const uncertainCalls = []
-  const uncertain = createPcPilotRuntime({
+  const uncertain = createWinPilotRuntime({
     browserProvider: createBrowserProvider({
       name: 'uncertain-provider',
       execute: async (action, args) => {

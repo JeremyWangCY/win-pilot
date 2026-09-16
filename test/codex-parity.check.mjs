@@ -7,7 +7,7 @@ import { defineComputerTool, stopDaemon } from '../lib/index.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
-const helperPath = path.join(rootDir, 'lib', 'pc-pilot-helper.ps1')
+const helperPath = path.join(rootDir, 'lib', 'win-pilot-helper.ps1')
 const helperSrc = fs.readFileSync(helperPath, 'utf8')
 
 // ============================================================================
@@ -106,7 +106,7 @@ try {
   for (let i = 0; i < 20; i++) {
     const listRes = await tool.execute({ action: 'list_windows', app: String(fixturePid), ...(fixtureHwnd ? { hwnd: fixtureHwnd } : {}) })
     if (listRes.ok && Array.isArray(listRes.windows) && listRes.windows.length > 0) {
-      foundWin = listRes.windows.find(w => w.title === 'PC-Pilot native test fixture')
+      foundWin = listRes.windows.find(w => w.title === 'Win-Pilot native test fixture')
       if (foundWin) break
     }
     await new Promise((r) => setTimeout(r, 50))

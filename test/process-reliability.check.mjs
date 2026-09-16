@@ -239,7 +239,7 @@ try {
     m.stopDaemon(); unknown(await settled(r))
   })
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=', 'base64')
-  const shotDir = path.join(os.tmpdir(), 'dsh-cua')
+  const shotDir = path.join(os.tmpdir(), 'win-pilot')
   fs.mkdirSync(shotDir, { recursive: true })
   const shot = path.join(shotDir, `shot-${randomUUID().replaceAll('-', '')}.png`)
   const outside = path.join(os.tmpdir(), `shot-${randomUUID().replaceAll('-', '')}.png`)

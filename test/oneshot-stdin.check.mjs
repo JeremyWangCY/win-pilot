@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-const helper = fileURLToPath(new URL('../lib/pc-pilot-helper.ps1', import.meta.url))
+const helper = fileURLToPath(new URL('../lib/win-pilot-helper.ps1', import.meta.url))
 async function invoke(action, payloadArgs, input, expectedExit = 0) {
   const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', helper,
     '-Action', action, ...payloadArgs], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
@@ -25,7 +25,7 @@ async function invoke(action, payloadArgs, input, expectedExit = 0) {
 }
 // Keep stdin OPEN deliberately: this catches the inherited-pipe deadlock.
 for (const action of ['get_window', 'click', 'type']) {
-  const reply = await invoke(action, ['-PayloadJson', JSON.stringify({ app: 'pc-pilot-nonexistent-fixture-93852', text: 'test' })])
+  const reply = await invoke(action, ['-PayloadJson', JSON.stringify({ app: 'win-pilot-nonexistent-fixture-93852', text: 'test' })])
   assert.equal(reply.ok, false)
   assert.equal(reply.action, action)
 }
@@ -37,5 +37,5 @@ assert.equal(timed.error_code, 'action_timeout')
 assert.equal(timed.outcome, 'unknown')
 assert.equal(timed.retry_safe, false)
 const helperSource = await (await import('node:fs/promises')).readFile(helper, 'utf8')
-assert.match(helperSource, /if \(-not \$Server\) \{[\s\S]*?\[PcPilotDeadline\]::Start/, 'watchdog must be one-shot only and never kill the daemon')
+assert.match(helperSource, /if \(-not \$Server\) \{[\s\S]*?\[WinPilotDeadline\]::Start/, 'watchdog must be one-shot only and never kill the daemon')
 console.log('PASS: explicit JSON ignores open stdin; stdin transport works; real helper watchdog terminates blocked action')

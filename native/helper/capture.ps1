@@ -42,7 +42,7 @@ function Reset-WgcCaptureServer {
 }
 
 function Get-WgcCaptureServer {
-  $exe = Join-Path (Join-Path $env:TEMP 'dsh-cua-wgc') 'dsh-pc-pilot-wgc.exe'
+  $exe = Join-Path (Join-Path $env:TEMP 'win-pilot-wgc') 'win-pilot-wgc.exe'
   if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { return $null }
   if ($script:wgcServer) {
     try { if (-not $script:wgcServer.HasExited) { return $script:wgcServer } } catch { }
@@ -83,7 +83,7 @@ function Invoke-WgcCapture {
     $proc.StandardInput.WriteLine(('{0}{1}{2}' -f $Hwnd.ToInt64(), [char]9, $safePath))
     $proc.StandardInput.Flush()
     # The bridge owns its bounded 2.5s frame timeout. Keep this pipe read simple
-    # and synchronous; the outer PC-Pilot action timeout remains the final guard
+    # and synchronous; the outer Win-Pilot action timeout remains the final guard
     # if the bridge process itself becomes unhealthy.
     $line = [string]$proc.StandardOutput.ReadLine()
     if (-not $line) {
@@ -118,7 +118,7 @@ function Do-AppState {
   }
   $shot = $null
   if ($WithScreenshot) {
-    $dir = Join-Path $env:TEMP 'dsh-cua'
+    $dir = Join-Path $env:TEMP 'win-pilot'
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     $path = Join-Path $dir ("shot-{0}.png" -f ([guid]::NewGuid().ToString('N')))
     $w = $win.Rect.Right - $win.Rect.Left

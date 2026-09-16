@@ -23,13 +23,13 @@ try {
   assert.equal(launched.window?.foreground, false, `background launch must not own foreground when it returns: ${JSON.stringify(launched)}`)
   const observed = await tool.execute({ action: 'get_window', window: launched.window })
   assert.equal(observed.ok, true, JSON.stringify(observed))
-  assert.equal(observed.window.title, 'PC-Pilot native test fixture', JSON.stringify(observed))
+  assert.equal(observed.window.title, 'Win-Pilot native test fixture', JSON.stringify(observed))
   fixtureHwnd = observed.hwnd
 } finally {
   if (fixtureHwnd) {
     try { await tool.execute({ action: 'close_window', hwnd: fixtureHwnd }) } catch { /* best effort cleanup */ }
   }
-  try { execFileSync('taskkill', ['/FI', 'WINDOWTITLE eq PC-Pilot native test fixture', '/F'], { windowsHide: true, stdio: 'ignore' }) } catch { /* no fixture remains */ }
+  try { execFileSync('taskkill', ['/FI', 'WINDOWTITLE eq Win-Pilot native test fixture', '/F'], { windowsHide: true, stdio: 'ignore' }) } catch { /* no fixture remains */ }
   stopDaemon()
 }
 

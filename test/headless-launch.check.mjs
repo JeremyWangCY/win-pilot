@@ -7,12 +7,12 @@ import http from 'node:http'
 import { execFileSync } from 'node:child_process'
 import { defineComputerTool, stopDaemon } from '../lib/index.js'
 
-const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-pilot-launch-'))
+const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'win-pilot-launch-'))
 const edge = process.env.EDGE_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
 const tool = defineComputerTool(v => v, {})
 const server = http.createServer((req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8')
-  res.end('<!doctype html><title>PC Pilot Postcondition</title><body>POSTCONDITION READY</body>')
+  res.end('<!doctype html><title>Win-Pilot Postcondition</title><body>POSTCONDITION READY</body>')
 })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const fixtureUrl = `http://127.0.0.1:${server.address().port}/ready`
@@ -97,6 +97,6 @@ try {
   stopDaemon()
   const resolved = path.resolve(profile)
   assert.equal(path.dirname(resolved), path.resolve(os.tmpdir()))
-  assert.ok(path.basename(resolved).startsWith('pc-pilot-launch-'))
+  assert.ok(path.basename(resolved).startsWith('win-pilot-launch-'))
   await fs.rm(resolved, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
 }

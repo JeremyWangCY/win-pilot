@@ -18,7 +18,7 @@
 
 ## helper 维护
 
-源码位于 native/helper，分为 bootstrap、observation、background-input、capture、dispatch 五个模块。修改源码后运行 `npm run build:helper`，生成 lib/pc-pilot-helper.ps1。部署仍用单文件，测试检查源码和生成文件一致。拆分提高维护性，本身不代表启动性能提升。
+源码位于 native/helper，分为 bootstrap、observation、background-input、capture、dispatch 五个模块。修改源码后运行 `npm run build:helper`，生成 lib/win-pilot-helper.ps1。部署仍用单文件，测试检查源码和生成文件一致。拆分提高维护性，本身不代表启动性能提升。
 
 ## 验证边界
 
