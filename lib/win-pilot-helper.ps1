@@ -792,7 +792,7 @@ public static class DshWin32
 
 // UIA providers can block inside unmanaged calls. A PowerShell stopwatch cannot
 // interrupt those calls; the one-shot process owns a managed watchdog instead.
-public static class PcPilotDeadline
+public static class WinPilotDeadline
 {
   private static System.Threading.Timer timer;
   private static readonly object gate = new object();
@@ -1625,7 +1625,7 @@ function Get-SelectedText {
 
 function Ensure-OverlayProcess {
   # ponytail: pid-marker check; races only duplicate a harmless overlay instance
-  $dir = Join-Path $env:TEMP 'dsh-cua'
+  $dir = Join-Path $env:TEMP 'win-pilot'
   $pidFile = Join-Path $dir 'overlay.pid'
   if (Test-Path $pidFile) {
     $rawPid = Get-Content $pidFile -Raw -ErrorAction SilentlyContinue
@@ -1655,7 +1655,7 @@ function Start-HiddenPowershell {
 function Write-CursorState {
   param([int]$X, [int]$Y, [string]$Label, [bool]$Show)
   if (-not $Show) { $Label = 'hidden' }
-  $dir = Join-Path $env:TEMP 'dsh-cua'
+  $dir = Join-Path $env:TEMP 'win-pilot'
   if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
   $ts = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
   $state = @{ x = $X; y = $Y; label = $Label; ts = $ts; show = $Show } | ConvertTo-Json -Compress
@@ -1672,7 +1672,7 @@ function Write-CursorState {
 
 function Ensure-StatusbarProcess {
   # ponytail: pid-marker check; races only duplicate a harmless status pill
-  $dir = Join-Path $env:TEMP 'dsh-cua'
+  $dir = Join-Path $env:TEMP 'win-pilot'
   $pidFile = Join-Path $dir 'statusbar.pid'
   if (Test-Path $pidFile) {
     $rawPid = Get-Content $pidFile -Raw -ErrorAction SilentlyContinue
@@ -1682,16 +1682,16 @@ function Ensure-StatusbarProcess {
       if ($p) { return }
     }
   }
-  $sb = Join-Path $PSScriptRoot 'pcpilot-statusbar.ps1'
+  $sb = Join-Path $PSScriptRoot 'winpilot-statusbar.ps1'
   if (-not (Test-Path $sb)) { return }
   Start-HiddenPowershell -ScriptPath $sb | Out-Null
 }
 
 function Write-StatusState {
-  # top-center frosted status pill: "PC-Pilot 运行中" + breathing green dot.
+  # top-center frosted status pill: "Win-Pilot 运行中" + breathing green dot.
   # The pill polls this file: fresh (<=4s) + show -> visible; stale -> hidden.
   param([bool]$Show)
-  $dir = Join-Path $env:TEMP 'dsh-cua'
+  $dir = Join-Path $env:TEMP 'win-pilot'
   if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
   $ts = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
   $state = @{ ts = $ts; show = $Show } | ConvertTo-Json -Compress
@@ -2304,7 +2304,7 @@ function Reset-WgcCaptureServer {
 }
 
 function Get-WgcCaptureServer {
-  $exe = Join-Path (Join-Path $env:TEMP 'dsh-cua-wgc') 'dsh-pc-pilot-wgc.exe'
+  $exe = Join-Path (Join-Path $env:TEMP 'win-pilot-wgc') 'win-pilot-wgc.exe'
   if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { return $null }
   if ($script:wgcServer) {
     try { if (-not $script:wgcServer.HasExited) { return $script:wgcServer } } catch { }
@@ -2345,7 +2345,7 @@ function Invoke-WgcCapture {
     $proc.StandardInput.WriteLine(('{0}{1}{2}' -f $Hwnd.ToInt64(), [char]9, $safePath))
     $proc.StandardInput.Flush()
     # The bridge owns its bounded 2.5s frame timeout. Keep this pipe read simple
-    # and synchronous; the outer PC-Pilot action timeout remains the final guard
+    # and synchronous; the outer Win-Pilot action timeout remains the final guard
     # if the bridge process itself becomes unhealthy.
     $line = [string]$proc.StandardOutput.ReadLine()
     if (-not $line) {
@@ -2380,7 +2380,7 @@ function Do-AppState {
   }
   $shot = $null
   if ($WithScreenshot) {
-    $dir = Join-Path $env:TEMP 'dsh-cua'
+    $dir = Join-Path $env:TEMP 'win-pilot'
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     $path = Join-Path $dir ("shot-{0}.png" -f ([guid]::NewGuid().ToString('N')))
     $w = $win.Rect.Right - $win.Rect.Left
@@ -3742,13 +3742,13 @@ function Invoke-ActionRequest {
           }
         }
         if (-not $hasUserDataDir) {
-          $aiProfileDir = Join-Path $env:LOCALAPPDATA 'dsh-cua\browser-profile'
+          $aiProfileDir = Join-Path $env:LOCALAPPDATA 'win-pilot\browser-profile'
           if ($headless) {
             # BR-02 hygiene: per-launch temp profile; age out abandoned dirs
             # (older than 24h, not owned by any running browser process) so the
             # TEMP root does not accumulate one folder per headless run.
             try {
-              Get-ChildItem $env:TEMP -Directory -Filter 'pc-pilot-headless-*' -ErrorAction SilentlyContinue |
+              Get-ChildItem $env:TEMP -Directory -Filter 'win-pilot-headless-*' -ErrorAction SilentlyContinue |
                 Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-24) } |
                 ForEach-Object {
                   $dirPath = $_.FullName
@@ -3757,7 +3757,7 @@ function Invoke-ActionRequest {
                   }
                 } | Out-Null
             } catch { }
-            $aiProfileDir = Join-Path $env:TEMP ("pc-pilot-headless-" + [guid]::NewGuid().ToString('N'))
+            $aiProfileDir = Join-Path $env:TEMP ("win-pilot-headless-" + [guid]::NewGuid().ToString('N'))
           }
           if (-not (Test-Path $aiProfileDir)) { New-Item -ItemType Directory -Path $aiProfileDir -Force | Out-Null }
            $argList += "--user-data-dir=`"$aiProfileDir`""
@@ -4268,7 +4268,7 @@ function Invoke-ActionRequest {
     }
 
     'screenshot' {
-      $dir = Join-Path $env:TEMP 'dsh-cua'
+      $dir = Join-Path $env:TEMP 'win-pilot'
       if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
       $screens = [System.Windows.Forms.Screen]::AllScreens
       $disp = [int](Get-PayloadValue 'display')
@@ -4323,7 +4323,7 @@ function Invoke-ActionRequest {
       $screens = [System.Windows.Forms.Screen]::AllScreens
       $disp = [int](Get-PayloadValue 'display')
       if ($disp -lt 1 -or $disp -gt $screens.Length) { throw "display index out of range: $disp (1..$($screens.Length))" }
-      $dir = Join-Path $env:TEMP 'dsh-cua'
+      $dir = Join-Path $env:TEMP 'win-pilot'
       if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
       Set-Content -Path (Join-Path $dir 'display.state') -Value ([string]$disp) -Encoding ascii
       $b = $screens[$disp - 1].Bounds
@@ -4333,10 +4333,10 @@ function Invoke-ActionRequest {
     }
 
     'zoom' {
-      $dir = Join-Path $env:TEMP 'dsh-cua'
+      $dir = Join-Path $env:TEMP 'win-pilot'
       $srcPath = [string](Get-PayloadValue 'path')
       if (-not $srcPath) {
-        # default source: newest shot-*.png or disp-*.png in %TEMP%\dsh-cua
+        # default source: newest shot-*.png or disp-*.png in %TEMP%\win-pilot
         $cands = @(Get-ChildItem $dir -Filter '*.png' -ea SilentlyContinue | Where-Object { $_.Name -like 'shot-*.png' -or $_.Name -like 'disp-*.png' } | Sort-Object LastWriteTime -Descending)
         if ($cands.Count -eq 0) { throw 'zoom: no source screenshot; run get_app_state or screenshot first' }
         $srcPath = $cands[0].FullName
@@ -4600,7 +4600,7 @@ function Write-DaemonReply {
   else { $Reply = @{ id = $Id; ok = $false; action = ''; message = 'invalid reply object' } }
   # single-line JSON, always: compress, then strip any residual newline
   $json = ($Reply | ConvertTo-Json -Compress -Depth 10) -replace "(`r|`n)", ' '
-  [PcPilotDeadline]::WriteReply($json + [Environment]::NewLine)
+  [WinPilotDeadline]::WriteReply($json + [Environment]::NewLine)
 }
 
 # ---------------------------------------------------------------- daemon mode (-Server)
@@ -4614,7 +4614,7 @@ if ($Server) {
   # EOF (stdin closed by node) or process kill.
   while ($true) {
     $line = $null
-    try { $line = [PcPilotDeadline]::ReadUtf8Line() } catch { break }
+    try { $line = [WinPilotDeadline]::ReadUtf8Line() } catch { break }
     if ($null -eq $line) { break }   # stdin closed -> exit cleanly
     $trimmed = $line.Trim()
     if ($trimmed.Length -eq 0) { continue }
@@ -4648,7 +4648,7 @@ if (-not $Server) {
     if ($Action -eq 'wait') { $TimeoutMs = 40000 }
   }
   $deadlineReply = @{ ok = $false; action = $Action; error_code = 'action_timeout'; outcome = 'unknown'; retry_safe = $false; message = 'Helper deadline exceeded; observe state before deciding whether to retry' } | ConvertTo-Json -Compress
-  [PcPilotDeadline]::Start($TimeoutMs, $deadlineReply)
+  [WinPilotDeadline]::Start($TimeoutMs, $deadlineReply)
 }
 
 $script:payload = $null
@@ -4656,7 +4656,7 @@ $rawJson = ''
 try {
   # Explicit JSON must not wait for an unrelated inherited/open input pipe.
   if ($PayloadStdin -or (-not $PSBoundParameters.ContainsKey('PayloadJson') -and [Console]::IsInputRedirected)) {
-    $rawJson = [PcPilotDeadline]::ReadUtf8ToEnd()
+    $rawJson = [WinPilotDeadline]::ReadUtf8ToEnd()
   }
   if ((-not $rawJson) -and $PayloadJson) {
     $rawJson = $PayloadJson
@@ -4666,10 +4666,10 @@ try {
   }
 } catch {
   $invalidReply = @{ ok = $false; action = $Action; message = "Invalid JSON payload: $($_.Exception.Message)" } | ConvertTo-Json -Compress
-  [PcPilotDeadline]::WriteReply($invalidReply)
+  [WinPilotDeadline]::WriteReply($invalidReply)
   exit 0
 }
 
 $out = Invoke-ActionRequest -Action $Action -Payload $script:payload
 if ($out -is [System.Array] -and $out.Count -gt 0) { $out = $out[$out.Count - 1] }
-[PcPilotDeadline]::WriteReply(($out | ConvertTo-Json -Depth 10 -Compress))
+[WinPilotDeadline]::WriteReply(($out | ConvertTo-Json -Depth 10 -Compress))

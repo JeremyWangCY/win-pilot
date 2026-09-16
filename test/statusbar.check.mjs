@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { once } from 'node:events'
 import { defineComputerTool, stopDaemon } from '../lib/index.js'
 const root = fileURLToPath(new URL('../', import.meta.url))
-const sample = path.join(os.tmpdir(), `pcpilot-status-${Date.now()}.png`)
-execFileSync('powershell', ['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(root,'lib/pcpilot-statusbar.ps1'),'-RenderSample',sample], { windowsHide:true, timeout:10000 })
+const sample = path.join(os.tmpdir(), `winpilot-status-${Date.now()}.png`)
+execFileSync('powershell', ['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(root,'lib/winpilot-statusbar.ps1'),'-RenderSample',sample], { windowsHide:true, timeout:10000 })
 assert.ok(fs.existsSync(sample), 'successful rendering must produce a PNG')
 assert.equal(fs.readFileSync(sample).readUInt32BE(16),320)
 const observer = spawn('powershell', ['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(root,'test/fixtures/statusbar-observer.ps1')], { windowsHide:true, stdio:['ignore','pipe','pipe'] })

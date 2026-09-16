@@ -792,7 +792,7 @@ public static class DshWin32
 
 // UIA providers can block inside unmanaged calls. A PowerShell stopwatch cannot
 // interrupt those calls; the one-shot process owns a managed watchdog instead.
-public static class PcPilotDeadline
+public static class WinPilotDeadline
 {
   private static System.Threading.Timer timer;
   private static readonly object gate = new object();

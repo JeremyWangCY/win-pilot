@@ -17,13 +17,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
 
 // Static contract: daemon mode exists on both sides of the pipe
-const helperSrc = fs.readFileSync(path.join(rootDir, 'lib', 'pc-pilot-helper.ps1'), 'utf8')
+const helperSrc = fs.readFileSync(path.join(rootDir, 'lib', 'win-pilot-helper.ps1'), 'utf8')
 const indexSrc = fs.readFileSync(path.join(rootDir, 'lib', 'index.js'), 'utf8')
 const pkgSrc = fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')
 
 assert.ok(helperSrc.includes('[switch]$Server'), 'helper must declare a -Server daemon mode switch')
 assert.ok(helperSrc.includes("'invalid request'"), 'helper daemon must reply invalid request for bad lines')
-assert.ok(helperSrc.includes('[PcPilotDeadline]::ReadUtf8Line()'), 'helper daemon must read UTF-8 stdin line-by-line (blocking ReadLine -> dispatch -> reply)')
+assert.ok(helperSrc.includes('[WinPilotDeadline]::ReadUtf8Line()'), 'helper daemon must read UTF-8 stdin line-by-line (blocking ReadLine -> dispatch -> reply)')
 // judge fix 1: PS-side idle-exit machinery removed entirely (it could never fire)
 assert.ok(!helperSrc.includes('lastRequestUtc'), 'helper daemon must NOT keep the broken PS-side idle-exit machinery')
 assert.ok(!helperSrc.includes('ReadLineAsync'), 'helper daemon must not use the ReadLineAsync+Wait poll (idle check never ran)')
@@ -70,7 +70,7 @@ function countServerHelpers() {
   const psExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
   const out = execFileSync(psExe, ['-NoProfile', '-Command',
     `(Get-CimInstance Win32_Process -Filter "Name='powershell.exe' AND ParentProcessId=${process.pid}" | ` +
-    `Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'pc-pilot-helper' -and $_.CommandLine -match '-Server' } | Measure-Object).Count`,
+    `Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'win-pilot-helper' -and $_.CommandLine -match '-Server' } | Measure-Object).Count`,
   ], { encoding: 'utf8', timeout: 60000 })
   return parseInt(String(out).trim(), 10) || 0
 }

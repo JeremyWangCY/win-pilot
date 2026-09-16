@@ -256,7 +256,7 @@ static class Program
         if (args.Length == 1 && args[0] == "--server") return await RunServerAsync();
         if (args.Length != 2 || !long.TryParse(args[0], out var hwndValue) || string.IsNullOrWhiteSpace(args[1]))
         {
-            Console.Error.WriteLine("usage: dsh-pc-pilot-wgc <hwnd> <png-path> | --server");
+            Console.Error.WriteLine("usage: win-pilot-wgc <hwnd> <png-path> | --server");
             return 2;
         }
 

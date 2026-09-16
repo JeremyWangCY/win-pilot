@@ -6,10 +6,10 @@ const mcp = JSON.parse(await readFile(new URL('../.mcp.json', import.meta.url), 
 const skill = await readFile(new URL('../skills/win-pilot/SKILL.md', import.meta.url), 'utf8')
 
 assert.equal(plugin.name, 'win-pilot')
-assert.equal(plugin.version, '0.1.0')
+assert.equal(plugin.version, '0.1.1')
 assert.equal(plugin.skills, './skills/')
 assert.equal(plugin.mcpServers, './.mcp.json')
-assert.deepEqual(mcp.mcpServers['win-pilot'].args, ['-y', 'win-pilot@0.1.0', 'mcp'])
+assert.deepEqual(mcp.mcpServers['win-pilot'].args, ['-y', 'win-pilot@0.1.1', 'mcp'])
 assert.match(skill, /^---\r?\nname: win-pilot\r?\n/)
 
 console.log('plugin manifest check PASSED')

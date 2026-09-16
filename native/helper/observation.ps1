@@ -794,7 +794,7 @@ function Get-SelectedText {
 
 function Ensure-OverlayProcess {
   # ponytail: pid-marker check; races only duplicate a harmless overlay instance
-  $dir = Join-Path $env:TEMP 'dsh-cua'
+  $dir = Join-Path $env:TEMP 'win-pilot'
   $pidFile = Join-Path $dir 'overlay.pid'
   if (Test-Path $pidFile) {
     $rawPid = Get-Content $pidFile -Raw -ErrorAction SilentlyContinue
@@ -824,7 +824,7 @@ function Start-HiddenPowershell {
 function Write-CursorState {
   param([int]$X, [int]$Y, [string]$Label, [bool]$Show)
   if (-not $Show) { $Label = 'hidden' }
-  $dir = Join-Path $env:TEMP 'dsh-cua'
+  $dir = Join-Path $env:TEMP 'win-pilot'
   if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
   $ts = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
   $state = @{ x = $X; y = $Y; label = $Label; ts = $ts; show = $Show } | ConvertTo-Json -Compress
@@ -841,7 +841,7 @@ function Write-CursorState {
 
 function Ensure-StatusbarProcess {
   # ponytail: pid-marker check; races only duplicate a harmless status pill
-  $dir = Join-Path $env:TEMP 'dsh-cua'
+  $dir = Join-Path $env:TEMP 'win-pilot'
   $pidFile = Join-Path $dir 'statusbar.pid'
   if (Test-Path $pidFile) {
     $rawPid = Get-Content $pidFile -Raw -ErrorAction SilentlyContinue
@@ -851,16 +851,16 @@ function Ensure-StatusbarProcess {
       if ($p) { return }
     }
   }
-  $sb = Join-Path $PSScriptRoot 'pcpilot-statusbar.ps1'
+  $sb = Join-Path $PSScriptRoot 'winpilot-statusbar.ps1'
   if (-not (Test-Path $sb)) { return }
   Start-HiddenPowershell -ScriptPath $sb | Out-Null
 }
 
 function Write-StatusState {
-  # top-center frosted status pill: "PC-Pilot 运行中" + breathing green dot.
+  # top-center frosted status pill: "Win-Pilot 运行中" + breathing green dot.
   # The pill polls this file: fresh (<=4s) + show -> visible; stale -> hidden.
   param([bool]$Show)
-  $dir = Join-Path $env:TEMP 'dsh-cua'
+  $dir = Join-Path $env:TEMP 'win-pilot'
   if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
   $ts = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
   $state = @{ ts = $ts; show = $Show } | ConvertTo-Json -Compress

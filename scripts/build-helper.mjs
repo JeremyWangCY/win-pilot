@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const names = ['bootstrap', 'observation', 'background-input', 'capture', 'dispatch']
 const nativeDir = path.join(root, 'native/helper')
-const target = path.join(root, 'lib/pc-pilot-helper.ps1')
+const target = path.join(root, 'lib/win-pilot-helper.ps1')
 const packaged = !fs.existsSync(path.join(nativeDir, 'bootstrap.ps1'))
 if (packaged) {
   if (process.argv.includes('--check')) {

@@ -1,4 +1,4 @@
-# PC-Pilot status pill: top-center frosted dark bar with a breathing green dot.
+# Win-Pilot status pill: top-center frosted dark bar with a breathing green dot.
 # Visible while the helper is acting (status.state fresh), hides shortly after
 # the last action. Click-through, never activates, per-pixel-alpha layered
 # window — same technique as the virtual cursor overlay (PS 5.1 + PS7 compatible).
@@ -35,7 +35,7 @@ public static class DshStatusDpi
 "@
 Add-Type -TypeDefinition $dpiSig
 [DshStatusDpi]::InitDpiAwareness()
-$dir = Join-Path $env:TEMP "dsh-cua"
+$dir = Join-Path $env:TEMP "win-pilot"
 if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 
 $cs = @"
@@ -151,7 +151,7 @@ public static class DshStatusPill
         using (var brush = new SolidBrush(Color.FromArgb(236, 245, 245, 247)))
         {
           g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-          g.DrawString("PC-Pilot \u8fd0\u884c\u4e2d", font, brush, textRect, fmt);
+          g.DrawString("Win-Pilot \u8fd0\u884c\u4e2d", font, brush, textRect, fmt);
         }
       }
 

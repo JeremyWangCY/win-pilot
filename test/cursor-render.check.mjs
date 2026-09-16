@@ -73,7 +73,7 @@ assert.ok(
 )
 
 // 2. Functional rendering test via PowerShell
-const sampleDir = path.join(os.tmpdir(), 'dsh-cua')
+const sampleDir = path.join(os.tmpdir(), 'win-pilot')
 if (!fs.existsSync(sampleDir)) {
   fs.mkdirSync(sampleDir, { recursive: true })
 }

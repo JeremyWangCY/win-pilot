@@ -1144,13 +1144,13 @@ function Invoke-ActionRequest {
           }
         }
         if (-not $hasUserDataDir) {
-          $aiProfileDir = Join-Path $env:LOCALAPPDATA 'dsh-cua\browser-profile'
+          $aiProfileDir = Join-Path $env:LOCALAPPDATA 'win-pilot\browser-profile'
           if ($headless) {
             # BR-02 hygiene: per-launch temp profile; age out abandoned dirs
             # (older than 24h, not owned by any running browser process) so the
             # TEMP root does not accumulate one folder per headless run.
             try {
-              Get-ChildItem $env:TEMP -Directory -Filter 'pc-pilot-headless-*' -ErrorAction SilentlyContinue |
+              Get-ChildItem $env:TEMP -Directory -Filter 'win-pilot-headless-*' -ErrorAction SilentlyContinue |
                 Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-24) } |
                 ForEach-Object {
                   $dirPath = $_.FullName
@@ -1159,7 +1159,7 @@ function Invoke-ActionRequest {
                   }
                 } | Out-Null
             } catch { }
-            $aiProfileDir = Join-Path $env:TEMP ("pc-pilot-headless-" + [guid]::NewGuid().ToString('N'))
+            $aiProfileDir = Join-Path $env:TEMP ("win-pilot-headless-" + [guid]::NewGuid().ToString('N'))
           }
           if (-not (Test-Path $aiProfileDir)) { New-Item -ItemType Directory -Path $aiProfileDir -Force | Out-Null }
            $argList += "--user-data-dir=`"$aiProfileDir`""
@@ -1670,7 +1670,7 @@ function Invoke-ActionRequest {
     }
 
     'screenshot' {
-      $dir = Join-Path $env:TEMP 'dsh-cua'
+      $dir = Join-Path $env:TEMP 'win-pilot'
       if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
       $screens = [System.Windows.Forms.Screen]::AllScreens
       $disp = [int](Get-PayloadValue 'display')
@@ -1725,7 +1725,7 @@ function Invoke-ActionRequest {
       $screens = [System.Windows.Forms.Screen]::AllScreens
       $disp = [int](Get-PayloadValue 'display')
       if ($disp -lt 1 -or $disp -gt $screens.Length) { throw "display index out of range: $disp (1..$($screens.Length))" }
-      $dir = Join-Path $env:TEMP 'dsh-cua'
+      $dir = Join-Path $env:TEMP 'win-pilot'
       if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
       Set-Content -Path (Join-Path $dir 'display.state') -Value ([string]$disp) -Encoding ascii
       $b = $screens[$disp - 1].Bounds
@@ -1735,10 +1735,10 @@ function Invoke-ActionRequest {
     }
 
     'zoom' {
-      $dir = Join-Path $env:TEMP 'dsh-cua'
+      $dir = Join-Path $env:TEMP 'win-pilot'
       $srcPath = [string](Get-PayloadValue 'path')
       if (-not $srcPath) {
-        # default source: newest shot-*.png or disp-*.png in %TEMP%\dsh-cua
+        # default source: newest shot-*.png or disp-*.png in %TEMP%\win-pilot
         $cands = @(Get-ChildItem $dir -Filter '*.png' -ea SilentlyContinue | Where-Object { $_.Name -like 'shot-*.png' -or $_.Name -like 'disp-*.png' } | Sort-Object LastWriteTime -Descending)
         if ($cands.Count -eq 0) { throw 'zoom: no source screenshot; run get_app_state or screenshot first' }
         $srcPath = $cands[0].FullName
@@ -2002,7 +2002,7 @@ function Write-DaemonReply {
   else { $Reply = @{ id = $Id; ok = $false; action = ''; message = 'invalid reply object' } }
   # single-line JSON, always: compress, then strip any residual newline
   $json = ($Reply | ConvertTo-Json -Compress -Depth 10) -replace "(`r|`n)", ' '
-  [PcPilotDeadline]::WriteReply($json + [Environment]::NewLine)
+  [WinPilotDeadline]::WriteReply($json + [Environment]::NewLine)
 }
 
 # ---------------------------------------------------------------- daemon mode (-Server)
@@ -2016,7 +2016,7 @@ if ($Server) {
   # EOF (stdin closed by node) or process kill.
   while ($true) {
     $line = $null
-    try { $line = [PcPilotDeadline]::ReadUtf8Line() } catch { break }
+    try { $line = [WinPilotDeadline]::ReadUtf8Line() } catch { break }
     if ($null -eq $line) { break }   # stdin closed -> exit cleanly
     $trimmed = $line.Trim()
     if ($trimmed.Length -eq 0) { continue }
@@ -2050,7 +2050,7 @@ if (-not $Server) {
     if ($Action -eq 'wait') { $TimeoutMs = 40000 }
   }
   $deadlineReply = @{ ok = $false; action = $Action; error_code = 'action_timeout'; outcome = 'unknown'; retry_safe = $false; message = 'Helper deadline exceeded; observe state before deciding whether to retry' } | ConvertTo-Json -Compress
-  [PcPilotDeadline]::Start($TimeoutMs, $deadlineReply)
+  [WinPilotDeadline]::Start($TimeoutMs, $deadlineReply)
 }
 
 $script:payload = $null
@@ -2058,7 +2058,7 @@ $rawJson = ''
 try {
   # Explicit JSON must not wait for an unrelated inherited/open input pipe.
   if ($PayloadStdin -or (-not $PSBoundParameters.ContainsKey('PayloadJson') -and [Console]::IsInputRedirected)) {
-    $rawJson = [PcPilotDeadline]::ReadUtf8ToEnd()
+    $rawJson = [WinPilotDeadline]::ReadUtf8ToEnd()
   }
   if ((-not $rawJson) -and $PayloadJson) {
     $rawJson = $PayloadJson
@@ -2068,10 +2068,10 @@ try {
   }
 } catch {
   $invalidReply = @{ ok = $false; action = $Action; message = "Invalid JSON payload: $($_.Exception.Message)" } | ConvertTo-Json -Compress
-  [PcPilotDeadline]::WriteReply($invalidReply)
+  [WinPilotDeadline]::WriteReply($invalidReply)
   exit 0
 }
 
 $out = Invoke-ActionRequest -Action $Action -Payload $script:payload
 if ($out -is [System.Array] -and $out.Count -gt 0) { $out = $out[$out.Count - 1] }
-[PcPilotDeadline]::WriteReply(($out | ConvertTo-Json -Depth 10 -Compress))
+[WinPilotDeadline]::WriteReply(($out | ConvertTo-Json -Depth 10 -Compress))

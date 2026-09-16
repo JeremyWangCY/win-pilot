@@ -16,7 +16,7 @@ try {
   let window
   for (let attempt = 0; attempt < 40 && !window; attempt++) {
     const listed = await tool.execute({ action: 'list_windows' })
-    window = listed.windows?.find(item => item.pid === child.pid && item.title === 'PC-Pilot Common Dialog Fixture')
+    window = listed.windows?.find(item => item.pid === child.pid && item.title === 'Win-Pilot Common Dialog Fixture')
     if (!window) await new Promise(resolve => setTimeout(resolve, 100))
   }
   assert.ok(window?.hwnd, 'owned Win32 common file dialog must become discoverable')

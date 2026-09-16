@@ -23,8 +23,8 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/like') { likes++; res.end('ok'); return }
   if (req.url === '/download') {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-    res.setHeader('Content-Disposition', 'attachment; filename="pc-pilot-fixture.txt"')
-    res.end('pc-pilot download fixture')
+    res.setHeader('Content-Disposition', 'attachment; filename="win-pilot-fixture.txt"')
+    res.end('win-pilot download fixture')
     return
   }
   res.setHeader('Content-Type', 'text/html; charset=utf-8')
@@ -63,9 +63,9 @@ const server = http.createServer(async (req, res) => {
 })
 server.listen(0, '127.0.0.1')
 await once(server, 'listening')
-const profile = await mkdtemp(path.join(tmpdir(), 'pc-pilot-cdp-'))
+const profile = await mkdtemp(path.join(tmpdir(), 'win-pilot-cdp-'))
 const uploadFixture = path.join(profile, 'upload-fixture.txt')
-await writeFile(uploadFixture, 'pc-pilot upload fixture', 'utf8')
+await writeFile(uploadFixture, 'win-pilot upload fixture', 'utf8')
 let child
 let control
 let controlId = 0
@@ -285,9 +285,9 @@ try {
   await click(get(s, 'Download file'))
   const downloadState = await eventually(async () => {
     const value = await browserAction('browser_downloads', { browser_endpoint })
-    const completed = value.downloads.find(item => item.suggested_filename === 'pc-pilot-fixture.txt' && item.state === 'completed')
+    const completed = value.downloads.find(item => item.suggested_filename === 'win-pilot-fixture.txt' && item.state === 'completed')
     assert.ok(completed, 'browser_downloads tracks completed Chromium download')
-    const file = value.files.find(item => item.name === 'pc-pilot-fixture.txt')
+    const file = value.files.find(item => item.name === 'win-pilot-fixture.txt')
     assert.ok(file && existsSync(file.path) && file.bytes > 0, 'browser_downloads exposes completed file path')
     return value
   })

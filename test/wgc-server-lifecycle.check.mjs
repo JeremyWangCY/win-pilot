@@ -5,7 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const executable = path.join(rootDir, 'lib', 'wgc', 'dsh-pc-pilot-wgc.exe')
+const executable = path.join(rootDir, 'lib', 'wgc', 'win-pilot-wgc.exe')
 const source = readFileSync(path.join(rootDir, 'native', 'wgc-capture', 'Program.cs'), 'utf8')
 
 assert.match(source, /sealed class CaptureSlot/, 'WGC server must keep an explicit reusable per-HWND capture slot')

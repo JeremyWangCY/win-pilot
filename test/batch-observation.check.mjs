@@ -5,7 +5,7 @@ import path from 'node:path'
 import { defineComputerTool, stopDaemon } from '../lib/index.js'
 
 const tool = defineComputerTool(value => value, {})
-const screenshotDir = path.join(os.tmpdir(), 'dsh-cua')
+const screenshotDir = path.join(os.tmpdir(), 'win-pilot')
 const captures = new Set()
 function rememberCapture(value) {
   const capturePath = value?.post_action_observation?.screenshot?.path || value?.steps?.at(-1)?.post_action_observation?.screenshot?.path

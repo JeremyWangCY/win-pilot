@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { defineComputerTool, stopDaemon } from '../lib/index.js'
 
 // 1. Static assertions: Find-ElementByIndex must prioritize $script:cachedElements cache
-const helperSrc = fs.readFileSync(new URL('../lib/pc-pilot-helper.ps1', import.meta.url), 'utf8')
+const helperSrc = fs.readFileSync(new URL('../lib/win-pilot-helper.ps1', import.meta.url), 'utf8')
 assert.match(
   helperSrc,
   /function\s+Find-ElementByIndex[\s\S]*?\$script:cachedTreeHwnd\s*-eq\s*\$Hwnd\s*-and\s*\$null\s*-ne\s*\$script:cachedElements\s*-and\s*\$Index\s*-ge\s*1\s*-and\s*\$Index\s*-le\s*\$script:cachedElements\.Count/,
@@ -143,7 +143,7 @@ try {
     duration_s: 0,
     app: String(notepadPid),
     include_text: true,
-    expect: { type: 'text_present', text: '__PC_PILOT_IMPOSSIBLE_POSTCONDITION__', timeout_ms: 0 },
+    expect: { type: 'text_present', text: '__WIN_PILOT_IMPOSSIBLE_POSTCONDITION__', timeout_ms: 0 },
   })
   assert.equal(failedCondition.ok, false, 'unmet postcondition must fail the action result')
   assert.equal(failedCondition.error_code, 'postcondition_failed')

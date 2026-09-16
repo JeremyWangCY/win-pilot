@@ -1,4 +1,4 @@
-# PC-Pilot 长测问题清单（待一并修复）
+# Win-Pilot 长测问题清单（待一并修复）
 
 - 日期：2026-09-10
 - 触发：按 `docs/real-world-acceptance.zh.md` 流程做真实长测 + 历史复评/短测
@@ -65,12 +65,12 @@ open_app { name: "<edge> --user-data-dir=<tmp>", url: "https://www.bilibili.com/
 
 | ID | 标题 | 详情 |
 | --- | --- | --- |
-| PKG-01 | `npm test` / `build-helper --check` 断裂 | 缺 `native/helper/bootstrap.ps1`，安装物只有拼好的 `pc-pilot-helper.ps1` |
+| PKG-01 | `npm test` / `build-helper --check` 断裂 | 缺 `native/helper/bootstrap.ps1`，安装物只有拼好的 `win-pilot-helper.ps1` |
 | PKG-02 | `smoke-test.ps1` 在 PS5.1 必挂 | UTF-8 无 BOM + 中文注释，解析后 `$helper` 赋值被吃掉 → no JSON |
 | PKG-03 | smoke 用 `explorer` 无 hwnd | 多窗口机 `ambiguous_window`；pwsh7 list_apps 过、get_app_state 挂 |
 | DESK-03 | Notepad 刚启动 UIA 过浅 | 常先仅 2 Pane，稍后才 ~26；`set_value` 无 ValuePattern |
 | DESK-05 | Win11 记事本后台写入不稳 | 依赖 activate 时机；默认 Minimized+隔离画布加重 |
-| BR-02 | 默认 headless profile 不干净 | `%LOCALAPPDATA%\pc-pilot\headless-profile` 跨 run 残留 tab |
+| BR-02 | 默认 headless profile 不干净 | `%LOCALAPPDATA%\win-pilot\headless-profile` 跨 run 残留 tab |
 | BR-04 | `browser_open` 拒 `file://` | 仅 http(s)；本地调试需自起 HTTP（可接受但要写进文档） |
 | BR-07 | `browser_replace` 对部分页面校验失败 | `replacement_verification_failed` 需与 contenteditable/受控输入分支对齐 |
 | REAL-05 | `release_window all` 过宽 | 实测移动 98 个窗口 |
@@ -119,7 +119,7 @@ open_app { name: "<edge> --user-data-dir=<tmp>", url: "https://www.bilibili.com/
 ## 未做 / 不做
 
 - 未在真实 B 站发布、点赞、删除（无正文证据 + 避免污染第三方评论区）
-- 未改 `dsh-pc-pilot` 任何代码（遵守「我的插件做完之前不要改」）
+- 未改 `win-pilot` 任何代码（遵守「我的插件做完之前不要改」）
 - 未把本地夹具结果算作 acceptance 通过
 - 文件管理器/表格/下载对话框/画布拖拽等「浏览器之外」真实任务：**未覆盖**（Edge 主链路已阻塞）
 
@@ -151,7 +151,7 @@ open_app { name: "<edge> --user-data-dir=<tmp>", url: "https://www.bilibili.com/
 | DESK-03 | **已缓解** | `capture.ps1` Do-AppState：元素数 ≤2 时延迟 250ms 重扫一次（Notepad 启动期浅树） |
 | DESK-04 | 已缓解（前次 + 本轮补强） | helper 收尾已统一 `needs_observation = 未 verified`；本轮补上 `set_value` ValuePattern 回读验证（verified/dispatched 区分），`type` 后置观察门禁维持 |
 | DESK-05 | 部分（依赖观察门禁兜底） | 后台写入受 activate 时机影响，本质难点未除；未验证输入不再报成功（DESK-04 门禁 + browser_replace 校验）兜底诚实性 |
-| BR-02 | **已修**（前次 + 本轮补强） | headless profile 已是每次启动的临时目录；本轮补 TEMP 内 >24h 且无进程占用的 `pc-pilot-headless-*` 目录清理 |
+| BR-02 | **已修**（前次 + 本轮补强） | headless profile 已是每次启动的临时目录；本轮补 TEMP 内 >24h 且无进程占用的 `win-pilot-headless-*` 目录清理 |
 | BR-04 | **文档化** | `browser_open`/`open_app{url}` 仅接受 HTTP(S)、拒绝 `file://` 已写入 README 中英文与工具描述 |
 | BR-07 | **已修** | `browser_replace` 校验覆盖 value/textContent/innerText 分支，替换后派发 `input`/`change` 事件（受控输入提交）；校验失败返回 `replacement_verification_failed` + `needs_observation: true` 并引导 browser_state 观察 |
 | PKG-01 | **核对通过** | 工作区源码完整，`npm run build:helper --check` 通过；打包态（无 native/helper）时 `--check` 以 skip+exit 0 通过，`npm test` 不断裂 |
