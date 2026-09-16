@@ -6,8 +6,6 @@ English | [中文](./README.zh.md)
 
 Win-Pilot is an Agent Plugin for Windows Computer Use. It gives Windows agents one consistent `computer` tool for desktop applications and isolated Chromium sessions, with the same actions, recovery rules, and results across plugin, MCP, CLI, skill, and native-host integrations.
 
-It is not limited to a fixed product list. Codex, Claude Code, Qoder, Pi, and DeepSeek Harness form the initial regression matrix; any maintained Windows agent can use the standard Agent Plugin package, local stdio MCP, or the shell-and-skill fallback.
-
 ## Features
 
 | Feature | Concrete behavior |
@@ -47,7 +45,7 @@ Plugin-capable hosts can install `JeremyWangCY/win-pilot`. The package contains 
 For other hosts:
 
 ```powershell
-npm install -g github:JeremyWangCY/win-pilot#v0.1.0
+npm install -g win-pilot@latest
 win-pilot doctor --probe
 ```
 
@@ -88,7 +86,7 @@ Expected: version `0.1.0`, platform `win32`, and every required doctor check mar
 Finish active UI tasks, update the runtime, and restart or reload the host's plugin/MCP process:
 
 ```powershell
-npm install -g github:JeremyWangCY/win-pilot#v0.1.0
+npm install -g win-pilot@latest
 win-pilot doctor --probe
 ```
 

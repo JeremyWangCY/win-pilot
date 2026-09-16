@@ -6,8 +6,6 @@
 
 Win-Pilot 是面向 Windows Computer Use 的 Agent Plugin。它通过同一个 `computer` 工具操作桌面应用和隔离 Chromium 会话，并让插件、MCP、CLI、Skill 与原生宿主 Adapter 共用完全一致的动作、恢复规则和返回结果。
 
-它不以固定产品名单为边界。Codex、Claude Code、Qoder、Pi 和 DeepSeek Harness 是首批持续回归矩阵；任何仍在维护的 Windows Agent，都可以使用标准 Agent Plugin、本地 stdio MCP 或 shell + skill 后备入口。
-
 ## 功能
 
 | 功能 | 具体行为 |
@@ -47,7 +45,7 @@ Agent 会优先安装完整插件；只有宿主不支持插件时，才回退�
 其他宿主使用：
 
 ```powershell
-npm install -g github:JeremyWangCY/win-pilot#v0.1.0
+npm install -g win-pilot@latest
 win-pilot doctor --probe
 ```
 
@@ -88,7 +86,7 @@ win-pilot doctor --probe --json
 先结束正在进行的界面任务，再更新 runtime，并重启或重新加载宿主的插件/MCP 进程：
 
 ```powershell
-npm install -g github:JeremyWangCY/win-pilot#v0.1.0
+npm install -g win-pilot@latest
 win-pilot doctor --probe
 ```
 

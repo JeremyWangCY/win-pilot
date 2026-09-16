@@ -9,7 +9,7 @@ assert.equal(plugin.name, 'win-pilot')
 assert.equal(plugin.version, '0.1.0')
 assert.equal(plugin.skills, './skills/')
 assert.equal(plugin.mcpServers, './.mcp.json')
-assert.deepEqual(mcp.mcpServers['win-pilot'].args, ['-y', 'github:JeremyWangCY/win-pilot#v0.1.0', 'mcp'])
+assert.deepEqual(mcp.mcpServers['win-pilot'].args, ['-y', 'win-pilot@0.1.0', 'mcp'])
 assert.match(skill, /^---\r?\nname: win-pilot\r?\n/)
 
 console.log('plugin manifest check PASSED')
