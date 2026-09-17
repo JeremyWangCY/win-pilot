@@ -284,11 +284,16 @@ assert.ok(
   'overlay loop must call [System.Windows.Forms.Application]::DoEvents()'
 )
 
-// 7. Ensure-OverlayProcess PID guard & Focused Element Priority in helper
+// 7. Hidden overlay/status processes must reject stale or recycled PID markers.
 assert.match(
   helperContent,
-  /\$pidNow\s*-gt\s*0.*?Get-Process\s*-Id\s*\$pidNow/s,
-  'Ensure-OverlayProcess must check $pidNow -gt 0 before Get-Process'
+  /function\s+Test-HiddenProcessMarker[\s\S]*?StartTime\.ToFileTimeUtc\(\)[\s\S]*?\$markerStarted/,
+  'hidden-process markers must bind a PID to its process start time'
+)
+assert.match(
+  helperContent,
+  /function\s+Ensure-OverlayProcess[\s\S]*?Test-HiddenProcessMarker[\s\S]*?Remove-Item\s+\$pidFile/,
+  'Ensure-OverlayProcess must discard stale markers before relaunching'
 )
 assert.match(
   helperContent,

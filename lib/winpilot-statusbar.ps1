@@ -278,7 +278,8 @@ if ($RenderSample) {
   exit 0
 }
 
-Set-Content -Path (Join-Path $dir "statusbar.pid") -Value $PID -Encoding ascii
+$processMarker = "$PID|$([Diagnostics.Process]::GetCurrentProcess().StartTime.ToFileTimeUtc())"
+Set-Content -Path (Join-Path $dir "statusbar.pid") -Value $processMarker -Encoding ascii
 
 $stateFile = Join-Path $dir "status.state"
 $lastTs = 0.0
@@ -313,8 +314,8 @@ while ($true) {
     $pidFile = Join-Path $dir "statusbar.pid"
     if (Test-Path $pidFile) {
       try {
-        $savedPid = Get-Content $pidFile -Raw -ErrorAction SilentlyContinue
-        if ([int]$savedPid -eq $PID) { Remove-Item $pidFile -Force -ErrorAction SilentlyContinue }
+        $savedMarker = Get-Content $pidFile -Raw -ErrorAction SilentlyContinue
+        if (($savedMarker.Trim().Split('|')[0]) -eq [string]$PID) { Remove-Item $pidFile -Force -ErrorAction SilentlyContinue }
       } catch { }
     }
     exit 0

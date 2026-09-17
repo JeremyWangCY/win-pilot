@@ -792,17 +792,30 @@ function Get-SelectedText {
 
 # ---------------------------------------------------------------- overlay + background dispatch
 
+function Test-HiddenProcessMarker {
+  param([string]$RawMarker)
+  if ([string]::IsNullOrWhiteSpace($RawMarker)) { return $false }
+  $parts = $RawMarker.Trim().Split('|')
+  if ($parts.Count -ne 2) { return $false }
+  $markerPid = 0
+  $markerStarted = [int64]0
+  if (-not [int]::TryParse($parts[0], [ref]$markerPid) -or $markerPid -le 0) { return $false }
+  if (-not [int64]::TryParse($parts[1], [ref]$markerStarted) -or $markerStarted -le 0) { return $false }
+  try {
+    $process = Get-Process -Id $markerPid -ErrorAction Stop
+    return ([int64]$process.StartTime.ToFileTimeUtc() -eq $markerStarted)
+  } catch { return $false }
+}
+
 function Ensure-OverlayProcess {
-  # ponytail: pid-marker check; races only duplicate a harmless overlay instance
+  # PID + process-start marker prevents a recycled PID from permanently
+  # suppressing the overlay after its original process has exited.
   $dir = Join-Path $env:TEMP 'win-pilot'
   $pidFile = Join-Path $dir 'overlay.pid'
   if (Test-Path $pidFile) {
-    $rawPid = Get-Content $pidFile -Raw -ErrorAction SilentlyContinue
-    $pidNow = 0
-    if ($rawPid -and [int]::TryParse($rawPid.Trim(), [ref]$pidNow) -and ($pidNow -gt 0)) {
-      $p = Get-Process -Id $pidNow -ErrorAction SilentlyContinue
-      if ($p) { return }
-    }
+    $marker = Get-Content $pidFile -Raw -ErrorAction SilentlyContinue
+    if (Test-HiddenProcessMarker -RawMarker $marker) { return }
+    Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
   }
   $ov = Join-Path $PSScriptRoot 'virtual-cursor-overlay.ps1'
   if (-not (Test-Path $ov)) { return }
@@ -840,16 +853,13 @@ function Write-CursorState {
 }
 
 function Ensure-StatusbarProcess {
-  # ponytail: pid-marker check; races only duplicate a harmless status pill
+  # Apply the same PID-reuse protection as the cursor overlay.
   $dir = Join-Path $env:TEMP 'win-pilot'
   $pidFile = Join-Path $dir 'statusbar.pid'
   if (Test-Path $pidFile) {
-    $rawPid = Get-Content $pidFile -Raw -ErrorAction SilentlyContinue
-    $pidNow = 0
-    if ($rawPid -and [int]::TryParse($rawPid.Trim(), [ref]$pidNow) -and ($pidNow -gt 0)) {
-      $p = Get-Process -Id $pidNow -ErrorAction SilentlyContinue
-      if ($p) { return }
-    }
+    $marker = Get-Content $pidFile -Raw -ErrorAction SilentlyContinue
+    if (Test-HiddenProcessMarker -RawMarker $marker) { return }
+    Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
   }
   $sb = Join-Path $PSScriptRoot 'winpilot-statusbar.ps1'
   if (-not (Test-Path $sb)) { return }
