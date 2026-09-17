@@ -292,7 +292,7 @@ while ($true) {
       $st = Get-Content -Path $stateFile -Raw -ErrorAction Stop | ConvertFrom-Json
       if ($null -ne $st -and $st.ts) {
         $age = ([DateTimeOffset]::Now.ToUnixTimeMilliseconds()) - ([double]$st.ts)
-        if ($st.show -and $age -ge 0 -and $age -lt 4000) { $show = $true }
+        if ($st.show -and $age -ge 0 -and $age -lt 6000) { $show = $true }
       }
     } catch { }
   }

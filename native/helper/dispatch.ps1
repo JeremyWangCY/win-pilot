@@ -1453,23 +1453,23 @@ function Invoke-ActionRequest {
 
     'mouse_move' {
       $app = Get-PayloadValue 'app'
-      $x = [int](Get-PayloadValue 'x')
-      $y = [int](Get-PayloadValue 'y')
+      $rawX = Get-PayloadValue 'x'
+      $rawY = Get-PayloadValue 'y'
       $rawMods = [string](Get-PayloadValue 'modifiers')
       $dispatch = Get-Dispatch
       $win = $null
       if ($app -or (Get-PayloadValue 'hwnd')) {
         $win = Resolve-TargetWindow -App $app -Index ([int](Get-PayloadValue 'window_index'))
-        $r = $win.Rect
-        if ($x -ge $r.Left -and $x -le $r.Right -and $y -ge $r.Top -and $y -le $r.Bottom) {
-          $sx = $x; $sy = $y
-        } elseif ($x -gt 0 -or $y -gt 0) {
-          $sx = $r.Left + $x; $sy = $r.Top + $y
+        if ($null -eq $rawX -and $null -eq $rawY) {
+          $c = Get-OverlayPoint-WindowCenter $win
+          $sx = $c[0]; $sy = $c[1]
         } else {
-          $c = Get-OverlayPoint-WindowCenter $win; $sx = $c[0]; $sy = $c[1]
+          $pt = Resolve-ClickPoint -RawX $rawX -RawY $rawY -Win $win -Space ([string](Get-PayloadValue 'coordinate_space'))
+          $sx = $pt[0]; $sy = $pt[1]
         }
       } else {
-        $sx = $x; $sy = $y
+        $pt = Resolve-ClickPoint -RawX $rawX -RawY $rawY -Win $null -Space screen
+        $sx = $pt[0]; $sy = $pt[1]
       }
       Assert-ScreenshotBinding -Hwnd $(if ($win) { $win.Hwnd } else { [IntPtr]::Zero })
       if ($dispatch -eq 'background') {
