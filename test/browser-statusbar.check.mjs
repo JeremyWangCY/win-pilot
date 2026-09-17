@@ -11,13 +11,15 @@ const tool = defineComputerTool(value => value, {})
 try {
   await tool.execute({ action: 'browser_state', browser_endpoint: endpoint })
   assert.ok(fs.existsSync(statePath), 'browser action must write status state')
-  const hideDeadline = Date.now() + 3000
+  await new Promise(resolve => setTimeout(resolve, 650))
   let state = JSON.parse(fs.readFileSync(statePath, 'utf8'))
+  assert.equal(state.show, true, 'status must remain visible between consecutive tool calls instead of flashing')
+  const hideDeadline = Date.now() + 8000
   while (state.show !== false && Date.now() < hideDeadline) {
     await new Promise(resolve => setTimeout(resolve, 50))
     state = JSON.parse(fs.readFileSync(statePath, 'utf8'))
   }
-  assert.equal(state.show, false, 'browser action must hide status after completion')
+  assert.equal(state.show, false, 'status must hide after the idle grace period')
 } finally {
   stopDaemon()
 }
