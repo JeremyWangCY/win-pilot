@@ -17,6 +17,7 @@ Win-Pilot 是面向 Windows Computer Use 的 Agent Plugin。它通过同一个 `
 | 可恢复协议 | 统一 `ok`、`outcome`、`error_code`、动作后观察与未知结果处理 |
 | 通用后备入口 | 支持工具的 Agent 使用 stdio MCP；仅支持 shell 的 Agent 使用 JSON CLI + Skill |
 | Schema 可移植性 | 工具 Schema 持续验证 OpenAI 与 Gemini 系列消费者 |
+| DSH Provider 生命周期 | 在 DSH 0.1.7+ 占用唯一的 `computerUse` Provider 槽位；旧版 DSH 自动保持原有仅工具路径 |
 
 ## 环境要求
 
@@ -79,7 +80,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-预期版本为 `0.1.1`、平台为 `win32`，doctor 的必要检查全部为 `ok`。
+预期版本为 `0.1.4`、平台为 `win32`，doctor 的必要检查全部为 `ok`。
 
 ### 更新
 
@@ -143,6 +144,7 @@ Win-Pilot 以当前 Windows 用户权限运行，不包含遥测，也不会上�
 | `browser_endpoint required` | 没有自有浏览器会话 | 先以 `headless: true` 启动 Edge |
 | 令牌过期 | 目标状态变化或令牌到期 | 重新观察同一目标 |
 | doctor 失败 | runtime 条件缺失 | 查看 `win-pilot doctor --probe --json` |
+| `computer use provider ... already registered` | DSH 已启用另一个 Computer Use Provider | 只保留一个桌面 Provider |
 
 当前兼容构建的诊断文件仍位于 `%TEMP%\win-pilot-diag.log`。
 
