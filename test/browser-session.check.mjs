@@ -297,7 +297,9 @@ try {
   const openedState = await browserAction('browser_state', { browser_endpoint, tab_id: opened.tab_id })
   assert.ok(openedState.url.endsWith('/second'))
   await browserAction('browser_close', { browser_endpoint, tab_id: opened.tab_id, expected_url: openedState.url })
-  await assert.rejects(browserAction('browser_state', { browser_endpoint, tab_id: opened.tab_id }), /not found/)
+  // Chromium may drop the target before discovery refreshes or reject the first
+  // command racing with target teardown; both prove the closed tab is unusable.
+  await assert.rejects(browserAction('browser_state', { browser_endpoint, tab_id: opened.tab_id }), /not found|CDP command rejected/)
   const aborted = new AbortController()
   aborted.abort()
   await assert.rejects(browserAction('browser_state', args, aborted.signal), /abort/i)
