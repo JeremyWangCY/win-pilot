@@ -17,6 +17,7 @@ Win-Pilot is an Agent Plugin for Windows Computer Use. It gives Windows agents o
 | Recoverable protocol | Stable `ok`, `outcome`, `error_code`, post-action observations, and unknown-outcome handling |
 | Universal fallbacks | Local stdio MCP for tool-aware agents; JSON CLI plus skill for shell-capable agents |
 | Schema portability | Tool schema is validated for OpenAI- and Gemini-family consumers |
+| DSH provider lifecycle | On DSH 0.1.7+, claims the exclusive `computerUse` provider slot; older DSH keeps the legacy tool-only path |
 
 ## Requirements
 
@@ -79,7 +80,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected: version `0.1.1`, platform `win32`, and every required doctor check marked `ok`.
+Expected: version `0.1.4`, platform `win32`, and every required doctor check marked `ok`.
 
 ### Updating
 
@@ -143,6 +144,7 @@ Win-Pilot runs with the Windows user's permissions. It contains no telemetry and
 | `browser_endpoint required` | No owned browser exists | Launch Edge with `headless: true` first |
 | Token is stale | Target state changed or token expired | Observe the same target again |
 | Doctor fails | Runtime prerequisite missing | Inspect `win-pilot doctor --probe --json` |
+| `computer use provider ... already registered` | Another DSH computer-use provider is enabled | Keep only one desktop provider enabled |
 
 Compatibility-build diagnostics currently use `%TEMP%\win-pilot-diag.log`.
 
