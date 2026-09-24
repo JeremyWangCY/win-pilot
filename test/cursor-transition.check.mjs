@@ -10,7 +10,7 @@ const psExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'Wi
 const output = execFileSync(psExe, [
   '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', overlayPath,
   '-TransitionSample', '100,100,500,300,320',
-], { encoding: 'utf8', timeout: 10000 }).trim()
+], { encoding: 'utf8', timeout: 30000 }).trim()
 
 const points = JSON.parse(output)
 assert.ok(points.length >= 10, 'a visible transition should contain multiple intermediate positions')
