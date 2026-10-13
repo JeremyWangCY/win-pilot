@@ -80,7 +80,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-预期版本为 `0.1.6`、平台为 `win32`，doctor 的必要检查全部为 `ok`。
+预期版本为 `0.1.7`、平台为 `win32`，doctor 的必要检查全部为 `ok`。
 
 ### 更新
 
