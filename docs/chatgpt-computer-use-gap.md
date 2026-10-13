@@ -24,6 +24,41 @@ Win-Pilot 适合浏览器中的结构化操作、常规 Win32 控件、需要不
 
 下一阶段优先做两件事：收集真实应用回归样本；为拒绝的自绘控件提供经过验证的前台路径，而不是放宽后台点击校验。截图观察已改为默认跳过 UIA 扫描；只有需要元素索引或文档文本时才请求 `include_text: true`。
 
+## 2026-10-13 更新（二）：焦点策略
+
+### 问题
+
+Win-Pilot 此前会在每次后台动作结束后检查前台窗口是否变化，若变化则**把你刚切过去的窗口压到最底，再用 `AttachThreadInput` + 模拟 ALT/ESC 强行把焦点抢回原窗口**。用户感受到的"抢界面"主要来自这里：它用比原激活更暴力的手段去"纠正"激活，而且当你自己切换窗口时，它会把这个正当操作当成异常并撤销。
+
+### 两家的做法（静态逆向，详见 cua-parity.md）
+
+| | 未授权激活的应对 |
+|---|---|
+| ZCode CUA | 事前 `prevent_activation` 门 + AX hit-test 坐标点击；`strategy: event` 目标不在前台时**直接拒绝**（`FOREGROUND_REQUIRED`），什么都不发 |
+| OpenAI Codex | 事前 `OpenInputDesktop` 等原生检查；输入期间有 **user interruption monitor**，检测到用户操作就**中止并要求重新观察** |
+
+两家都在**防止**或**让路**；Win-Pilot 在**事后反向强抢**。
+
+### 改动
+
+新增 `focusPolicy` 设置（默认 `yield`，也可按调用传 `focus_policy`）：
+
+- **`yield`（默认）**：检测到前台变化时在结果里报告 `focus_changed` / `needs_observation` 并**停止**，不再碰焦点。
+- **`restore`**：走新的 `TryRestoreForeground`——只调 `SetForegroundWindow`，**不** attach 线程输入、**不**模拟按键、**不**动 z-order；被 Windows 拒绝就如实报告 `focus_restored: false`。
+- **`never`**：完全不观察、不报告。
+
+同时**删除观察路径的强制前台**：`Do-AppState` 不再对目标调 `ForceForeground`（WGC 本就支持遮挡捕获，读 UIA 树也不需要前台）。`activate_window` 与显式 `dispatch: foreground` 的已验证激活路径保持不变。
+
+### 一个被实测否定的方案
+
+原计划调用 `LockSetForegroundWindow` 做事前门。**实测不可行**：该 API 只对**拥有前台窗口的进程**生效，helper 永远在后台，调用返回 `False` 且 `GetLastError=5`（`ERROR_ACCESS_DENIED`）；加锁后实测仍能抢到前台。因此**未采用**，避免留下无效代码。
+
+### 验证
+
+- `test/focus-policy.check.mjs`：默认值为 `yield`；观察路径不含 `ForceForeground`；守卫不含 `ForceForeground`/`PushWindowToBottom`；`focus_policy: never` 不报告变化；按调用覆盖生效；并对真实 helper 跑 `test/fixtures/restore-primitive.ps1`（`TryRestoreForeground` 的 IL 为 94 字节 vs `ForceForeground` 390 字节，对无效句柄返回 `False` 而非强抢）。
+- 实测守卫确实触发：动作进行中制造真实前台变化 → `yield` 报 `focus_changed=true`、`needs_observation=true` 且**不争抢**；`never` 完全静默。
+- 变异测试确认判别力：把 `ForceForeground` 放回守卫、把 `PushWindowToBottom` 放回守卫、让观察重新强制前台——三者都会让检查失败。
+
 ## 2026-10-13 更新
 
 本节记录本轮补齐的项，以及仍然保留的差距。逐能力的静态对照（含 REA 证据 id 与产物摘要）见 [cua-parity.md](./cua-parity.md)。

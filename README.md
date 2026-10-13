@@ -122,6 +122,7 @@ Every field is optional; an unset field resolves to the deployment default. The 
 | `browserCommandTimeoutMs` | `12000` | Per-CDP-command timeout |
 | `browserCaptureNetworkWaitMs` | `1500` | Post-click network evidence wait |
 | `lockGuard` | `true` | Refuse input while the desktop is locked |
+| `focusPolicy` | `yield` | What to do when an action moves the foreground window: `yield` reports and stops, `restore` asks non-preemptively, `never` ignores it |
 | `exclusiveControl` | `false` | Only one live session may inject input |
 | `allowSystemKeys` | `false` | Allow Windows/Meta system keys |
 | `confirmConsequential` | `false` | Mark consequential actions as needing confirmation |

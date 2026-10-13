@@ -12,6 +12,20 @@ function Get-Dispatch {
   return ([string]$d).ToLowerInvariant()
 }
 
+function Get-FocusPolicy {
+  # What to do when a background action moves the foreground window.
+  #   yield   (default) report it and stop; never compete for focus
+  #   restore best-effort non-preemptive restore of the window the user had
+  #   never   do not even observe the change
+  # An unrecognized or absent value resolves to `yield`: the safe default is to
+  # leave the user's focus alone.
+  $p = Get-PayloadValue 'focus_policy'
+  if (-not $p) { return 'yield' }
+  $normalized = ([string]$p).ToLowerInvariant()
+  if ($normalized -in @('yield', 'restore', 'never')) { return $normalized }
+  return 'yield'
+}
+
 function Get-OverlayEnabled {
   # codex-style cursor indicator: ON by default (user asked to see where the AI will click).
   # Pass overlay: false on an action to hide the indicator for that action.

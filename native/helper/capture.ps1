@@ -106,9 +106,10 @@ function Do-AppState {
   param([string]$App, [int]$WindowIndex, [bool]$WithScreenshot, [bool]$WithText, [string]$Dispatch, [bool]$DisableDiffing = $false)
   $script:observation = $null
   $win = Resolve-TargetWindow -App $App -Index $WindowIndex
+  # Observation never needs the foreground: WGC and PrintWindow both capture an
+  # occluded window, and the UIA tree is read without activation. Forcing the
+  # target forward here stole the user's focus for a pure read.
   if ($Dispatch -eq 'foreground') {
-    [DshWin32]::ForceForeground($win.Hwnd)
-    Start-Sleep -Milliseconds 250
     $fresh = @([DshWin32]::EnumWindowsList() | Where-Object { $_.Hwnd -eq $win.Hwnd })
     if ($fresh.Count -gt 0) { $win = $fresh[0] }
   }
