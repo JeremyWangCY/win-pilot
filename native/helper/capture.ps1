@@ -103,7 +103,7 @@ function Invoke-WgcCapture {
 }
 
 function Do-AppState {
-  param([string]$App, [int]$WindowIndex, [bool]$WithScreenshot, [bool]$WithText, [string]$Dispatch)
+  param([string]$App, [int]$WindowIndex, [bool]$WithScreenshot, [bool]$WithText, [string]$Dispatch, [bool]$DisableDiffing = $false)
   $script:observation = $null
   $win = Resolve-TargetWindow -App $App -Index $WindowIndex
   if ($Dispatch -eq 'foreground') {
@@ -293,8 +293,12 @@ function Do-AppState {
     elseif ($tree.Count -le 2) { $accessibilityStatus = 'partial' }
     else { $accessibilityStatus = 'available' }
     $deltaKey = ('{0}:{1}' -f [string]$win.Hwnd.ToInt64(), [string]$win.Pid)
+    # A caller asking for a complete tree still advances the revision, so the
+    # next diffing observation compares against this one rather than the stale
+    # predecessor. `delta` is nulled only in the returned payload.
     $accessibilityDelta = Get-AccessibilityDelta -Key $deltaKey -Tree $tree
     $accessibilityRevision = $accessibilityDelta.revision
+    if ($DisableDiffing) { $accessibilityDelta = $null }
     $docText = if ($isCommonDialog) {
       [string](($tree | ForEach-Object { @($_.name, $_.value) } | Where-Object { $_ }) -join "`n")
     } else { Get-DocumentText $win.Hwnd }
