@@ -350,4 +350,34 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
     'the unavailable card must not render editable controls')
 }
 
+// --- what the shipped client-module scan will do with this package ---------
+
+// The scan (`packages/client/modules`) anchors at the config tree, resolves
+// `<name>/package.json`, requires `dsh.client.platform === 'web'`, and maps
+// `exports["./client"]` to a bundle path it then reads. Reproduce those exact
+// steps against this package so a declaration the host would reject fails here
+// rather than silently producing no card.
+{
+  const pkgUrl = new URL('../package.json', import.meta.url)
+  const pkg = JSON.parse(readFileSync(pkgUrl, 'utf8'))
+  const decl = pkg.dsh?.client
+  assert.ok(decl, 'the scan requires a dsh.client declaration')
+  assert.equal(decl.platform, 'web', "the scan requires dsh.client.platform === 'web'")
+  assert.ok(decl.inject === undefined || (Array.isArray(decl.inject) && decl.inject.every(i => typeof i === 'string')),
+    'dsh.client.inject must be a string array when present')
+  assert.ok(decl.immediately === undefined || typeof decl.immediately === 'boolean',
+    'dsh.client.immediately must be a boolean when present')
+
+  const exported = pkg.exports?.['./client']
+  const rel = typeof exported === 'string'
+    ? exported
+    : (exported && typeof exported === 'object' && typeof exported.default === 'string' ? exported.default : undefined)
+  assert.ok(rel, 'the scan rejects a dsh.client declaration with no resolvable exports["./client"]')
+
+  // The bundle the host will serve must be the file these tests just exercised.
+  const declaredBundle = readFileSync(new URL(rel, pkgUrl), 'utf8')
+  assert.equal(declaredBundle, source,
+    'exports["./client"] must point at the same bundle the card tests exercise')
+}
+
 console.log('client bundle check PASSED')
