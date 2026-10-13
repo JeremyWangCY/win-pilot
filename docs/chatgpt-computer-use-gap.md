@@ -24,6 +24,45 @@ Win-Pilot 适合浏览器中的结构化操作、常规 Win32 控件、需要不
 
 下一阶段优先做两件事：收集真实应用回归样本；为拒绝的自绘控件提供经过验证的前台路径，而不是放宽后台点击校验。截图观察已改为默认跳过 UIA 扫描；只有需要元素索引或文档文本时才请求 `include_text: true`。
 
+## 2026-10-13 更新（三）：用户操作即让路
+
+### 补的能力
+
+Codex 的 Windows 运行时在 `src/input/interruption.rs` 安装**低层键盘/鼠标钩子**（二进制里有 `SetWindowsHookEx`、`"failed to install keyboard hook"`、`"user input was detected in this window; call get_window_state before continuing"`），一旦检测到用户操作就**中止受保护的输入**。Win-Pilot 此前**完全没有**这层能力。
+
+新增 `userActivityGuard`（默认关，按调用传 `user_activity_guard`，接受布尔或秒数）。**没有采用安装钩子**——低层钩子会被杀软/EDR 盯上、需要额外授权路径；改用 `GetLastInputInfo`（系统级"上次真实输入时间"），同样是"你在操作我就退"，但轻得多。
+
+触发时返回 `error_code: 'user_active'`、`action_sent: false`、`retry: 'retry'`、`needs_observation: true`，不发送任何输入。
+
+### 一个必须先验证的前提
+
+这个守卫只有在**Win-Pilot 自己的合成输入不推进该 tick**时才成立，否则它会拦住自己。实测（`test/fixtures/user-activity-probe.ps1`）：
+
+| 输入方式 | 是否推进 tick |
+|---|---|
+| 后台 PostMessage / SendMessage WM_CHAR、WM_KEYDOWN/UP | **否** |
+| 后台 UIA `ValuePattern.SetValue` | **否** |
+| 前台 `SendInput` / `keybd_event` | **是**（`keybd_event` 实测推进） |
+
+所以守卫**只在后台 dispatch 生效**，前台模式必须排除——否则会拦自己的输入。这条前提由 fixture 固化，前提被破坏会直接 fail。
+
+### 实测触发证据
+
+| 场景 | 结果 |
+|---|---|
+| 桌面空闲 407 秒 + 守卫 2 秒 | 不拦（`error_code` 为空） |
+| 生成真实输入后 idle=0ms + 守卫 2 秒 | `user_active`、`action_sent=false`、`retry=retry` |
+| 同一真实输入 + 守卫 0 | 不拦（可覆盖） |
+| 守卫 60 秒 + 观察动作 | 不拦（观察始终可用） |
+| `user_activity_guard: true` | 走 2 秒窗口（不是静默关掉） |
+| `user_activity_guard: 5`（数值） | 按 5 秒生效 |
+
+变异测试：把 `user_active` 改成别的错误码、去掉"仅后台"限定——两者都会让 `test/user-activity.check.mjs` 失败。
+
+### 仍保留的差距
+
+Win-Pilot 用的是**时间戳轮询**，Codex 用的是**钩子**。差别是：钩子能在输入**发生的那一刻**中止一个已经在进行的动作；轮询只在动作**开始前**判断。对一个动作内部中途发生的用户输入，Win-Pilot 目前的答复是焦点守卫（`focus_changed` + `needs_observation`），而不是中止。完整的中止语义需要把守卫下沉到输入派发循环里，属于后续工作。
+
 ## 2026-10-13 更新（二）：焦点策略
 
 ### 问题

@@ -80,7 +80,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-预期版本为 `0.1.7`、平台为 `win32`，doctor 的必要检查全部为 `ok`。
+预期版本为 `0.1.8`、平台为 `win32`，doctor 的必要检查全部为 `ok`。
 
 ### 更新
 
@@ -160,6 +160,7 @@ win-pilot:
 | `browserCaptureNetworkWaitMs` | `1500` | 点击后网络证据等待 |
 | `lockGuard` | `true` | 锁屏时拒绝输入 |
 | `focusPolicy` | `yield` | 动作改变前台窗口时的处理：`yield` 只报告并停止，`restore` 非抢占式尝试还原，`never` 完全不处理 |
+| `userActivityGuard` | `false` | 后台模式下，你正在操作时拒绝注入输入并返回 user_active（可重试） |
 | `exclusiveControl` | `false` | 同一时间仅一个会话可注入输入 |
 | `allowSystemKeys` | `false` | 允许 Windows/Meta 系统键 |
 | `confirmConsequential` | `false` | 将有副作用的动作标记为需要确认 |
