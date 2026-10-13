@@ -10,6 +10,27 @@ const rootDir = path.resolve(__dirname, '..')
 const helperPath = path.join(rootDir, 'lib', 'win-pilot-helper.ps1')
 const helperSrc = fs.readFileSync(helperPath, 'utf8')
 
+/**
+ * Foreground activation is advisory and Win-Pilot refuses when confirmation
+ * fails, so a single attempt is not a reliable assertion on a shared desktop.
+ * Retry a bounded number of times and return the last result.
+ * @param tool - the computer tool under test.
+ * @param hwnd - the owned fixture window to activate.
+ * @returns the last activate_window result.
+ */
+async function activateEventually(tool, hwnd, attempts = 5) {
+  let result
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    result = await tool.execute({ action: 'activate_window', hwnd })
+    if (result.ok === true) return result
+    // Only an unmet foreground confirmation is retryable here; any other
+    // failure is a real defect and must surface immediately.
+    if (result.error_code !== 'foreground_activation_unconfirmed') return result
+    await new Promise(resolve => setTimeout(resolve, 150))
+  }
+  return result
+}
+
 // ============================================================================
 // 1. Schema Parity & Contract: new actions, hwnd parameter, chord support
 // ============================================================================
@@ -195,8 +216,13 @@ try {
   assert.equal(afterMinimize.message,
     'background_unavailable: target window is minimized; background inspection cannot observe minimized windows. Use activate_window to restore it to the foreground first, or use foreground dispatch if permitted.')
 
-  // 3d. activate_window on owned fixture
-  const actRes = await tool.execute({ action: 'activate_window', hwnd: fixtureHwnd })
+  // 3d. activate_window on owned fixture.
+  // Foreground activation is advisory: another application can take focus
+  // between the request and the confirmation check, and Win-Pilot then refuses
+  // with `foreground_activation_unconfirmed` rather than sending input to the
+  // wrong window. That refusal is correct behavior, so the assertion is that
+  // activation eventually succeeds, not that it wins on the first attempt.
+  const actRes = await activateEventually(tool, fixtureHwnd)
   assert.equal(actRes.ok, true, `activate_window should succeed: ${JSON.stringify(actRes)}`)
   assert.equal(actRes.hwnd, fixtureHwnd, 'activate_window hwnd must match')
   assert.equal(actRes.activated, true, 'activate_window activated must be true')
@@ -208,7 +234,7 @@ try {
   assert.equal(minimizeRes.minimized, true, 'minimize_window minimized must be true')
   const minimizedState = await tool.execute({ action: 'get_window', hwnd: fixtureHwnd })
   assert.equal(minimizedState.minimized, true, 'get_window must confirm the owned fixture is minimized')
-  const restoredAgain = await tool.execute({ action: 'activate_window', hwnd: fixtureHwnd })
+  const restoredAgain = await activateEventually(tool, fixtureHwnd)
   assert.equal(restoredAgain.ok, true, `activate_window must restore after minimize_window: ${JSON.stringify(restoredAgain)}`)
 
   // 3f. close_window on owned fixture
