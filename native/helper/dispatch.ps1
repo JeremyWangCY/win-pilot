@@ -132,6 +132,33 @@ function Split-AppCommand {
   return @($filePath, $argList)
 }
 
+# Actions that inject input into whatever window is focused. Everything else
+# (observation, enumeration, clipboard, browser CDP) is safe while locked.
+$script:InputActions = @(
+  'click', 'press_key', 'type_text', 'scroll', 'drag', 'set_value',
+  'perform_secondary_action', 'mouse_move', 'mouse_down', 'mouse_up',
+  'hold_key', 'select_text', 'activate_window', 'close_window', 'minimize_window'
+)
+
+# The desktop-lock surfaces: Windows presents one of these as the foreground
+# window while the workstation is locked or the secure desktop is up. Input sent
+# then either vanishes or lands in the lock UI, so refuse before dispatch.
+$script:LockProcessNames = @('logonui', 'lockapp', 'winlogon', 'screensaver')
+
+function Test-DesktopLocked {
+  try {
+    $pid = [int][DshWin32]::ForegroundProcessId()
+    if ($pid -le 0) { return $false }
+    $name = Get-ProcessNameFast -ProcessId $pid -Cache $null
+    if (-not $name) { return $false }
+    $base = ([string]$name).ToLowerInvariant() -replace '\.exe$', ''
+    return ($script:LockProcessNames -contains $base)
+  } catch {
+    # Detection failure must not block normal work; the guard is advisory.
+    return $false
+  }
+}
+
 function Assert-ForegroundTarget {
   param($Win)
   [DshWin32]::ForceForeground($Win.Hwnd)
@@ -371,6 +398,25 @@ function Invoke-ActionRequest {
   $prevUserFg = [DshWin32]::GetForegroundWindow()
   $dispatchMode = Get-Dispatch
 
+  # Desktop-lock guard: refuse input actions before any dispatch while a lock
+  # surface owns the foreground. A locked desktop is a hard stop, not a retry —
+  # input either vanishes or lands in the lock UI, so reporting it as a normal
+  # failure would invite the caller to retry into a void. Observation and
+  # enumeration stay allowed so the caller can see the state.
+  if ($script:InputActions -contains $Action) {
+    $guard = Get-PayloadValue 'lock_guard'
+    if ($null -eq $guard) { $guard = $true }
+    if ([bool]$guard -and (Test-DesktopLocked)) {
+      $result.ok = $false
+      $result.outcome = 'not_executed'
+      $result.error_code = 'screen_locked'
+      $result.retry = 'never'
+      $result.action_sent = $false
+      $result.message = 'The Windows desktop is locked (a lock surface owns the foreground); no input was sent. Ask the user to unlock the desktop and re-observe.'
+      return $result
+    }
+  }
+
   try {
     switch ($Action) {
     'list_apps' {
@@ -421,7 +467,11 @@ function Invoke-ActionRequest {
       if ($null -eq $shot) { $shot = $true }
       $withText = Get-PayloadValue 'include_text'
       if ($null -eq $withText) { $withText = $false }
-      $st = Do-AppState -App $app -WindowIndex $idx -WithScreenshot ([bool]$shot) -WithText ([bool]$withText) -Dispatch (Get-Dispatch)
+      # `disable_diffing` (ZCode/Computer Use spelling) returns a complete tree
+      # instead of a delta against the previous observation.
+      $disableDiffing = Get-PayloadValue 'disable_diffing'
+      if ($null -eq $disableDiffing) { $disableDiffing = $false }
+      $st = Do-AppState -App $app -WindowIndex $idx -WithScreenshot ([bool]$shot) -WithText ([bool]$withText) -Dispatch (Get-Dispatch) -DisableDiffing ([bool]$disableDiffing)
       $result.window = $st.window
       $result.snapshot_id = $st.snapshot_id
       $result.screenshot_id = $st.screenshot_id
@@ -1022,6 +1072,48 @@ function Invoke-ActionRequest {
       $len = if ($text) { $text.Length } else { 0 }
       $result.length = $len
       $result.message = "Clipboard updated ($len chars)"
+    }
+
+    # Atomic paste: set the clipboard, then send the paste chord. This is the
+    # correct path for rich text and for targets that reject character-by-
+    # character input (many canvas/Electron editors). The previous clipboard is
+    # restored afterwards so a paste does not silently destroy user content.
+    'paste' {
+      $app = Get-PayloadValue 'app'
+      $text = Get-PayloadValue 'text'
+      if ($null -eq $text) { throw 'paste requires text' }
+      $text = [string]$text
+      $dispatch = Get-Dispatch
+      $win = $null
+      if ($app -or (Get-PayloadValue 'hwnd')) {
+        $win = Resolve-TargetWindow -App $app -Index ([int](Get-PayloadValue 'window_index'))
+      }
+      if ($dispatch -eq 'foreground') {
+        if ($null -eq $win) { throw 'target_required: foreground paste requires app or hwnd' }
+        $result.focus_ok = Assert-ForegroundTarget -Win $win
+      } elseif ($null -eq $win) {
+        throw 'target_required: background paste requires app or hwnd; global SendInput requires dispatch=foreground'
+      }
+      $previous = $null
+      $hadPrevious = $false
+      try {
+        $previous = Get-ClipboardTextSafe
+        $hadPrevious = $true
+      } catch { $hadPrevious = $false }
+      Set-ClipboardTextSafe -Text $text
+      $h = Find-TextInputHwnd $win.Hwnd
+      if ($h -eq [IntPtr]::Zero) { $h = $win.Hwnd }
+      if ($dispatch -eq 'foreground') {
+        [DshWin32]::KeyChord('v', 'ctrl')
+      } else {
+        Send-BackgroundKey -Hwnd $h -Key 'v' -Modifiers 'ctrl'
+      }
+      if ($hadPrevious) {
+        try { Set-ClipboardTextSafe -Text $previous } catch { /* restore is best-effort */ }
+      }
+      $result.length = $text.Length
+      $result.method = if ($dispatch -eq 'foreground') { 'sendinput_paste' } else { 'wm_key_paste' }
+      $result.message = "Pasted $($text.Length) char(s) via Ctrl+V; the previous clipboard was restored"
     }
 
     'list_displays' {
@@ -1909,7 +2001,70 @@ function Invoke-ActionRequest {
           throw "element $element does not support TextPattern; cannot select text"
         }
       } else {
+        # `prefix`/`suffix` locate text by content and refuse an ambiguous match
+        # rather than silently selecting the first hit. An offset request
+        # (start/length) stays the positional path.
+        $rawPrefix = Get-PayloadValue 'prefix'
+        $rawSuffix = Get-PayloadValue 'suffix'
+        $rawText = Get-PayloadValue 'text'
+        $byContent = ($null -ne $rawText) -and ([string]$rawText -ne '')
         $doc = $tp.DocumentRange
+        if ($byContent) {
+          $needle = [string]$rawText
+          $whole = $doc.GetText(-1)
+          $hits = New-Object System.Collections.Generic.List[int]
+          $from = 0
+          while ($true) {
+            $at = $whole.IndexOf($needle, $from, [System.StringComparison]::Ordinal)
+            if ($at -lt 0) { break }
+            $hits.Add($at)
+            $from = $at + [Math]::Max(1, $needle.Length)
+          }
+          if ($hits.Count -eq 0) {
+            $result.ok = $false
+            $result.error_code = 'text_not_found'
+            $result.message = "select_text: the requested text was not found in element $element"
+            break
+          }
+          $chosen = -1
+          if ($hits.Count -eq 1) {
+            $chosen = $hits[0]
+          } else {
+            # Disambiguate on the supplied context; the match is refused when
+            # that still leaves more than one candidate.
+            $before = if ($null -ne $rawPrefix) { [string]$rawPrefix } else { '' }
+            $after = if ($null -ne $rawSuffix) { [string]$rawSuffix } else { '' }
+            $candidates = @()
+            foreach ($hit in $hits) {
+              $okBefore = $true
+              if ($before) {
+                $okBefore = ($hit -ge $before.Length) -and ($whole.Substring($hit - $before.Length, $before.Length) -ceq $before)
+              }
+              $okAfter = $true
+              if ($after) {
+                $endAt = $hit + $needle.Length
+                $okAfter = ($endAt + $after.Length -le $whole.Length) -and ($whole.Substring($endAt, $after.Length) -ceq $after)
+              }
+              if ($okBefore -and $okAfter) { $candidates += $hit }
+            }
+            if ($candidates.Count -eq 1) {
+              $chosen = $candidates[0]
+            } elseif ($candidates.Count -eq 0) {
+              $result.ok = $false
+              $result.error_code = 'text_not_found'
+              $result.message = "select_text: $($hits.Count) matches for the requested text but none matched the given prefix/suffix"
+              break
+            } else {
+              $result.ok = $false
+              $result.error_code = 'ambiguous_text_match'
+              $result.ambiguous_matches = $candidates.Count
+              $result.message = "select_text: $($candidates.Count) matches remain after applying prefix/suffix; supply more context. Refused rather than selecting the first hit."
+              break
+            }
+          }
+          $start = $chosen
+          $len = $needle.Length
+        }
         # collapse the range at the document start: pull the End endpoint all the way
         # back (MoveEndpointByUnit clamps, endpoints never cross)
         $null = $doc.MoveEndpointByUnit([System.Windows.Automation.TextPatternRangeEndpoint]::End, [System.Windows.Automation.TextUnit]::Character, -1000000000)
@@ -1926,6 +2081,7 @@ function Invoke-ActionRequest {
         $result.selected_text = $selText
         $result.start = $start
         $result.length = $len
+        if ($byContent) { $result.matched_by = 'content' }
         if ($len -gt 0) {
           $result.message = "Selected $len char(s) from offset $start (recovered $($selText.Length))"
           if ($selText.Length -ne $len) { $result.message += '; provider returned a different char count than requested (TextUnit semantics vary by UIA provider)' }
