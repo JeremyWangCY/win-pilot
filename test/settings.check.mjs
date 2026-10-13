@@ -145,7 +145,7 @@ function fakeHarness({ initial = {}, registerImpl } = {}) {
 {
   const { state, settingsCtx } = fakeHarness({ initial: { maxBatchActions: 5 } })
   const ctx = { inject: (deps, callback) => { assert.deepEqual(deps, ['settings']); callback(settingsCtx) } }
-  assert.equal(installWinPilotSettings(ctx, { Schema: Schema || stubSchema() }), true)
+  assert.equal(installWinPilotSettings(ctx, { Schema: Schema || stubSchema() }), 'registered', 'a host with a settings service registers the namespace')
   assert.equal(state.registered.ns, 'win-pilot')
   assert.equal(getSettings().maxBatchActions, 5, 'a stored value is in force after registration')
   // A committed change re-resolves without re-registering.
@@ -156,21 +156,22 @@ function fakeHarness({ initial = {}, registerImpl } = {}) {
   assert.equal(getSettings().maxBatchActions, 20, 'disposal must fall back to the defaults')
 }
 
-// A host without a settings service is a silent no-op: the tool still works.
+// A host whose settings callback never runs stays 'deferred' — the namespace is
+// simply not registered, and the tool keeps its defaults.
 {
   const ctx = { inject: () => {} }
-  assert.equal(installWinPilotSettings(ctx, { Schema: Schema || stubSchema() }), false)
+  assert.equal(installWinPilotSettings(ctx, { Schema: Schema || stubSchema() }), 'deferred', 'an unmet inject callback is deferred, not fatal')
   assert.equal(getSettings().maxBatchActions, 20)
 }
 
 // A context that cannot inject at all (older host shape) must not throw.
-assert.equal(installWinPilotSettings({}, { Schema: Schema || stubSchema() }), false)
+assert.equal(installWinPilotSettings({}, { Schema: Schema || stubSchema() }), 'unavailable', 'a context with no inject seam is unavailable')
 
 // A host where the schema library is unresolvable keeps the defaults.
 {
   const { state, settingsCtx } = fakeHarness()
   const ctx = { inject: (deps, callback) => callback(settingsCtx) }
-  assert.equal(installWinPilotSettings(ctx, { Schema: null }), false)
+  assert.equal(installWinPilotSettings(ctx, { Schema: null }), 'unavailable', 'an unresolvable schema library disables only the settings layer')
   assert.equal(state.registered, null, 'no schema means no registration')
   assert.equal(getSettings().maxBatchActions, 20)
 }
@@ -178,7 +179,7 @@ assert.equal(installWinPilotSettings({}, { Schema: Schema || stubSchema() }), fa
 // A settings service without register() is tolerated rather than fatal.
 {
   const ctx = { inject: (deps, callback) => callback({ settings: {} }) }
-  assert.equal(installWinPilotSettings(ctx, { Schema: Schema || stubSchema() }), false)
+  assert.equal(installWinPilotSettings(ctx, { Schema: Schema || stubSchema() }), 'unavailable', 'a settings service without register() is unavailable, not fatal')
 }
 
 // Registration failures propagate so a broken namespace is loud, not silent.
