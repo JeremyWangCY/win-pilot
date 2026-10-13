@@ -2110,15 +2110,39 @@ finally {
     $script:cachedElements = $null
     $script:cachedIdentities = $null
   }
-  # Universal non-intrusive background guard: In background dispatch mode, the user's active window must NEVER be stolen!
-  # If the target app (e.g. Edge/Chromium UIA Invoke, WM messages) activates itself,
-  # immediately demote the target window to bottom and restore the user's active window!
+  # Focus policy. A background action can still move the foreground (some apps
+  # activate themselves on UIA Invoke, and a non-packaged launch takes focus).
+  # What Win-Pilot does about that is the user's choice, and the default is to
+  # do nothing: report the change and let the caller re-observe. Reclaiming
+  # focus by force is what made Win-Pilot feel like it fought the user — it used
+  # AttachThreadInput + a synthetic ALT/ESC to grab the foreground back, which
+  # is more intrusive than the activation it was correcting, and it demoted
+  # whatever window the user had just switched to.
   $foregroundLaunchRequested = ($Action -eq 'launch_app' -and [bool](Get-PayloadValue 'activate'))
-  if ($dispatchMode -eq 'background' -and -not $foregroundLaunchRequested -and $Action -notin @('activate_window', 'minimize_window') -and $prevUserFg -ne [IntPtr]::Zero) {
+  $focusPolicy = Get-FocusPolicy
+  if ($focusPolicy -ne 'never' -and $dispatchMode -eq 'background' -and -not $foregroundLaunchRequested -and $Action -notin @('activate_window', 'minimize_window') -and $prevUserFg -ne [IntPtr]::Zero) {
     $curFg = [DshWin32]::GetForegroundWindow()
     if ($curFg -ne [IntPtr]::Zero -and $curFg -ne $prevUserFg) {
-      [DshWin32]::PushWindowToBottom($curFg) | Out-Null
-      try { [DshWin32]::ForceForeground($prevUserFg) } catch { }
+      $result.focus_changed = $true
+      $result.focus_policy = $focusPolicy
+      if ($focusPolicy -eq 'restore') {
+        # Best-effort, non-preemptive: SetForegroundWindow only succeeds when
+        # Windows permits it (e.g. the target belongs to the foreground thread
+        # or the user is not interacting). No AttachThreadInput, no synthetic
+        # keystrokes, and no demoting the window the user moved to — if the
+        # restore is refused, the user's choice stands.
+        $restored = $false
+        try { $restored = [DshWin32]::TryRestoreForeground($prevUserFg) } catch { $restored = $false }
+        $result.focus_restored = [bool]$restored
+        if (-not $restored) {
+          $result.needs_observation = $true
+          $result.message += '; background action changed the foreground and it could not be restored without forcing it—re-observe before continuing'
+        }
+      } else {
+        # yield: hand control back to the user instead of competing for it.
+        $result.needs_observation = $true
+        $result.message += '; background action changed the foreground; yielding (focusPolicy=yield)—re-observe before continuing'
+      }
     }
   }
 }

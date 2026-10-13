@@ -159,6 +159,7 @@ win-pilot:
 | `browserCommandTimeoutMs` | `12000` | 单条 CDP 命令超时 |
 | `browserCaptureNetworkWaitMs` | `1500` | 点击后网络证据等待 |
 | `lockGuard` | `true` | 锁屏时拒绝输入 |
+| `focusPolicy` | `yield` | 动作改变前台窗口时的处理：`yield` 只报告并停止，`restore` 非抢占式尝试还原，`never` 完全不处理 |
 | `exclusiveControl` | `false` | 同一时间仅一个会话可注入输入 |
 | `allowSystemKeys` | `false` | 允许 Windows/Meta 系统键 |
 | `confirmConsequential` | `false` | 将有副作用的动作标记为需要确认 |

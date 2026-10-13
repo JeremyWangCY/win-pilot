@@ -456,6 +456,24 @@ public static class DshWin32
     return GetForegroundWindow().ToInt64();
   }
 
+  // Best-effort, NON-preemptive foreground restore.
+  //
+  // SetForegroundWindow only succeeds when Windows' focus rules permit it, so a
+  // refusal is a normal outcome: the user's current focus then stands. Unlike
+  // ForceForeground this attaches no thread input, synthesizes no ALT/ESC, and
+  // moves no window in the z-order — it asks rather than takes, which is the
+  // whole point of the `restore` focus policy.
+  public static bool TryRestoreForeground(IntPtr h)
+  {
+    if (h == IntPtr.Zero) return false;
+    if (!IsWindow(h)) return false;
+    if (IsIconic(h)) return false;
+    if (GetForegroundWindow() == h) return true;
+    SetForegroundWindow(h);
+    System.Threading.Thread.Sleep(80);
+    return GetForegroundWindow() == h;
+  }
+
   // Process id owning the current foreground window; 0 when there is none.
   // Used by the desktop-lock guard, which refuses input while a lock surface
   // (LogonUI/LockApp) owns the foreground.
@@ -880,6 +898,20 @@ function Get-Dispatch {
   $d = Get-PayloadValue 'dispatch'
   if (-not $d) { $d = 'background' }
   return ([string]$d).ToLowerInvariant()
+}
+
+function Get-FocusPolicy {
+  # What to do when a background action moves the foreground window.
+  #   yield   (default) report it and stop; never compete for focus
+  #   restore best-effort non-preemptive restore of the window the user had
+  #   never   do not even observe the change
+  # An unrecognized or absent value resolves to `yield`: the safe default is to
+  # leave the user's focus alone.
+  $p = Get-PayloadValue 'focus_policy'
+  if (-not $p) { return 'yield' }
+  $normalized = ([string]$p).ToLowerInvariant()
+  if ($normalized -in @('yield', 'restore', 'never')) { return $normalized }
+  return 'yield'
 }
 
 function Get-OverlayEnabled {
@@ -2417,9 +2449,10 @@ function Do-AppState {
   param([string]$App, [int]$WindowIndex, [bool]$WithScreenshot, [bool]$WithText, [string]$Dispatch, [bool]$DisableDiffing = $false)
   $script:observation = $null
   $win = Resolve-TargetWindow -App $App -Index $WindowIndex
+  # Observation never needs the foreground: WGC and PrintWindow both capture an
+  # occluded window, and the UIA tree is read without activation. Forcing the
+  # target forward here stole the user's focus for a pure read.
   if ($Dispatch -eq 'foreground') {
-    [DshWin32]::ForceForeground($win.Hwnd)
-    Start-Sleep -Milliseconds 250
     $fresh = @([DshWin32]::EnumWindowsList() | Where-Object { $_.Hwnd -eq $win.Hwnd })
     if ($fresh.Count -gt 0) { $win = $fresh[0] }
   }
@@ -4761,15 +4794,39 @@ finally {
     $script:cachedElements = $null
     $script:cachedIdentities = $null
   }
-  # Universal non-intrusive background guard: In background dispatch mode, the user's active window must NEVER be stolen!
-  # If the target app (e.g. Edge/Chromium UIA Invoke, WM messages) activates itself,
-  # immediately demote the target window to bottom and restore the user's active window!
+  # Focus policy. A background action can still move the foreground (some apps
+  # activate themselves on UIA Invoke, and a non-packaged launch takes focus).
+  # What Win-Pilot does about that is the user's choice, and the default is to
+  # do nothing: report the change and let the caller re-observe. Reclaiming
+  # focus by force is what made Win-Pilot feel like it fought the user — it used
+  # AttachThreadInput + a synthetic ALT/ESC to grab the foreground back, which
+  # is more intrusive than the activation it was correcting, and it demoted
+  # whatever window the user had just switched to.
   $foregroundLaunchRequested = ($Action -eq 'launch_app' -and [bool](Get-PayloadValue 'activate'))
-  if ($dispatchMode -eq 'background' -and -not $foregroundLaunchRequested -and $Action -notin @('activate_window', 'minimize_window') -and $prevUserFg -ne [IntPtr]::Zero) {
+  $focusPolicy = Get-FocusPolicy
+  if ($focusPolicy -ne 'never' -and $dispatchMode -eq 'background' -and -not $foregroundLaunchRequested -and $Action -notin @('activate_window', 'minimize_window') -and $prevUserFg -ne [IntPtr]::Zero) {
     $curFg = [DshWin32]::GetForegroundWindow()
     if ($curFg -ne [IntPtr]::Zero -and $curFg -ne $prevUserFg) {
-      [DshWin32]::PushWindowToBottom($curFg) | Out-Null
-      try { [DshWin32]::ForceForeground($prevUserFg) } catch { }
+      $result.focus_changed = $true
+      $result.focus_policy = $focusPolicy
+      if ($focusPolicy -eq 'restore') {
+        # Best-effort, non-preemptive: SetForegroundWindow only succeeds when
+        # Windows permits it (e.g. the target belongs to the foreground thread
+        # or the user is not interacting). No AttachThreadInput, no synthetic
+        # keystrokes, and no demoting the window the user moved to — if the
+        # restore is refused, the user's choice stands.
+        $restored = $false
+        try { $restored = [DshWin32]::TryRestoreForeground($prevUserFg) } catch { $restored = $false }
+        $result.focus_restored = [bool]$restored
+        if (-not $restored) {
+          $result.needs_observation = $true
+          $result.message += '; background action changed the foreground and it could not be restored without forcing it—re-observe before continuing'
+        }
+      } else {
+        # yield: hand control back to the user instead of competing for it.
+        $result.needs_observation = $true
+        $result.message += '; background action changed the foreground; yielding (focusPolicy=yield)—re-observe before continuing'
+      }
     }
   }
 }

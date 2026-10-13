@@ -456,6 +456,24 @@ public static class DshWin32
     return GetForegroundWindow().ToInt64();
   }
 
+  // Best-effort, NON-preemptive foreground restore.
+  //
+  // SetForegroundWindow only succeeds when Windows' focus rules permit it, so a
+  // refusal is a normal outcome: the user's current focus then stands. Unlike
+  // ForceForeground this attaches no thread input, synthesizes no ALT/ESC, and
+  // moves no window in the z-order — it asks rather than takes, which is the
+  // whole point of the `restore` focus policy.
+  public static bool TryRestoreForeground(IntPtr h)
+  {
+    if (h == IntPtr.Zero) return false;
+    if (!IsWindow(h)) return false;
+    if (IsIconic(h)) return false;
+    if (GetForegroundWindow() == h) return true;
+    SetForegroundWindow(h);
+    System.Threading.Thread.Sleep(80);
+    return GetForegroundWindow() == h;
+  }
+
   // Process id owning the current foreground window; 0 when there is none.
   // Used by the desktop-lock guard, which refuses input while a lock surface
   // (LogonUI/LockApp) owns the foreground.
