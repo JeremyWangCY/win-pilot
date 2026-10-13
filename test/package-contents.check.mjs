@@ -22,6 +22,11 @@ assert.ok(paths.has('skills/win-pilot/SKILL.md'), 'agent-neutral skill must be p
 assert.ok(paths.has('lib/runtime.js'), 'standalone runtime API must be packaged')
 assert.ok(paths.has('lib/cli.js'), 'CLI implementation must be packaged')
 assert.ok(paths.has('lib/browser-provider.js'), 'browser provider interface must be packaged')
+assert.ok(paths.has('lib/settings.js'), 'user-settings module must be packaged')
+assert.ok(paths.has('lib/client.js'), 'settings card client bundle must be packaged')
+assert.equal(packageJson.exports?.['./settings'], './lib/settings.js', 'the settings module must be exported')
+assert.equal(packageJson.exports?.['./client'], './lib/client.js', 'the client bundle must be exported')
+assert.equal(packageJson.dsh?.client?.platform, 'web', 'the client half must declare the web platform')
 assert.ok(!paths.has('lib/wgc/win-pilot-wgc.pdb'), 'debug PDB must not be packaged')
 for (const file of paths) {
   assert.ok(!file.startsWith('artifacts/'), `diagnostic artifact must not be packaged: ${file}`)

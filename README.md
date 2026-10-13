@@ -82,6 +82,50 @@ win-pilot doctor --probe --json
 
 Expected: version `0.1.4`, platform `win32`, and every required doctor check marked `ok`.
 
+### Settings
+
+On a host that serves the harness user-settings seam, Win-Pilot registers the `win-pilot` namespace. Values live in the `win-pilot:` section of `$DSH_HOME/settings.yaml` and hot-reload without a restart; a host without that seam keeps the shipped defaults and the tool works unchanged.
+
+Edit them in **Settings → Plugins → Win-Pilot** in the DSH GUI, or in the document directly:
+
+```yaml
+win-pilot:
+  overlay: true
+  statusPill: true
+  actionTimeoutMs: 20000
+  maxBatchActions: 20
+  defaultDispatch: background
+  foregroundRecovery: false
+  lockGuard: true
+  exclusiveControl: false
+  allowSystemKeys: false
+```
+
+Every field is optional; an unset field resolves to the deployment default. The full list, with defaults and bounds, is `WIN_PILOT_SETTINGS_FIELDS` in `lib/settings.js`.
+
+| Field | Default | Effect |
+|---|---|---|
+| `overlay` | `true` | Draw the click-through virtual cursor glyph |
+| `statusPill` | `true` | Show the status pill while an action runs |
+| `statusPillIdleGraceMs` | `5000` | Idle time before the pill hides |
+| `actionTimeoutMs` / `waitActionTimeoutMs` | `20000` / `40000` | Per-action helper timeout |
+| `daemonIdleMs` | `300000` | Idle time before the helper daemon stops |
+| `hostTimeoutMs` | `200000` | Model-facing tool call budget |
+| `maxBatchActions` | `20` | Actions allowed in one `actions` batch |
+| `defaultDispatch` | `background` | Input channel when a request names none |
+| `foregroundRecovery` | `false` | Retry a background refusal once in the foreground |
+| `observeAfterAction` | `true` | Capture a post-action observation |
+| `includeTextDefault` | `false` | `get_window_state` includes the UIA tree by default |
+| `screenshotMaxBytes` | `8388608` | Largest screenshot attached to a turn |
+| `visibleImageHistory` | `2` | Screenshots kept in active visual context |
+| `browserHeadlessDefault` | `false` | Launch browsers headless by default |
+| `browserCommandTimeoutMs` | `12000` | Per-CDP-command timeout |
+| `browserCaptureNetworkWaitMs` | `1500` | Post-click network evidence wait |
+| `lockGuard` | `true` | Refuse input while the desktop is locked |
+| `exclusiveControl` | `false` | Only one live session may inject input |
+| `allowSystemKeys` | `false` | Allow Windows/Meta system keys |
+| `confirmConsequential` | `false` | Mark consequential actions as needing confirmation |
+
 ### Updating
 
 Finish active UI tasks, update the runtime, and restart or reload the host's plugin/MCP process:
