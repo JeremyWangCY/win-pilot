@@ -80,7 +80,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected: version `0.1.6`, platform `win32`, and every required doctor check marked `ok`.
+Expected: version `0.1.7`, platform `win32`, and every required doctor check marked `ok`.
 
 ### Settings
 
