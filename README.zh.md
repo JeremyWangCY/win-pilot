@@ -119,6 +119,50 @@ win-pilot request --payload '{"action":"click","hwnd":12345,"element_index":7,"s
 
 MCP `tools/list` 返回的实时 Schema 是完整参数和默认值的权威定义。
 
+## 设置
+
+在提供 DSH 用户设置接缝的宿主上，Win-Pilot 会注册 `win-pilot` 命名空间。取值存放在 `$DSH_HOME/settings.yaml` 的 `win-pilot:` 分区，**热重载、无需重启**；没有该接缝的宿主继续使用内置默认值，工具行为不变。
+
+可在 DSH 界面的「设置 → 插件 → Win-Pilot」中修改，或直接编辑文档：
+
+```yaml
+win-pilot:
+  overlay: true
+  statusPill: true
+  actionTimeoutMs: 20000
+  maxBatchActions: 20
+  defaultDispatch: background
+  foregroundRecovery: false
+  lockGuard: true
+  exclusiveControl: false
+  allowSystemKeys: false
+```
+
+所有字段都是可选的；未设置的字段解析为部署默认值。完整清单（含默认值与取值范围）见 `lib/settings.js` 的 `WIN_PILOT_SETTINGS_FIELDS`。
+
+| 字段 | 默认值 | 作用 |
+|---|---|---|
+| `overlay` | `true` | 显示点击穿透的虚拟光标 |
+| `statusPill` | `true` | 动作进行中显示状态提示条 |
+| `statusPillIdleGraceMs` | `5000` | 状态条隐藏前的空闲毫秒数 |
+| `actionTimeoutMs` / `waitActionTimeoutMs` | `20000` / `40000` | 单步动作超时 |
+| `daemonIdleMs` | `300000` | 守护进程空闲回收时间 |
+| `hostTimeoutMs` | `200000` | 面向模型的工具调用预算 |
+| `maxBatchActions` | `20` | 单次批处理最大动作数 |
+| `defaultDispatch` | `background` | 未指定时的输入通道 |
+| `foregroundRecovery` | `false` | 后台被拒后自动前台重试一次 |
+| `observeAfterAction` | `true` | 动作后自动观察 |
+| `includeTextDefault` | `false` | `get_window_state` 默认包含无障碍树 |
+| `screenshotMaxBytes` | `8388608` | 附加到单轮的最大截图字节数 |
+| `visibleImageHistory` | `2` | 保留在视觉上下文中的截图数量 |
+| `browserHeadlessDefault` | `false` | 默认无头启动浏览器 |
+| `browserCommandTimeoutMs` | `12000` | 单条 CDP 命令超时 |
+| `browserCaptureNetworkWaitMs` | `1500` | 点击后网络证据等待 |
+| `lockGuard` | `true` | 锁屏时拒绝输入 |
+| `exclusiveControl` | `false` | 同一时间仅一个会话可注入输入 |
+| `allowSystemKeys` | `false` | 允许 Windows/Meta 系统键 |
+| `confirmConsequential` | `false` | 将有副作用的动作标记为需要确认 |
+
 ## 工作原理
 
 ```text

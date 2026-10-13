@@ -456,6 +456,17 @@ public static class DshWin32
     return GetForegroundWindow().ToInt64();
   }
 
+  // Process id owning the current foreground window; 0 when there is none.
+  // Used by the desktop-lock guard, which refuses input while a lock surface
+  // (LogonUI/LockApp) owns the foreground.
+  public static uint ForegroundProcessId()
+  {
+    IntPtr h = GetForegroundWindow();
+    if (h == IntPtr.Zero) return 0;
+    uint pid; GetWindowThreadProcessId(h, out pid);
+    return pid;
+  }
+
   private static INPUT MkMouse(uint flags, uint data)
   {
     INPUT i = new INPUT(); i.type = 0; i.u.mi.dx = 0; i.u.mi.dy = 0;
@@ -525,6 +536,34 @@ public static class DshWin32
       case "backslash": return 0xDC;
       case "minus": case "dash": return 0xBD;
       case "plus": return 0xBB;
+      // Numpad keys are distinct virtual keys from the number row and the
+      // operators above it. ZCode and ChatGPT both accept keysym spellings
+      // (`KP_0`, `Numpad_Add`), which normalize onto these names.
+      case "numpad0": return 0x60;
+      case "numpad1": return 0x61;
+      case "numpad2": return 0x62;
+      case "numpad3": return 0x63;
+      case "numpad4": return 0x64;
+      case "numpad5": return 0x65;
+      case "numpad6": return 0x66;
+      case "numpad7": return 0x67;
+      case "numpad8": return 0x68;
+      case "numpad9": return 0x69;
+      case "numpad_multiply": case "numpadmultiply": return 0x6A;
+      case "numpad_add": case "numpadadd": return 0x6B;
+      case "numpad_subtract": case "numpadsubtract": return 0x6D;
+      case "numpad_decimal": case "numpaddecimal": return 0x6E;
+      case "numpad_divide": case "numpaddivide": return 0x6F;
+      // Shifted punctuation aliases so a keysym chord resolves to the
+      // unshifted key that Shift then transforms.
+      case "greater": return 0xBE;
+      case "less": return 0xBC;
+      case "question": return 0xBF;
+      case "colon": return 0xBA;
+      case "quote": case "apostrophe": return 0xDE;
+      case "grave": return 0xC0;
+      case "underscore": return 0xBD;
+      case "pipe": return 0xDC;
     }
     if (k.Length == 1)
     {
