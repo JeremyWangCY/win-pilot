@@ -193,10 +193,25 @@ function harness(services) {
   })
   plugin.apply(ctx)
   assert.deepEqual(asked, ['win-pilot'], 'configForms must be asked for the win-pilot namespace')
-  assert.equal(registrations.length, 1)
-  assert.equal(registrations[0].options.name, 'settings.section')
-  assert.equal(registrations[0].options.id, 'win-pilot')
-  assert.equal(typeof registrations[0].component, 'function')
+  // Two registrations: the per-plugin card inside Settings -> Plugins, and a
+  // top-level Settings page. The Plugins card is keyed by the settings
+  // NAMESPACE, because the section dispatches `settings.plugin.item` once per
+  // served namespace and a card under any other key is never rendered.
+  assert.equal(registrations.length, 3)
+  const byName = Object.fromEntries(registrations.map((r) => [r.options.name, r.options]))
+  assert.ok(byName['settings.plugins.tab'],
+    'the card must be registered as a Settings -> Plugins tab (the seam this build visibly serves)')
+  assert.equal(byName['settings.plugins.tab'].id, 'win-pilot',
+    'the Plugins tab must carry the plugin id')
+  assert.ok(byName['settings.plugin.item'],
+    'the card must also answer settings.plugin.item, keyed by the settings namespace')
+  assert.equal(byName['settings.plugin.item'].key, 'win-pilot',
+    'the Plugins card must be keyed by the settings namespace the Host serves')
+  assert.ok(byName['settings.section'], 'a top-level Settings page must also be registered')
+  assert.equal(byName['settings.section'].id, 'win-pilot')
+  for (const registration of registrations) {
+    assert.equal(typeof registration.component, 'function', 'every registration must pass a component')
+  }
 }
 
 // Generation B: settingsScope (DSH 0.1.5/0.1.6), keyed by the namespace.
@@ -209,14 +224,14 @@ function harness(services) {
   })
   plugin.apply(ctx)
   assert.deepEqual(bound, ['win-pilot'], 'settingsScope must be bound to the win-pilot namespace')
-  assert.equal(registrations.length, 1)
+  assert.equal(registrations.length, 3, 'the Plugins tab, the Plugins item card, and the Settings page register')
 }
 
 // A host with neither seam still mounts the card and must not throw.
 {
   const { ctx, registrations } = harness({})
   assert.doesNotThrow(() => plugin.apply(ctx), 'a host with no settings seam must not throw')
-  assert.equal(registrations.length, 1, 'the card still registers so the section is discoverable')
+  assert.equal(registrations.length, 3, 'the card still registers so the settings stay discoverable')
 }
 
 // A guarded/absent locale service must not break mounting.
@@ -224,7 +239,7 @@ function harness(services) {
   const scope = { getSnapshot: () => ({ value: {}, writable: false, status: 'ready' }), subscribe: () => () => {}, set: async () => {}, unset: async () => {}, load: async () => {} }
   const { ctx, registrations } = harness({ configForms: { get: () => scope } })
   assert.doesNotThrow(() => plugin.apply(ctx))
-  assert.equal(registrations.length, 1)
+  assert.equal(registrations.length, 3)
 }
 
 // A guarded service getter that throws is treated as absent, not fatal.
@@ -232,16 +247,18 @@ function harness(services) {
   const { ctx, registrations } = harness({})
   ctx.get = (name) => { if (name === 'configForms') throw new Error('service not injected'); return undefined }
   assert.doesNotThrow(() => plugin.apply(ctx), 'a guarded service getter must not break mounting')
-  assert.equal(registrations.length, 1)
+  assert.equal(registrations.length, 3)
 }
 
 // --- rendered card --------------------------------------------------------
 
-/** Reach the registered component through a real apply() call. */
+/** Reach the Settings -> Plugins card component through a real apply() call. */
 function registeredCard(services) {
   const { ctx, registrations } = harness(services)
   plugin.apply(ctx)
-  return registrations[0].component
+  const plugins = registrations.find((r) => r.options.name === 'settings.plugin.item')
+  assert.ok(plugins, 'the Plugins card must be among the registrations')
+  return plugins.component
 }
 
 /** A settings scope double that records writes and can report a stored section. */
