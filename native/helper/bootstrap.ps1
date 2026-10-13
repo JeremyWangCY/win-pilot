@@ -474,6 +474,29 @@ public static class DshWin32
     return GetForegroundWindow() == h;
   }
 
+  // Milliseconds since the last REAL system input (keyboard or mouse), from the
+  // system-wide last-input tick. Returns -1 when the query fails, so callers can
+  // tell "unknown" from "idle for 0 ms".
+  //
+  // Win-Pilot's own BACKGROUND input (PostMessage/SendMessage, UIA patterns)
+  // bypasses the input queue and does NOT advance this value — measured, see
+  // test/fixtures/user-activity-probe.ps1 — so while dispatching in the
+  // background a small value means the user is interacting right now.
+  [StructLayout(LayoutKind.Sequential)]
+  public struct LastInputInfo { public uint cbSize; public uint dwTime; }
+
+  [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LastInputInfo plii);
+  [DllImport("kernel32.dll")] public static extern uint GetTickCount();
+
+  public static int LastInputIdleMs()
+  {
+    LastInputInfo li = new LastInputInfo();
+    li.cbSize = (uint)Marshal.SizeOf(typeof(LastInputInfo));
+    if (!GetLastInputInfo(ref li)) return -1;
+    // dwTime is a 32-bit tick that can wrap; unsigned subtraction handles that.
+    return (int)(GetTickCount() - li.dwTime);
+  }
+
   // Process id owning the current foreground window; 0 when there is none.
   // Used by the desktop-lock guard, which refuses input while a lock surface
   // (LogonUI/LockApp) owns the foreground.

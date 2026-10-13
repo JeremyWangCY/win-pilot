@@ -80,7 +80,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected: version `0.1.7`, platform `win32`, and every required doctor check marked `ok`.
+Expected: version `0.1.8`, platform `win32`, and every required doctor check marked `ok`.
 
 ### Settings
 
@@ -123,6 +123,7 @@ Every field is optional; an unset field resolves to the deployment default. The 
 | `browserCaptureNetworkWaitMs` | `1500` | Post-click network evidence wait |
 | `lockGuard` | `true` | Refuse input while the desktop is locked |
 | `focusPolicy` | `yield` | What to do when an action moves the foreground window: `yield` reports and stops, `restore` asks non-preemptively, `never` ignores it |
+| `userActivityGuard` | `false` | Background mode: refuse input while the user is using the desktop, returning user_active (retry-safe) |
 | `exclusiveControl` | `false` | Only one live session may inject input |
 | `allowSystemKeys` | `false` | Allow Windows/Meta system keys |
 | `confirmConsequential` | `false` | Mark consequential actions as needing confirmation |

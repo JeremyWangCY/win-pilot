@@ -474,6 +474,29 @@ public static class DshWin32
     return GetForegroundWindow() == h;
   }
 
+  // Milliseconds since the last REAL system input (keyboard or mouse), from the
+  // system-wide last-input tick. Returns -1 when the query fails, so callers can
+  // tell "unknown" from "idle for 0 ms".
+  //
+  // Win-Pilot's own BACKGROUND input (PostMessage/SendMessage, UIA patterns)
+  // bypasses the input queue and does NOT advance this value — measured, see
+  // test/fixtures/user-activity-probe.ps1 — so while dispatching in the
+  // background a small value means the user is interacting right now.
+  [StructLayout(LayoutKind.Sequential)]
+  public struct LastInputInfo { public uint cbSize; public uint dwTime; }
+
+  [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LastInputInfo plii);
+  [DllImport("kernel32.dll")] public static extern uint GetTickCount();
+
+  public static int LastInputIdleMs()
+  {
+    LastInputInfo li = new LastInputInfo();
+    li.cbSize = (uint)Marshal.SizeOf(typeof(LastInputInfo));
+    if (!GetLastInputInfo(ref li)) return -1;
+    // dwTime is a 32-bit tick that can wrap; unsigned subtraction handles that.
+    return (int)(GetTickCount() - li.dwTime);
+  }
+
   // Process id owning the current foreground window; 0 when there is none.
   // Used by the desktop-lock guard, which refuses input while a lock surface
   // (LogonUI/LockApp) owns the foreground.
@@ -2843,6 +2866,46 @@ function Test-DesktopLocked {
   }
 }
 
+# User-activity interruption guard.
+#
+# Codex's Windows runtime installs a low-level keyboard/mouse hook
+# (`a low-level input hook`, "failed to install keyboard hook") and aborts
+# "guarded input" the moment it sees the user interact. Win-Pilot has no
+# equivalent. Rather than install a hook — which AV/EDR products watch for and
+# which needs its own privilege story — this uses GetLastInputInfo, the
+# system-wide "when did real input last arrive" tick.
+#
+# Measured on this host (test/fixtures/user-activity-probe.ps1): Win-Pilot's own
+# BACKGROUND input does NOT advance that tick, because PostMessage/SendMessage
+# and UIA ValuePattern/Invoke bypass the input queue. So while dispatching in the
+# background, a moving tick means the user. Real SendInput/keybd_event DO advance
+# it, which is why the guard is deliberately scoped to background dispatch.
+function Test-UserActivity {
+  try {
+    $seconds = Get-UserActivityGraceSeconds
+    if ($seconds -le 0) { return $false }
+    $idleMs = [DshWin32]::LastInputIdleMs()
+    if ($idleMs -lt 0) { return $false }
+    return ($idleMs -lt ($seconds * 1000))
+  } catch {
+    # Detection failure must not block normal work; the guard is advisory.
+    return $false
+  }
+}
+
+function Get-UserActivityGraceSeconds {
+  # `userActivityGuard` accepts a boolean (true -> the 2s default window) or a
+  # number of seconds, so callers can widen it on a slow host.
+  $raw = Get-PayloadValue 'user_activity_guard'
+  if ($null -eq $raw) { return 0 }
+  if ($raw -is [bool]) { return $(if ($raw) { 2 } else { 0 }) }
+  $seconds = 0.0
+  if (-not [double]::TryParse([string]$raw, [ref]$seconds)) { return 0 }
+  if ($seconds -lt 0) { return 0 }
+  if ($seconds -gt 60) { return 60 }
+  return $seconds
+}
+
 function Assert-ForegroundTarget {
   param($Win)
   [DshWin32]::ForceForeground($Win.Hwnd)
@@ -3097,6 +3160,26 @@ function Invoke-ActionRequest {
       $result.retry = 'never'
       $result.action_sent = $false
       $result.message = 'The Windows desktop is locked (a lock surface owns the foreground); no input was sent. Ask the user to unlock the desktop and re-observe.'
+      return $result
+    }
+  }
+
+  # User-activity guard: while dispatching in the background, if the user is
+  # interacting right now, do not inject input into their session. This is the
+  # Codex "guarded input" posture — the user wins, and the caller re-observes —
+  # implemented with the last-input tick instead of a keyboard hook.
+  #
+  # Scoped to background dispatch on purpose: real foreground input advances the
+  # same tick Win-Pilot reads, so the guard could not tell our input from theirs.
+  if ($dispatchMode -eq 'background' -and $script:InputActions -contains $Action) {
+    if (Test-UserActivity) {
+      $result.ok = $false
+      $result.outcome = 'not_executed'
+      $result.error_code = 'user_active'
+      $result.retry = 'retry'
+      $result.action_sent = $false
+      $result.needs_observation = $true
+      $result.message = 'The user is interacting with the desktop right now; no input was sent, so Win-Pilot does not compete for control. Re-observe after the user pauses, or set user_activity_guard to 0 for this call to override.'
       return $result
     }
   }
