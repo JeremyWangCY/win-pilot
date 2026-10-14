@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { execFileSync, execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { defineComputerTool, stopDaemon } from '../lib/index.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -202,7 +202,7 @@ try {
     // Fixture setup only: minimize this exact owned window so the following
     // observation test does not depend on platform UIA proxy availability.
     const setup = `$ProgressPreference = 'SilentlyContinue'; Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class FixtureSetup { [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n); }'; [FixtureSetup]::ShowWindow([IntPtr]${fixtureHwnd}, 6) | Out-Null`
-    execSync(`powershell -NoProfile -EncodedCommand ${Buffer.from(setup, 'utf16le').toString('base64')}`, { windowsHide: true, timeout: 5000 })
+    execFileSync('powershell.exe', ['-NoProfile', '-Command', setup], { windowsHide: true, timeout: 5000 })
   }
   let minimized
   for (let attempt = 0; attempt < 20; attempt++) {

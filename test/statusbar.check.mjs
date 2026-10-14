@@ -7,11 +7,14 @@ import { fileURLToPath } from 'node:url'
 import { once } from 'node:events'
 import { defineComputerTool, stopDaemon } from '../lib/index.js'
 const root = fileURLToPath(new URL('../', import.meta.url))
+const preferences = execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'test/fixtures/settings-status.ps1')], { encoding: 'utf8', windowsHide: true, timeout: 10000 })
+assert.match(preferences, /SETTINGS_STATUS_OK/, 'cursor and status pill preferences must work independently')
 const sample = path.join(os.tmpdir(), `winpilot-status-${Date.now()}.png`)
 execFileSync('powershell', ['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(root,'lib/winpilot-statusbar.ps1'),'-RenderSample',sample], { windowsHide:true, timeout:10000 })
 assert.ok(fs.existsSync(sample), 'successful rendering must produce a PNG')
 assert.equal(fs.readFileSync(sample).readUInt32BE(16),320)
-const observer = spawn('powershell', ['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(root,'test/fixtures/statusbar-observer.ps1')], { windowsHide:true, stdio:['ignore','pipe','pipe'] })
+const actionDonePath = path.join(os.tmpdir(), `winpilot-status-done-${process.pid}-${Date.now()}`)
+const observer = spawn('powershell.exe', ['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(root,'test/fixtures/statusbar-observer.ps1'),'-ActionDonePath', actionDonePath], { windowsHide:true, stdio:['ignore','pipe','pipe'] })
 let output = ''
 const ready = new Promise((resolve,reject) => {
   const timer = setTimeout(() => reject(Error('observer startup timeout')), 5000)
@@ -23,9 +26,12 @@ try {
   const tool = defineComputerTool(v => v, {})
   const result = await tool.execute({ action:'mouse_move', x:10, y:10, dispatch:'background', overlay:true })
   assert.equal(result.method,'overlay_cursor', JSON.stringify(result))
+  // Measure expiry after the action, rather than consuming the observation
+  // budget during PowerShell initialization and accessibility capture.
+  fs.writeFileSync(actionDonePath, 'done')
   await once(observer,'exit')
   const report = JSON.parse(output.trim().split(/\r?\n/).at(-1))
   assert.equal(report.seen,true,'real tool action must display status pill')
   assert.equal(report.hidden_after,true,'status pill must hide after activity expires')
   console.log('PASS statusbar: '+JSON.stringify(report))
-} finally { if(observer.exitCode === null) observer.kill(); stopDaemon() }
+} finally { if(observer.exitCode === null) observer.kill(); stopDaemon(); try { fs.unlinkSync(actionDonePath) } catch {} }

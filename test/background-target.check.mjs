@@ -8,7 +8,9 @@ $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[Text.Encoding]::UTF8
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
-Add-Type -TypeDefinition 'public static class DshWin32 { public static System.IntPtr GetForegroundWindow() { return System.IntPtr.Zero; } public static bool IsChild(System.IntPtr a, System.IntPtr b) { return false; } }'
+Add-Type -TypeDefinition 'public static class DshWin32 { public static System.IntPtr GetForegroundWindow() { return System.IntPtr.Zero; } public static bool IsChild(System.IntPtr a, System.IntPtr b) { return false; } public static bool IsDesktopLocked() { return false; } public static void ReleaseOwnedInput() { } } public static class WinPilotInputMonitor { public static bool HasDispatched { get; private set; } public static void BeginAction() { HasDispatched = false; } public static void EndAction() { } public static void Check() { } public static void MarkDispatched() { HasDispatched = true; } }'
+$script:InputActions = @('click')
+$script:heldBackgroundButtons = @{}
 $tokens=$null; $errors=$null
 $ast=[System.Management.Automation.Language.Parser]::ParseFile('${helper.replaceAll("'", "''")}',[ref]$tokens,[ref]$errors)
 if ($errors.Count) { throw $errors[0] }

@@ -53,8 +53,8 @@ assert.match(
 )
 assert.match(
   helperContent,
-  /SendMessageTimeout\(\$Hwnd,\s*0x0100,\s*\[IntPtr\]\$vk,\s*\[IntPtr\]::Zero,\s*\[DshWin32\]::SMTO_ABORTIFHUNG,\s*3000/,
-  'Send-BackgroundKey must use SendMessageTimeout with 3000ms timeout'
+  /function Send-BackgroundKeyMessage[\s\S]*?SendMessageTimeout\(\$Hwnd,\s*\$Message,\s*\[IntPtr\]\$VirtualKey,\s*\[IntPtr\]::Zero,\s*\[DshWin32\]::SMTO_ABORTIFHUNG,\s*3000/,
+  'Send-BackgroundKeyMessage must use SendMessageTimeout with 3000ms timeout'
 )
 
 // 3. Target Window Search Escaping in win-pilot-helper.ps1

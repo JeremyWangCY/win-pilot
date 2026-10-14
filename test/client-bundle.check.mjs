@@ -1,8 +1,7 @@
 // The Win-Pilot Settings card is a hand-authored harness client bundle. Nothing
 // builds it, so these checks are what keep it loadable and honest: it must parse,
 // declare the module contract the client module system serves, expose the plugin
-// shape the browser half needs, and degrade instead of throwing on a host that
-// serves neither settings seam.
+// shape the browser half needs, and follow the current host configForms contract.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
@@ -38,7 +37,7 @@ assert.ok(captured, 'the bundle must call window.__ModuleLoader__.load at evalua
 /**
  * Minimal but stateful React stand-in.
  *
- * The card's real behaviour is validation, draft staging, the *Overridden*
+ * The card's real behaviour is draft staging, the *Overridden*
  * badge, save and reset — none of which a stateless stub can exercise. Hooks
  * persist across re-renders and a setter re-renders synchronously, so a test can
  * fire an onChange/onClick and inspect the next tree.
@@ -144,7 +143,7 @@ function find(tree, predicate) {
 
 // The field table the host schema accepts, read from lib/settings.js so the two
 // can never drift; the card must render exactly these controls.
-const { WIN_PILOT_SETTINGS_FIELDS: FIELDS } = await import(new URL('../lib/settings.js', import.meta.url).href)
+const { WIN_PILOT_EDITABLE_SETTING_KEYS: FIELDS } = await import(new URL('../lib/settings.js', import.meta.url).href)
 
 /**
  * The React instance the plugin closes over. `captured.factory()` calls
@@ -163,11 +162,12 @@ const factory = (name) => {
 const plugin = captured.factory(factory)
 assert.equal(plugin.name, 'win-pilot', 'the browser plugin must carry the package name')
 assert.ok(Array.isArray(plugin.inject), 'the browser plugin must declare inject')
+assert.ok(plugin.inject.includes('configForms'), 'the host must provide configForms before apply runs')
 assert.equal(typeof plugin.apply, 'function', 'the browser plugin must expose apply')
 // Only host-provided modules may be required; a bare import would not resolve.
 assert.deepEqual([...new Set(requested)].sort(), ['react'], 'the bundle may require only host-provided react')
 
-// --- apply against each host generation -----------------------------------
+// --- apply against the current host -----------------------------------
 
 /** Record what the plugin registers, and offer a chosen set of client services. */
 function harness(services) {
@@ -183,82 +183,189 @@ function harness(services) {
   return { ctx, registrations }
 }
 
-// Generation A: configForms (DSH >= 0.1.7), keyed by the Loader entry id.
-{
-  const scope = { getSnapshot: () => ({ value: {}, writable: true, status: 'ready' }), subscribe: () => () => {}, set: async () => {}, unset: async () => {}, load: async () => {} }
+/** The card props a registration hands its component (scope + locale). */
+function propsOf(registrations, name) {
+  const found = registrations.find((r) => r.options.name === name)
+  assert.ok(found, `the ${name} registration must exist`)
+  assert.equal(typeof found.options.inject, 'function', `${name} must supply its props through inject()`)
+  return found.options.inject()
+}
+
+/** A scope double reporting a live entry, recording the calls the card makes. */
+function liveScopeDouble(init = {}) {
+  const calls = { load: 0, writes: [], unsets: [] }
+  return {
+    calls,
+    getSnapshot: () => ({ value: init.value ?? {}, user: init.user, writable: init.writable !== false, status: 'ready' }),
+    subscribe: () => () => {},
+    set: async (field, value) => { calls.writes.push([field, value]) },
+    unset: async (field) => { calls.unsets.push(field) },
+    load: async () => { calls.load += 1 },
+  }
+}
+
+/** A `configForms` double that only serves one entry id, like the real one does. */
+function configFormsDouble(served, ready) {
   const asked = []
+  const empty = {
+    getSnapshot: () => ({ value: undefined, writable: false, status: 'unavailable' }),
+    subscribe: () => () => {},
+    set: async () => false,
+    unset: async () => false,
+    load: async () => {},
+  }
+  return {
+    asked,
+    describe: () => ({
+      getSnapshot: () => ({ view: { namespaces: served.map((ns) => ({ ns })) } }),
+      subscribe: () => () => {},
+      ensure: () => {},
+    }),
+    // `configForms.get()` NEVER returns undefined: a wrong key yields a scope that
+    // stays `unavailable`, which is the failure mode the plugin has to see.
+    get: (key) => { asked.push(key); return key === served[0] ? ready : empty },
+  }
+}
+
+// configForms (current DSH), keyed by the Loader entry id.
+//
+// The id is not knowable at apply() time — a patched profile serves
+// `include:win-pilot` while a plain one serves `win-pilot`, and the shared
+// describe mirror is usually still loading — so binding must be resolved lazily
+// from the mirror instead of guessed once.
+{
+  const scope = liveScopeDouble()
+  const forms = configFormsDouble(['include:win-pilot'], scope)
   const { ctx, registrations } = harness({
-    configForms: { get: (key) => { asked.push(key); return scope } },
+    configForms: forms,
     locale: { getSnapshot: () => ({ active: 'zh' }) },
   })
   plugin.apply(ctx)
-  assert.deepEqual(asked, ['win-pilot'], 'configForms must be asked for the win-pilot namespace')
-  // Two registrations: the per-plugin card inside Settings -> Plugins, and a
-  // top-level Settings page. The Plugins card is keyed by the settings
-  // NAMESPACE, because the section dispatches `settings.plugin.item` once per
-  // served namespace and a card under any other key is never rendered.
-  assert.equal(registrations.length, 3)
+  assert.deepEqual(forms.asked, [],
+    'apply() must not guess an entry id before the mirror has answered')
+
+  assert.equal(registrations.length, 2)
   const byName = Object.fromEntries(registrations.map((r) => [r.options.name, r.options]))
-  assert.ok(byName['settings.plugins.tab'],
-    'the card must be registered as a Settings -> Plugins tab (the seam this build visibly serves)')
-  assert.equal(byName['settings.plugins.tab'].id, 'win-pilot',
-    'the Plugins tab must carry the plugin id')
-  assert.ok(byName['settings.plugin.item'],
-    'the card must also answer settings.plugin.item, keyed by the settings namespace')
-  assert.equal(byName['settings.plugin.item'].key, 'win-pilot',
-    'the Plugins card must be keyed by the settings namespace the Host serves')
+  assert.ok(byName['plugins.bundle.config'], 'the plugin detail page must expose its settings')
+  assert.equal(byName['plugins.bundle.config'].key, 'win-pilot')
   assert.ok(byName['settings.section'], 'a top-level Settings page must also be registered')
   assert.equal(byName['settings.section'].id, 'win-pilot')
   for (const registration of registrations) {
     assert.equal(typeof registration.component, 'function', 'every registration must pass a component')
   }
+
+  // The first read resolves the binding against what the Host actually serves.
+  const props = propsOf(registrations, 'settings.section')
+  assert.equal(props.locale, 'zh', 'the card must follow the active locale')
+  const snapshot = props.scope.getSnapshot()
+  assert.deepEqual(forms.asked, ['include:win-pilot'],
+    'the card must bind the entry id the Host serves, not the package name')
+  assert.equal(snapshot.status, 'ready', 'the bound scope must report the live entry')
+  assert.equal(scope.calls.load, 1, 'binding must load the served entry exactly once')
 }
 
-// Generation B: settingsScope (DSH 0.1.5/0.1.6), keyed by the namespace.
+// With a plain (unpatched) profile: the id is the namespace itself.
 {
-  const bound = []
-  const scope = { getSnapshot: () => ({ value: {}, writable: true, status: 'ready' }), subscribe: () => () => {}, set: async () => {}, unset: async () => {}, load: async () => {} }
-  const { ctx, registrations } = harness({
-    settingsScope: { bind: (spec) => { bound.push(spec.namespace); return scope } },
-    locale: { getSnapshot: () => ({ active: 'en' }) },
-  })
+  const scope = liveScopeDouble()
+  const forms = configFormsDouble(['win-pilot'], scope)
+  const { ctx, registrations } = harness({ configForms: forms, locale: { getSnapshot: () => ({ active: 'en' }) } })
   plugin.apply(ctx)
-  assert.deepEqual(bound, ['win-pilot'], 'settingsScope must be bound to the win-pilot namespace')
-  assert.equal(registrations.length, 3, 'the Plugins tab, the Plugins item card, and the Settings page register')
+  const { scope: bound } = propsOf(registrations, 'plugins.bundle.config')
+  assert.equal(bound.getSnapshot().status, 'ready')
+  assert.deepEqual(forms.asked, ['win-pilot'], 'an unpatched profile serves the bare namespace')
 }
 
-// A host with neither seam still mounts the card and must not throw.
+// Before the mirror answers: the card stays honest, then re-binds.
 {
-  const { ctx, registrations } = harness({})
-  assert.doesNotThrow(() => plugin.apply(ctx), 'a host with no settings seam must not throw')
-  assert.equal(registrations.length, 3, 'the card still registers so the settings stay discoverable')
+  const scope = liveScopeDouble()
+  const asked = []
+  let served = []
+  const empty = {
+    getSnapshot: () => ({ value: undefined, writable: false, status: 'unavailable' }),
+    subscribe: () => () => {}, set: async () => false, unset: async () => false, load: async () => {},
+  }
+  const listeners = new Set()
+  const configForms = {
+    describe: () => ({
+      getSnapshot: () => ({ view: { namespaces: served.map((ns) => ({ ns })) } }),
+      ensure: () => {},
+      subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener) },
+    }),
+    // The real host answers `unavailable` for every key it does not serve.
+    get: (key) => { asked.push(key); return served.includes(key) ? scope : empty },
+  }
+  const { ctx, registrations } = harness({ configForms })
+  plugin.apply(ctx)
+  const props = propsOf(registrations, 'settings.section')
+  assert.equal(props.scope.getSnapshot().status, 'unavailable',
+    'an unanswered mirror must not fake a writable entry')
+  assert.deepEqual(asked, [],
+    'an unanswered mirror must not cause guessed namespace probes')
+
+  // The mirror then reports the served entry; the card must adopt it.
+  const off = props.scope.subscribe(() => {})
+  served = ['include:win-pilot']
+  for (const listener of listeners) listener()
+  assert.equal(props.scope.getSnapshot().status, 'ready',
+    'a later mirror answer must re-bind the card to the served entry')
+  off()
+}
+
+// The card also needs controller notifications: they report saves, errors and
+// readiness changes independently of the shared namespace mirror.
+{
+  let snapshot = { value: { overlay: true }, writable: true, status: 'ready' }
+  const listeners = new Set()
+  const controller = {
+    getSnapshot: () => snapshot,
+    subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener) },
+    load: async () => {},
+    set: async () => false,
+    unset: async () => false,
+  }
+  const { ctx, registrations } = harness({ configForms: configFormsDouble(['include:win-pilot'], controller) })
+  plugin.apply(ctx)
+  const { scope } = propsOf(registrations, 'plugins.bundle.config')
+  let updates = 0
+  const off = scope.subscribe(() => { updates += 1 })
+  snapshot = { ...snapshot, value: { overlay: false } }
+  for (const listener of [...listeners]) listener()
+  assert.ok(updates > 0, 'the live scope must forward controller changes to the card')
+  assert.equal(scope.getSnapshot().value.overlay, false)
+  off()
+  assert.equal(listeners.size, 0, 'unmount must release the controller subscription')
+}
+
+// Similar package names must never select another plugin's writable entry.
+{
+  const foreign = liveScopeDouble({ value: { overlay: false } })
+  const own = liveScopeDouble({ value: { overlay: true } })
+  const forms = configFormsDouble(['include:win-pilot-helper', 'include:win-pilot'], foreign)
+  const originalGet = forms.get
+  forms.get = (key) => key === 'include:win-pilot' ? own : originalGet(key)
+  const { ctx, registrations } = harness({ configForms: forms })
+  plugin.apply(ctx)
+  assert.equal(propsOf(registrations, 'plugins.bundle.config').scope.getSnapshot().value.overlay, true,
+    'only the exact Win-Pilot entry may supply the settings card')
 }
 
 // A guarded/absent locale service must not break mounting.
 {
-  const scope = { getSnapshot: () => ({ value: {}, writable: false, status: 'ready' }), subscribe: () => () => {}, set: async () => {}, unset: async () => {}, load: async () => {} }
-  const { ctx, registrations } = harness({ configForms: { get: () => scope } })
+  const scope = liveScopeDouble()
+  const { ctx, registrations } = harness({ configForms: configFormsDouble(['win-pilot'], scope) })
   assert.doesNotThrow(() => plugin.apply(ctx))
-  assert.equal(registrations.length, 3)
-}
-
-// A guarded service getter that throws is treated as absent, not fatal.
-{
-  const { ctx, registrations } = harness({})
-  ctx.get = (name) => { if (name === 'configForms') throw new Error('service not injected'); return undefined }
-  assert.doesNotThrow(() => plugin.apply(ctx), 'a guarded service getter must not break mounting')
-  assert.equal(registrations.length, 3)
+  assert.equal(registrations.length, 2)
 }
 
 // --- rendered card --------------------------------------------------------
 
-/** Reach the Settings -> Plugins card component through a real apply() call. */
+/** Reach the current plugin detail card through the browser plugin apply(). */
 function registeredCard(services) {
   const { ctx, registrations } = harness(services)
   plugin.apply(ctx)
-  const plugins = registrations.find((r) => r.options.name === 'settings.plugin.item')
+  const plugins = registrations.find((r) => r.options.name === 'plugins.bundle.config')
   assert.ok(plugins, 'the Plugins card must be among the registrations')
-  return plugins.component
+  return (props) => plugins.component({ ...props, scope: plugins.options.inject().scope })
 }
 
 /** A settings scope double that records writes and can report a stored section. */
@@ -280,7 +387,7 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
 {
   const scope = scopeDouble()
   const Card = registeredCard({
-    configForms: { get: () => scope },
+    configForms: configFormsDouble(['win-pilot'], scope),
     locale: { getSnapshot: () => ({ active: 'en' }) },
   })
   const tree = pluginReact.mount(Card, { scope, locale: 'en' })
@@ -288,6 +395,9 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
     node.type === 'input' || node.type === 'select')
   assert.equal(controls.length, FIELDS.length,
     `the card must render exactly one control per declared field (got ${controls.length}, expected ${FIELDS.length})`)
+  assert.ok(controls.every((node) => node.type === 'select' || node.props.type === 'checkbox'),
+    'users must only choose checkboxes or options, never enter numbers')
+  assert.equal(controls.length, 3, 'the panel must keep only three everyday preferences')
   // Every control is labelled, so the form is usable and screen-reader readable.
   for (const control of controls) {
     assert.ok(typeof control.props['aria-label'] === 'string' && control.props['aria-label'].length > 0,
@@ -300,55 +410,55 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   assert.equal(save.props.disabled, true, 'save stays disabled while nothing is staged')
 }
 
-// A staged edit enables save and writes the coerced value on click.
+// A staged edit enables save and writes the checkbox value on click.
 {
   const scope = scopeDouble()
-  const Card = registeredCard({ configForms: { get: () => scope } })
+  const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
   let tree = pluginReact.mount(Card, { scope, locale: 'en' })
   const batch = flatten(tree).find((node) =>
-    node.type === 'input' && node.props['aria-label'] === 'Maximum actions per batch')
-  assert.ok(batch, 'the batch-limit field must render')
-  batch.props.onChange({ target: { value: '7' } })
+    node.type === 'input' && node.props['aria-label'] === 'Show the operation cursor')
+  assert.ok(batch, 'the cursor checkbox must render')
+  batch.props.onChange({ target: { checked: false } })
   tree = pluginReact.tree
   const save = find(tree, (node) => node.type === 'button' && node.props.className === 'wp-save')
-  assert.equal(save.props.disabled, false, 'a staged valid edit must enable save')
+  assert.equal(save.props.disabled, false, 'a staged checkbox edit must enable save')
   await save.props.onClick()
-  assert.deepEqual(scope.writes, [['maxBatchActions', 7]],
-    'save must write the coerced numeric value once')
+  assert.deepEqual(scope.writes, [['overlay', false]],
+    'save must write the chosen checkbox value once')
 }
 
-// An out-of-range entry is refused: the field is flagged and the value is not saved.
+// Freeze edits while a write is in flight so later drafts cannot be erased.
 {
-  const scope = scopeDouble()
-  const Card = registeredCard({ configForms: { get: () => scope } })
-  let tree = pluginReact.mount(Card, { scope, locale: 'en' })
-  const batch = flatten(tree).find((node) =>
-    node.type === 'input' && node.props['aria-label'] === 'Maximum actions per batch')
-  batch.props.onChange({ target: { value: '9999' } })
-  tree = pluginReact.tree
-  assert.ok(find(tree, (node) => node.props.className === 'wp-input wp-input-bad'),
-    'an out-of-range entry must mark the field invalid')
-  const save = find(tree, (node) => node.type === 'button' && node.props.className === 'wp-save')
-  await save.props.onClick()
-  assert.deepEqual(scope.writes, [], 'an invalid field must not be written')
+  const scope = scopeDouble({ value: { overlay: true }, user: { overlay: true } })
+  let finish
+  scope.set = () => new Promise((resolve) => { finish = resolve })
+  const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
+  pluginReact.mount(Card, { locale: 'en' })
+  find(pluginReact.tree, (node) => node.props['aria-label'] === 'Show the operation cursor')
+    .props.onChange({ target: { checked: false } })
+  const saved = find(pluginReact.tree, (node) => node.props.className === 'wp-save').props.onClick()
+  assert.ok(flatten(pluginReact.tree).filter((node) => node.type === 'input').every((node) => node.props.disabled))
+  assert.equal(find(pluginReact.tree, (node) => node.props.className === 'wp-reset').props.disabled, true)
+  finish()
+  await saved
 }
 
 // A field present in the user layer shows the Overridden badge and a reset control.
 {
-  const scope = scopeDouble({ value: { maxBatchActions: 7 }, user: { maxBatchActions: 7 } })
-  const Card = registeredCard({ configForms: { get: () => scope } })
+  const scope = scopeDouble({ value: { overlay: false }, user: { overlay: false } })
+  const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
   const tree = pluginReact.mount(Card, { scope, locale: 'en' })
   assert.ok(texts(tree).includes('Overridden'), 'an overridden field must be badged')
   const reset = find(tree, (node) => node.type === 'button' && node.props.className === 'wp-reset')
   assert.ok(reset, 'an overridden field must offer a reset control')
   await reset.props.onClick()
-  assert.deepEqual(scope.unsets, ['maxBatchActions'], 'reset must clear exactly that field')
+  assert.deepEqual(scope.unsets, ['overlay'], 'reset must clear exactly that field')
 }
 
 // A read-only scope renders controls but offers no save.
 {
   const scope = scopeDouble({ writable: false })
-  const Card = registeredCard({ configForms: { get: () => scope } })
+  const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
   const tree = pluginReact.mount(Card, { scope, locale: 'en' })
   const save = find(tree, (node) => node.type === 'button' && node.props.className === 'wp-save')
   assert.equal(save.props.disabled, true, 'a read-only scope can never save')
@@ -359,15 +469,46 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
 // An unavailable scope renders the explanatory note instead of an empty panel.
 {
   const unavailable = scopeDouble({ value: undefined, writable: false, status: 'unavailable' })
-  const Card = registeredCard({ configForms: { get: () => unavailable } })
+  const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], unavailable) })
   const tree = pluginReact.mount(Card, { scope: unavailable, locale: 'zh' })
-  assert.match(texts(tree).join(' '), /settings\.yaml/,
-    'the unavailable card must point at settings.yaml')
+  assert.match(texts(tree).join(' '), /可编辑设置/,
+    'the unavailable card must explain that settings cannot be read')
   assert.equal(flatten(tree).filter((node) => node.type === 'input').length, 0,
     'the unavailable card must not render editable controls')
 }
 
+// A refused reset preserves the edit and exposes the failure.
+{
+  const scope = scopeDouble({ value: { overlay: true }, user: { overlay: true } })
+  scope.unset = async () => false
+  const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
+  pluginReact.mount(Card, { locale: 'en' })
+  find(pluginReact.tree, (node) => node.props['aria-label'] === 'Show the operation cursor')
+    .props.onChange({ target: { checked: false } })
+  await find(pluginReact.tree, (node) => node.props.className === 'wp-reset').props.onClick()
+  assert.equal(find(pluginReact.tree, (node) => node.props['aria-label'] === 'Show the operation cursor').props.checked, false)
+  assert.equal(find(pluginReact.tree, (node) => node.props.className === 'wp-save').props.disabled, false)
+  assert.ok(find(pluginReact.tree, (node) => node.props.className === 'wp-err'))
+}
+
 // --- what the shipped client-module scan will do with this package ---------
+
+// A rejected Host write returns false rather than throwing. Preserve the draft
+// and report failure instead of claiming that it was saved.
+{
+  const scope = scopeDouble()
+  scope.set = async () => false
+  const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
+  let tree = pluginReact.mount(Card, { locale: 'en' })
+  const batch = find(tree, (node) => node.props['aria-label'] === 'Show the operation cursor')
+  batch.props.onChange({ target: { checked: false } })
+  await find(pluginReact.tree, (node) => node.props.className === 'wp-save').props.onClick()
+  tree = pluginReact.tree
+  assert.equal(find(tree, (node) => node.props.className === 'wp-save').props.disabled, false,
+    'a refused write must leave the staged value available for retry')
+  assert.ok(find(tree, (node) => node.props.className === 'wp-err'),
+    'a refused write must render the save failure')
+}
 
 // The scan (`packages/client/modules`) anchors at the config tree, resolves
 // `<name>/package.json`, requires `dsh.client.platform === 'web'`, and maps
