@@ -25,7 +25,9 @@ Additional audit repairs: stop covers all desktop input actions; partial repeat
 and multi-axis results preserve previous dispatch; cursor/status preferences are
 independent; application identity may span multiple processes; a delegated
 launch must prove process ancestry and cannot adopt an unrelated notification.
-Guessed popup closing and obsolete settings registrations were removed.
+Guessed popup closing and obsolete settings registrations were removed. Desktop
+form verification also exposed ALT/ESC injection during foreground activation:
+activation now preserves an already active target and sends no synthetic keys.
 
 ## Validation
 
