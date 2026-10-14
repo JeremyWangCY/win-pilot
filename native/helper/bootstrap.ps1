@@ -510,16 +510,14 @@ public static class DshWin32
   public static void ForceForeground(IntPtr h)
   {
     WinPilotInputMonitor.Check();
+    if (h == IntPtr.Zero || !IsWindow(h)) return;
+    // Preserve menus/dialogs in an already active target. Activation must never
+    // synthesize ALT/ESC, which closes popups and invalidates the observed UI.
+    if (GetForegroundWindow() == h && !IsIconic(h)) return;
     WinPilotInputMonitor.MarkDispatched();
     // only restore MINIMIZED windows; never SW_RESTORE a visible/maximized window (would un-maximize it)
     if (IsIconic(h)) ShowWindow(h, 9);
     SetWindowPos(h, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-    INPUT[] alt = new INPUT[] { MkKey(0x12, 0), MkKey(0x12, 2) };
-    SendGuarded(2, alt, Marshal.SizeOf(typeof(INPUT)));
-    WinPilotInputMonitor.Sleep(40);
-    INPUT[] esc = new INPUT[] { MkKey(0x1B, 0), MkKey(0x1B, 2) };
-    SendGuarded(2, esc, Marshal.SizeOf(typeof(INPUT)));
-    WinPilotInputMonitor.Sleep(40);
     IntPtr f = GetForegroundWindow();
     // GetWindowThreadProcessId RETURNS the thread id; the out param receives the process id.
     uint fgPid; uint fgTid = GetWindowThreadProcessId(f, out fgPid);

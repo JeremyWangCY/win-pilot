@@ -168,11 +168,12 @@ Assert-True ($point[0] -eq 10 -and $point[1] -eq 10) 'Overlay positioning must r
 # Exercise the actual dispatch functions without a Windows input destination.
 $dispatchPath = Join-Path $PSScriptRoot '../../native/helper/dispatch.ps1'
 $tokens = $null; $parseErrors = $null
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($dispatchPath, [ref]$tokens, [ref]$parseErrors)
+$dispatchSource = [IO.File]::ReadAllText($dispatchPath, [Text.Encoding]::UTF8)
+$ast = [System.Management.Automation.Language.Parser]::ParseInput($dispatchSource, [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors) { throw ($parseErrors -join '; ') }
 $functions = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in @('Invoke-BackgroundRangeScroll', 'Send-OwnedBackgroundButton', 'Release-OwnedBackgroundButtons', 'Invoke-ActionRequest', 'Test-ProcessDescendant') }, $true)
 foreach ($function in $functions) { Invoke-Expression $function.Extent.Text }
-Invoke-Expression ([regex]::Match([IO.File]::ReadAllText($dispatchPath), '(?s)\$script:InputActions = @\(.*?\)').Value)
+Invoke-Expression ([regex]::Match($dispatchSource, '(?s)\$script:InputActions = @\(.*?\)').Value)
 $script:heldBackgroundButtons = @{}
 [DshWin32]::Parents[102] = 101
 [DshWin32]::Parents[103] = 102

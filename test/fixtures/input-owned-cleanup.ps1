@@ -28,9 +28,11 @@ public static class OwnedInputFixture {
   private static TextBox editor;
   private static readonly ManualResetEvent ready = new ManualResetEvent(false);
   public static IntPtr Handle;
-  public static int X, Y, ExternalKeys;
+  public static int X, Y, ExternalKeys, ActivationKeys;
   public static bool SawHeldInput;
   private static IntPtr Observe(int code, IntPtr message, IntPtr data) {
+    if (code >= 0 && (Marshal.ReadInt32(data) == 0x12 || Marshal.ReadInt32(data) == 0x1B))
+      Interlocked.Increment(ref ActivationKeys);
     if (code >= 0 && Marshal.ReadInt32(data) == 0x87 && Marshal.ReadIntPtr(data, 16) == IntPtr.Zero)
       Interlocked.Increment(ref ExternalKeys);
     return CallNextHookEx(IntPtr.Zero, code, message, data);
@@ -126,6 +128,15 @@ function Invoke-Interrupted([scriptblock]$action, [int]$heldKey, [int]$delay = 8
 try {
   [OwnedInputFixture]::Start()
   [WinPilotInputMonitor]::EnsureStarted()
+  Assert-True ([OwnedInputFixture]::Focus()) 'Owned window must be active before testing activation'
+  [OwnedInputFixture]::BeginGuard([WinPilotInputMonitor])
+  $activationKeys = [OwnedInputFixture]::ActivationKeys
+  [DshWin32]::ForceForeground([OwnedInputFixture]::Handle)
+  [WinPilotInputMonitor]::Check()
+  Assert-True (-not [WinPilotInputMonitor]::HasDispatched) 'An already active window must not receive activation input'
+  [WinPilotInputMonitor]::EndAction()
+  Start-Sleep -Milliseconds 80
+  Assert-True ([OwnedInputFixture]::ActivationKeys -eq $activationKeys) 'Activation must not synthesize ALT/ESC and dismiss observed menus'
   Invoke-Interrupted { [DshWin32]::HoldKey('F23', '', 2000) } 0x86
   Invoke-Interrupted { [DshWin32]::TypeText(('x' * 2000)) } 0
   Assert-True ([OwnedInputFixture]::TextLength() -lt 2000) 'Typing must stop before the remaining text is sent'
