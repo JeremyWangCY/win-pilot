@@ -2127,11 +2127,11 @@ function Invoke-ActionRequest {
         }
         # collapse the range at the document start: pull the End endpoint all the way
         # back (MoveEndpointByUnit clamps, endpoints never cross)
-        $null = $doc.MoveEndpointByUnit([System.Windows.Automation.TextPatternRangeEndpoint]::End, [System.Windows.Automation.TextUnit]::Character, -1000000000)
+        $null = $doc.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::End, [System.Windows.Automation.TextUnit]::Character, -1000000000)
         # advance Start to the requested offset (the range is degenerate; Move shifts it)
         if ($start -gt 0) { $null = $doc.Move([System.Windows.Automation.TextUnit]::Character, $start) }
         if ($len -gt 0) {
-          $null = $doc.MoveEndpointByUnit([System.Windows.Automation.TextPatternRangeEndpoint]::End, [System.Windows.Automation.TextUnit]::Character, $len)
+          $null = $doc.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::End, [System.Windows.Automation.TextUnit]::Character, $len)
         }
         $doc.Select()
         $grab = $len + 32
