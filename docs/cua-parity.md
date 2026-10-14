@@ -1,5 +1,10 @@
 # Computer-use parity: Win-Pilot vs OpenAI Codex `@oai/sky` vs ZCode CUA
 
+Current implementation update (2026-10-14): desktop input uses mandatory low-level keyboard/mouse hooks, self-tagged injection, mid-action cancellation and fresh observation before resuming. Hook unavailability refuses input; there is no last-input timestamp mode. The actual input desktop is checked with `OpenInputDesktop`. Settings expose only three boolean preferences. See [input-interruption.md](input-interruption.md) and [settings-panel.md](settings-panel.md) for the current contract. `get_window_state` includes accessibility text by default.
+
+The remaining material is the historical comparison and measurements collected before this update; earlier timestamp/permission settings describe that previous implementation.
+
+
 Updated: 2026-10-13. Branch: `feat/dsh-settings-and-cua-parity`.
 
 This document records a **static** capability comparison. It does not claim behavioural

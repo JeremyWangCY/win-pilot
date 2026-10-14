@@ -17,7 +17,7 @@ Win-Pilot is an Agent Plugin for Windows Computer Use. It gives Windows agents o
 | Recoverable protocol | Stable `ok`, `outcome`, `error_code`, post-action observations, and unknown-outcome handling |
 | Universal fallbacks | Local stdio MCP for tool-aware agents; JSON CLI plus skill for shell-capable agents |
 | Schema portability | Tool schema is validated for OpenAI- and Gemini-family consumers |
-| DSH provider lifecycle | On DSH 0.1.7+, claims the exclusive `computerUse` provider slot; older DSH keeps the legacy tool-only path |
+| DSH provider lifecycle | Requires DSH 0.2.0-rc.2+ for Config forms; claims the exclusive `computerUse` provider slot |
 
 ## Requirements
 
@@ -80,53 +80,19 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected: version `0.1.8`, platform `win32`, and every required doctor check marked `ok`.
+Expected: version `0.1.10`, platform `win32`, and every required doctor check marked `ok`.
 
 ### Settings
 
-On a host that serves the harness user-settings seam, Win-Pilot registers the `win-pilot` namespace. Values live in the `win-pilot:` section of `$DSH_HOME/settings.yaml` and hot-reload without a restart; a host without that seam keeps the shipped defaults and the tool works unchanged.
+In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or the plugin detail page. The current host projects the plugin's `Config` and applies changes immediately through live boolean references.
 
-Edit them in **Settings → Plugins → Win-Pilot** in the DSH GUI, or in the document directly:
-
-```yaml
-win-pilot:
-  overlay: true
-  statusPill: true
-  actionTimeoutMs: 20000
-  maxBatchActions: 20
-  defaultDispatch: background
-  foregroundRecovery: false
-  lockGuard: true
-  exclusiveControl: false
-  allowSystemKeys: false
-```
-
-Every field is optional; an unset field resolves to the deployment default. The full list, with defaults and bounds, is `WIN_PILOT_SETTINGS_FIELDS` in `lib/settings.js`.
-
-| Field | Default | Effect |
+| Preference | Default | Effect |
 |---|---|---|
-| `overlay` | `true` | Draw the click-through virtual cursor glyph |
-| `statusPill` | `true` | Show the status pill while an action runs |
-| `statusPillIdleGraceMs` | `5000` | Idle time before the pill hides |
-| `actionTimeoutMs` / `waitActionTimeoutMs` | `20000` / `40000` | Per-action helper timeout |
-| `daemonIdleMs` | `300000` | Idle time before the helper daemon stops |
-| `hostTimeoutMs` | `200000` | Model-facing tool call budget |
-| `maxBatchActions` | `20` | Actions allowed in one `actions` batch |
-| `defaultDispatch` | `background` | Input channel when a request names none |
-| `foregroundRecovery` | `false` | Retry a background refusal once in the foreground |
-| `observeAfterAction` | `true` | Capture a post-action observation |
-| `includeTextDefault` | `false` | `get_window_state` includes the UIA tree by default |
-| `screenshotMaxBytes` | `8388608` | Largest screenshot attached to a turn |
-| `visibleImageHistory` | `2` | Screenshots kept in active visual context |
-| `browserHeadlessDefault` | `false` | Launch browsers headless by default |
-| `browserCommandTimeoutMs` | `12000` | Per-CDP-command timeout |
-| `browserCaptureNetworkWaitMs` | `1500` | Post-click network evidence wait |
-| `lockGuard` | `true` | Refuse input while the desktop is locked |
-| `focusPolicy` | `yield` | What to do when an action moves the foreground window: `yield` reports and stops, `restore` asks non-preemptively, `never` ignores it |
-| `userActivityGuard` | `false` | Background mode: refuse input while the user is using the desktop, returning user_active (retry-safe) |
-| `exclusiveControl` | `false` | Only one live session may inject input |
-| `allowSystemKeys` | `false` | Allow Windows/Meta system keys |
-| `confirmConsequential` | `false` | Mark consequential actions as needing confirmation |
+| `overlay` | `true` | Show the operation cursor |
+| `statusPill` | `true` | Show the running status pill |
+| `browserHeadlessDefault` | `false` | Run browsers without a visible window |
+
+These are the only user settings. Numeric limits and input policy use internal defaults; old settings cannot change them. Required Windows/Meta system keys stay enabled internally. Confirmed Codex behavior guides background input, lock checks, user-interruption cancellation, focus yielding, and window text reads. CLI/MCP installs without a harness use the built-in defaults.
 
 ### Updating
 

@@ -114,7 +114,7 @@ assert.ok(helperSource.includes('$DisableDiffing'), 'the helper must thread the 
 // --- recovery hints -------------------------------------------------------
 
 // A refusal that no retry can fix is reported as such.
-for (const code of ['screen_locked', 'controller_busy', 'unsupported_system_key', 'browser_not_owned', 'batch_limit_exceeded']) {
+for (const code of ['screen_locked', 'controller_busy', 'browser_not_owned', 'batch_limit_exceeded']) {
   const hinted = withRecoveryHints({ ok: false, outcome: 'not_executed', error_code: code })
   assert.equal(hinted.retry, 'never', `${code} must be non-retryable`)
   assert.equal(hinted.actionSent, false, `${code} must report that nothing was sent`)
@@ -165,7 +165,7 @@ assert.equal(withRecoveryHints('x'), 'x')
 
 // --- safety settings ------------------------------------------------------
 
-// System keys stay denied by default and the opt-out is explicit.
+// System key capability remains available and normalization preserves the chord.
 assert.equal(parameters.key.type, 'string')
 resetSettingsForTest()
 {
@@ -180,9 +180,8 @@ assert.ok(helperSource.includes('function Test-DesktopLocked'), 'the helper must
 assert.ok(helperSource.includes('function Assert-ForegroundTarget'), 'the existing foreground guard must remain')
 assert.ok(helperSource.includes("error_code = 'screen_locked'"), 'a locked desktop must report screen_locked')
 assert.ok(helperSource.includes("$result.retry = 'never'"), 'screen_locked must be non-retryable')
-for (const surface of ['logonui', 'lockapp', 'winlogon', 'screensaver']) {
-  assert.ok(helperSource.includes(`'${surface}'`), `the lock guard must recognise ${surface}`)
-}
+assert.ok(helperSource.includes('OpenInputDesktop(0, false, 1)'), 'the lock guard must probe the actual input desktop')
+assert.ok(helperSource.includes('GetUserObjectInformation(desktop, 2'), 'the lock guard must verify the desktop name')
 // Input actions are gated; observation and enumeration are not.
 const inputListStart = helperSource.indexOf('$script:InputActions = @(')
 assert.ok(inputListStart > 0)
@@ -232,3 +231,9 @@ assert.ok(parameters.dispatch, 'dispatch must remain model-callable')
 }
 
 console.log('cua parity check PASSED')
+
+for (const action_sent of [false, true]) {
+  const interrupted = withRecoveryHints({ ok: false, action: 'type_text', error_code: 'user_input_interrupted', outcome: action_sent ? 'unknown' : 'not_executed', action_sent, retry: 'never', needs_observation: true })
+  assert.equal(interrupted.actionSent, action_sent)
+  assert.equal(interrupted.retry, 'never')
+}

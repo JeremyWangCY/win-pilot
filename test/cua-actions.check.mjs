@@ -23,7 +23,7 @@ assert.equal(parameters.action.required, undefined, 'action is optional when an 
 assert.ok(parameters.url, 'computer schema must expose initial browser URL')
 assert.equal(parameters.activate.type, 'boolean', 'launch_app foreground activation must be model-callable')
 assert.ok(parameters.include_text, 'computer schema must expose screenshot-first include_text control')
-assert.match(parameters.include_text.description, /default false/i)
+assert.match(parameters.include_text.description, /default true/i)
 assert.ok(actionEnum.includes('browser_observe'), 'browser_observe must remain model-callable')
 assert.ok(actionEnum.includes('browser_upload'), 'browser_upload must remain model-callable')
 assert.ok(actionEnum.includes('browser_click_point'), 'browser_click_point must remain model-callable')
@@ -88,16 +88,15 @@ assert.equal(normalizeComputerAction({ action: 'perform_secondary_action', secon
 assert.equal(normalizeComputerAction({ action: 'perform_secondary_action', secondary_action: 'scroll-left' }).args.secondary_action, 'scroll_left')
 assert.equal(parameters.screenshot_id.type, 'string')
 
-for (const request of [
-  { action: 'press_key', key: 'Meta+R' },
-  { action: 'keypress', keys: ['Meta', 'R'] },
-  { action: 'hold_key', key: 'Command+space' },
-  { action: 'click', x: 1, y: 1, keys: ['Win'] },
-]) {
-  const denied = await tool.execute(request)
-  assert.equal(denied.ok, false, `system-key request must be refused: ${JSON.stringify(request)}`)
-  assert.equal(denied.error_code, 'unsupported_system_key')
-  assert.equal(denied.outcome, 'not_executed')
+// System shortcuts remain available; normalization must preserve them.
+assert.equal(normalizeComputerAction({ action: 'press_key', key: 'Meta+R' }).args.key, 'Meta+R')
+assert.equal(normalizeComputerAction({ action: 'keypress', keys: ['Meta', 'R'] }).args.key, 'Meta+R')
+
+assert.equal((await tool.execute({ action: 'stop' })).ok, true)
+for (const action of ['paste', 'launch_app', 'select_text', 'perform_secondary_action', 'activate_window', 'close_window']) {
+  const blocked = await tool.execute({ action })
+  assert.equal(blocked.error_code, 'control_stopped', `stop must cover ${action}`)
+  assert.equal(blocked.actionSent, false)
 }
 
 console.log('canonical computer-use actions check PASSED')

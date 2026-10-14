@@ -17,7 +17,7 @@ Win-Pilot 是面向 Windows Computer Use 的 Agent Plugin。它通过同一个 `
 | 可恢复协议 | 统一 `ok`、`outcome`、`error_code`、动作后观察与未知结果处理 |
 | 通用后备入口 | 支持工具的 Agent 使用 stdio MCP；仅支持 shell 的 Agent 使用 JSON CLI + Skill |
 | Schema 可移植性 | 工具 Schema 持续验证 OpenAI 与 Gemini 系列消费者 |
-| DSH Provider 生命周期 | 在 DSH 0.1.7+ 占用唯一的 `computerUse` Provider 槽位；旧版 DSH 自动保持原有仅工具路径 |
+| DSH Provider 生命周期 | 配置表单要求 DSH 0.2.0-rc.2+；占用唯一的 `computerUse` Provider 槽位 |
 
 ## 环境要求
 
@@ -80,7 +80,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-预期版本为 `0.1.8`、平台为 `win32`，doctor 的必要检查全部为 `ok`。
+预期版本为 `0.1.10`、平台为 `win32`，doctor 的必要检查全部为 `ok`。
 
 ### 更新
 
@@ -121,49 +121,15 @@ MCP `tools/list` 返回的实时 Schema 是完整参数和默认值的权威定�
 
 ## 设置
 
-在提供 DSH 用户设置接缝的宿主上，Win-Pilot 会注册 `win-pilot` 命名空间。取值存放在 `$DSH_HOME/settings.yaml` 的 `win-pilot:` 分区，**热重载、无需重启**；没有该接缝的宿主继续使用内置默认值，工具行为不变。
+在 DeepSeek Harness **0.2.0-rc.2 或更新版本**中，打开「设置 → Win-Pilot」或插件详情页。当前宿主直接投射插件的 `Config`，三个布尔偏好通过实时引用立即生效。
 
-可在 DSH 界面的「设置 → 插件 → Win-Pilot」中修改，或直接编辑文档：
-
-```yaml
-win-pilot:
-  overlay: true
-  statusPill: true
-  actionTimeoutMs: 20000
-  maxBatchActions: 20
-  defaultDispatch: background
-  foregroundRecovery: false
-  lockGuard: true
-  exclusiveControl: false
-  allowSystemKeys: false
-```
-
-所有字段都是可选的；未设置的字段解析为部署默认值。完整清单（含默认值与取值范围）见 `lib/settings.js` 的 `WIN_PILOT_SETTINGS_FIELDS`。
-
-| 字段 | 默认值 | 作用 |
+| 偏好 | 默认值 | 作用 |
 |---|---|---|
-| `overlay` | `true` | 显示点击穿透的虚拟光标 |
-| `statusPill` | `true` | 动作进行中显示状态提示条 |
-| `statusPillIdleGraceMs` | `5000` | 状态条隐藏前的空闲毫秒数 |
-| `actionTimeoutMs` / `waitActionTimeoutMs` | `20000` / `40000` | 单步动作超时 |
-| `daemonIdleMs` | `300000` | 守护进程空闲回收时间 |
-| `hostTimeoutMs` | `200000` | 面向模型的工具调用预算 |
-| `maxBatchActions` | `20` | 单次批处理最大动作数 |
-| `defaultDispatch` | `background` | 未指定时的输入通道 |
-| `foregroundRecovery` | `false` | 后台被拒后自动前台重试一次 |
-| `observeAfterAction` | `true` | 动作后自动观察 |
-| `includeTextDefault` | `false` | `get_window_state` 默认包含无障碍树 |
-| `screenshotMaxBytes` | `8388608` | 附加到单轮的最大截图字节数 |
-| `visibleImageHistory` | `2` | 保留在视觉上下文中的截图数量 |
-| `browserHeadlessDefault` | `false` | 默认无头启动浏览器 |
-| `browserCommandTimeoutMs` | `12000` | 单条 CDP 命令超时 |
-| `browserCaptureNetworkWaitMs` | `1500` | 点击后网络证据等待 |
-| `lockGuard` | `true` | 锁屏时拒绝输入 |
-| `focusPolicy` | `yield` | 动作改变前台窗口时的处理：`yield` 只报告并停止，`restore` 非抢占式尝试还原，`never` 完全不处理 |
-| `userActivityGuard` | `false` | 后台模式下，你正在操作时拒绝注入输入并返回 user_active（可重试） |
-| `exclusiveControl` | `false` | 同一时间仅一个会话可注入输入 |
-| `allowSystemKeys` | `false` | 允许 Windows/Meta 系统键 |
-| `confirmConsequential` | `false` | 将有副作用的动作标记为需要确认 |
+| `overlay` | `true` | 显示操作光标 |
+| `statusPill` | `true` | 显示运行状态提示 |
+| `browserHeadlessDefault` | `false` | 浏览器在后台运行，不显示窗口 |
+
+用户设置仅有这三项。数值限制和输入策略采用内部默认值，旧设置不再改变它们；必需的 Windows/Meta 系统按键能力始终开启。后台输入、锁屏检查、用户输入中断、焦点让路和窗口文字读取依据已核对的 Codex 行为。没有宿主的 CLI/MCP 安装使用内置默认值。
 
 ## 工作原理
 

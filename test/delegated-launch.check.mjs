@@ -5,14 +5,14 @@ import { execFileSync } from 'node:child_process'
 import { defineComputerTool, stopDaemon } from '../lib/index.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const launcher = path.join(root, 'test', 'fixtures', 'delegated-native-window.cmd')
+const launcher = path.join(root, 'test', 'fixtures', 'delegated-native-window.mjs')
 const tool = defineComputerTool(value => value, {})
 let fixtureHwnd = 0
 
 try {
   const launched = await tool.execute({
     action: 'launch_app',
-    name: `cmd.exe /c "${launcher}"`,
+    name: `"${process.execPath}" "${launcher}"`,
   })
   assert.equal(launched.ok, true, JSON.stringify(launched))
   assert.ok(Number.isInteger(launched.hwnd) && launched.hwnd > 0, `delegated launch must return an HWND: ${JSON.stringify(launched)}`)
