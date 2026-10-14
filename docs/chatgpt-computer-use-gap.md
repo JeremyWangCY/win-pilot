@@ -1,5 +1,10 @@
 # Win-Pilot 与 ChatGPT Computer Use 的当前差距
 
+Current implementation update (2026-10-14): desktop input uses mandatory low-level keyboard/mouse hooks, self-tagged injection, mid-action cancellation and fresh observation before resuming. Hook unavailability refuses input; there is no last-input timestamp mode. The actual input desktop is checked with `OpenInputDesktop`. Settings expose only three boolean preferences. See [input-interruption.md](input-interruption.md) and [settings-panel.md](settings-panel.md) for the current contract. `get_window_state` includes accessibility text by default.
+
+The remaining material is the historical comparison and measurements collected before this update; earlier timestamp/permission settings describe that previous implementation.
+
+
 更新：2026-09-11。
 
 Win-Pilot 的模型可见桌面接口已采用 ChatGPT Windows Computer Use 名称：`list_apps`、`list_windows`、`get_window`、`launch_app`、`get_window_state`、`click`、`press_key`、`type_text`、`scroll`、`drag`、`set_value`、`perform_secondary_action` 和 `activate_window`。返回的 `window: { id, app }` 可直接复用，元素操作使用 `element_index`。

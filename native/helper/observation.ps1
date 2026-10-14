@@ -933,7 +933,10 @@ function Write-StatusState {
 function Notify-Cursor {
   param([int]$X, [int]$Y, [string]$Label)
   $on = Get-OverlayEnabled
-  if ($on) { Ensure-OverlayProcess; Ensure-StatusbarProcess }
+  $pill = Get-PayloadValue 'status_pill'
+  if ($null -eq $pill) { $pill = $true }
+  if ($on) { Ensure-OverlayProcess }
+  if ($pill) { Ensure-StatusbarProcess }
   Write-CursorState -X $X -Y $Y -Label $Label -Show $on
-  Write-StatusState -Show $on
+  Write-StatusState -Show ([bool]$pill)
 }

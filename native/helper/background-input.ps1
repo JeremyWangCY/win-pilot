@@ -143,22 +143,43 @@ function Send-BackgroundText {
   param([IntPtr]$Hwnd, [string]$Text)
   $res = [IntPtr]::Zero
   foreach ($ch in $Text.ToCharArray()) {
+    [WinPilotInputMonitor]::Check()
+    if ($ch -eq [char]13) { continue }
     if ($ch -eq [char]10) {
-      $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0100, [IntPtr]13, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-      $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0102, [IntPtr]13, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-      $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0101, [IntPtr]13, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+      $pressed = New-Object 'System.Collections.Generic.List[int]'
+      $failed = $true
+      try {
+        Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0100 -VirtualKey 13 -PressedKeys $pressed
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched()
+        $sent = [DshWin32]::SendMessageTimeout($Hwnd, 0x0102, [IntPtr]13, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+        if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: target window did not process the background character' }
+        $failed = $false
+      } finally {
+        if ($pressed.Contains(13)) {
+          # Cleanup must run even after Check() reports interruption.
+          if ($failed) { try { Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0101 -VirtualKey 13 -Release } catch { } }
+          else { Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0101 -VirtualKey 13 -Release }
+        }
+      }
       continue
     }
-    if ($ch -eq [char]13) { continue }
-    $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0102, [IntPtr][int]$ch, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-    Start-Sleep -Milliseconds 4
+    [WinPilotInputMonitor]::MarkDispatched()
+    $sent = [DshWin32]::SendMessageTimeout($Hwnd, 0x0102, [IntPtr][int]$ch, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+    if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: target window did not process the background character' }
+    [WinPilotInputMonitor]::Sleep(4)
   }
 }
 
 function Send-BackgroundKeyMessage {
-  param([IntPtr]$Hwnd, [uint32]$Message, [int]$VirtualKey, [switch]$Async)
+  param([IntPtr]$Hwnd, [uint32]$Message, [int]$VirtualKey, [switch]$Async, [switch]$Release, [System.Collections.Generic.List[int]]$PressedKeys)
+  if (-not $Release) { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched() }
+  # A timed-out synchronous down may already be executing in the receiver.
+  # Track it after Check, immediately before submitting, so cleanup balances it.
+  $ownsDown = ($Message -eq 0x0100 -and $null -ne $PressedKeys)
+  if ($ownsDown) { $PressedKeys.Add($VirtualKey) }
   if ($Async) {
     if (-not [DshWin32]::PostMessage($Hwnd, $Message, [IntPtr]$VirtualKey, [IntPtr]::Zero)) {
+      if ($ownsDown) { [void]$PressedKeys.Remove($VirtualKey) }
       throw 'background_unavailable: Chromium renderer rejected the posted key message'
     }
     return
@@ -166,6 +187,16 @@ function Send-BackgroundKeyMessage {
   $res = [IntPtr]::Zero
   $sent = [DshWin32]::SendMessageTimeout($Hwnd, $Message, [IntPtr]$VirtualKey, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
   if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: target window did not process the background key message' }
+}
+
+function Release-BackgroundKeys {
+  param([IntPtr]$Hwnd, [int[]]$Keys, [switch]$Async)
+  $failure = $null
+  for ($i = $Keys.Count - 1; $i -ge 0; $i--) {
+    try { Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0101 -VirtualKey $Keys[$i] -Async:$Async -Release }
+    catch { if ($null -eq $failure) { $failure = $_ } }
+  }
+  if ($failure) { throw $failure }
 }
 
 function Send-BackgroundKey {
@@ -185,10 +216,19 @@ function Send-BackgroundKey {
       elseif ($m -in @('win','meta','super','cmd','command')) { $modVks += 0x5B }
     }
   }
-  foreach ($mvk in $modVks) { Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0100 -VirtualKey $mvk -Async:$Async }
-  Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0100 -VirtualKey $vk -Async:$Async
-  Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0101 -VirtualKey $vk -Async:$Async
-  for ($i = $modVks.Count - 1; $i -ge 0; $i--) { Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0101 -VirtualKey $modVks[$i] -Async:$Async }
+  $pressed = New-Object 'System.Collections.Generic.List[int]'
+  $failed = $true
+  try {
+    foreach ($keyCode in ($modVks + @($vk))) {
+      if ($pressed.Contains($keyCode)) { continue }
+      Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0100 -VirtualKey $keyCode -Async:$Async -PressedKeys $pressed
+    }
+    [WinPilotInputMonitor]::Check()
+    $failed = $false
+  } finally {
+    if ($failed) { try { Release-BackgroundKeys -Hwnd $Hwnd -Keys $pressed.ToArray() -Async:$Async } catch { } }
+    else { Release-BackgroundKeys -Hwnd $Hwnd -Keys $pressed.ToArray() -Async:$Async }
+  }
 }
 
 function Send-BackgroundHoldKey {
@@ -208,12 +248,19 @@ function Send-BackgroundHoldKey {
       elseif ($m -in @('win','meta','super','cmd','command')) { $modVks += 0x5B }
     }
   }
-  $res = [IntPtr]::Zero
-  foreach ($mvk in $modVks) { $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0100, [IntPtr]$mvk, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res) }
-  $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0100, [IntPtr]$vk, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-  Start-Sleep -Milliseconds $DurationMs
-  $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0101, [IntPtr]$vk, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-  for ($i = $modVks.Count - 1; $i -ge 0; $i--) { $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0101, [IntPtr]$modVks[$i], [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res) }
+  $pressed = New-Object 'System.Collections.Generic.List[int]'
+  $failed = $true
+  try {
+    foreach ($keyCode in ($modVks + @($vk))) {
+      if ($pressed.Contains($keyCode)) { continue }
+      Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0100 -VirtualKey $keyCode -PressedKeys $pressed
+    }
+    [WinPilotInputMonitor]::Sleep($DurationMs)
+    $failed = $false
+  } finally {
+    if ($failed) { try { Release-BackgroundKeys -Hwnd $Hwnd -Keys $pressed.ToArray() } catch { } }
+    else { Release-BackgroundKeys -Hwnd $Hwnd -Keys $pressed.ToArray() }
+  }
 }
 
 function Get-UiaParent {
@@ -249,17 +296,41 @@ function Send-BackgroundMouseButton {
   $cpt = [DshWin32]::ScreenToClientPoint($Hwnd, $Sx, $Sy)
   $lParam = [IntPtr](($cpt.Y -band 0xFFFF) -shl 16 -bor ($cpt.X -band 0xFFFF))
   $res = [IntPtr]::Zero
-  foreach ($mvk in $modVks) { $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0100, [IntPtr]$mvk, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res) }
+  $pressed = New-Object 'System.Collections.Generic.List[int]'
+  $mouseDown = $false
+  $failed = $true
+  $wUp = ($wDown -band 0xFFFF0000) -bor $wMods
   try {
-    $wDown = $wDown -bor $wMods
-    $null = [DshWin32]::SendMessageTimeout($Hwnd, $msgDown, [IntPtr]$wDown, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-    $null = [DshWin32]::SendMessageTimeout($Hwnd, $msgUp, [IntPtr]$wMods, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-    for ($i = 1; $i -lt $Count; $i++) {
-      $null = [DshWin32]::SendMessageTimeout($Hwnd, $msgDbl, [IntPtr]$wDown, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-      $null = [DshWin32]::SendMessageTimeout($Hwnd, $msgUp, [IntPtr]$wMods, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+    foreach ($mvk in $modVks) {
+      if ($pressed.Contains($mvk)) { continue }
+      Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0100 -VirtualKey $mvk -PressedKeys $pressed
     }
+    $wDown = $wDown -bor $wMods
+    for ($i = 0; $i -lt [Math]::Max(1, $Count); $i++) {
+      $message = $msgDown
+      if ($i -gt 0) { $message = $msgDbl }
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched()
+      $mouseDown = $true
+      $sent = [DshWin32]::SendMessageTimeout($Hwnd, $message, [IntPtr]$wDown, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+      if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: target window did not process the background mouse message' }
+      [WinPilotInputMonitor]::Check()
+      # A button we pressed must be released even if user input has cancelled us.
+      $sent = [DshWin32]::SendMessageTimeout($Hwnd, $msgUp, [IntPtr]$wUp, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+      if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: target window did not process the background mouse release' }
+      $mouseDown = $false
+    }
+    $failed = $false
   } finally {
-    for ($i = $modVks.Count - 1; $i -ge 0; $i--) { $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0101, [IntPtr]$modVks[$i], [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res) }
+    $releaseFailure = $null
+    if ($mouseDown) {
+      try {
+        $sent = [DshWin32]::SendMessageTimeout($Hwnd, $msgUp, [IntPtr]$wUp, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+        if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: target window did not process the background mouse release' }
+      } catch { $releaseFailure = $_ }
+    }
+    try { Release-BackgroundKeys -Hwnd $Hwnd -Keys $pressed.ToArray() }
+    catch { if ($null -eq $releaseFailure) { $releaseFailure = $_ } }
+    if (-not $failed -and $releaseFailure) { throw $releaseFailure }
   }
 }
 
@@ -286,15 +357,15 @@ function Invoke-FromPoint {
   for ($i = 0; $i -lt 12 -and $null -ne $el; $i++) {
     $ip = $null
     if ($el.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$ip)) {
-      $ip.Invoke(); return @{ ok = $true; method = 'invoke'; name = $el.Current.Name; rect = $el.Current.BoundingRectangle }
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $ip.Invoke(); return @{ ok = $true; method = 'invoke'; name = $el.Current.Name; rect = $el.Current.BoundingRectangle }
     }
     $tp = $null
     if ($el.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$tp)) {
-      $tp.Toggle(); return @{ ok = $true; method = 'toggle'; name = $el.Current.Name; rect = $el.Current.BoundingRectangle }
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $tp.Toggle(); return @{ ok = $true; method = 'toggle'; name = $el.Current.Name; rect = $el.Current.BoundingRectangle }
     }
     $sp = $null
     if ($el.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$sp)) {
-      $sp.Select(); return @{ ok = $true; method = 'selection'; name = $el.Current.Name; rect = $el.Current.BoundingRectangle }
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $sp.Select(); return @{ ok = $true; method = 'selection'; name = $el.Current.Name; rect = $el.Current.BoundingRectangle }
     }
     $el = Get-UiaParent $el
   }
@@ -474,6 +545,7 @@ function Invoke-FromPointInWindow {
       if ($null -eq $method) { throw 'background_unavailable: target has no verified UIA action pattern; unsupported paths were cached' }
       $name = $best.Current.Name
       $rect = $best.Current.BoundingRectangle
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched()
       if ($method -eq 'invoke') { $bp.Invoke() }
       elseif ($method -eq 'toggle') { $bp.Toggle() }
       elseif ($method -eq 'selection') { $bp.Select() }
@@ -524,10 +596,7 @@ function Get-OverlayPoint-Element {
     return $null
   }
   try {
-    $sip = $null
-    if ($Element.Current.IsOffscreen -and $Element.TryGetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern, [ref]$sip)) {
-      try { $sip.ScrollIntoView() } catch { }
-    }
+    # Drawing the overlay must not scroll or otherwise mutate the target.
     $er = $Element.Current.BoundingRectangle
     if ($er.Width -gt 0 -and $er.Height -gt 0) {
       $cx = Safe-Int ($er.X + $er.Width / 2)

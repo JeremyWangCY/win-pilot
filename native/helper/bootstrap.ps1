@@ -47,6 +47,9 @@ using System.Text;
 using System.IO;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Threading;
+
+// WIN_PILOT_INPUT_MONITOR
 
 public static class DshWin32
 {
@@ -117,9 +120,86 @@ public static class DshWin32
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
-  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
   [DllImport("user32.dll")] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
+  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
+  [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+  [DllImport("user32.dll", SetLastError = true)] private static extern bool CloseDesktop(IntPtr desktop);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool GetUserObjectInformation(IntPtr handle, int index, StringBuilder value, int length, out int needed);
+  public static bool IsDesktopLocked()
+  {
+    IntPtr desktop = OpenInputDesktop(0, false, 1);
+    if (desktop == IntPtr.Zero) return true;
+    try
+    {
+      StringBuilder name = new StringBuilder(256); int needed;
+      if (!GetUserObjectInformation(desktop, 2, name, name.Capacity * 2, out needed)) return true;
+      return !string.Equals(name.ToString(), "Default", StringComparison.OrdinalIgnoreCase);
+    }
+    finally { CloseDesktop(desktop); }
+  }
+
+  // Track only Win-Pilot's held input, so interruption cleanup never sends
+  // arbitrary releases for keys/buttons pressed by the user.
+  private static readonly Dictionary<string, INPUT> heldInputs = new Dictionary<string, INPUT>();
+  private static void TrackInput(INPUT i)
+  {
+    if (i.type == 1)
+    {
+      string key = "k:" + i.u.ki.wVk + ":" + i.u.ki.wScan;
+      if ((i.u.ki.dwFlags & 2) != 0) heldInputs.Remove(key);
+      else { i.u.ki.dwFlags |= 2; heldInputs[key] = i; }
+    }
+    else
+    {
+      uint[] downs = { 2, 8, 32, 128 }, ups = { 4, 16, 64, 256 };
+      for (int j = 0; j < downs.Length; j++)
+      {
+        string key = "m:" + downs[j] + ":" + i.u.mi.mouseData;
+        if ((i.u.mi.dwFlags & ups[j]) != 0) heldInputs.Remove(key);
+        else if ((i.u.mi.dwFlags & downs[j]) != 0) { i.u.mi.dwFlags = ups[j]; heldInputs[key] = i; }
+      }
+    }
+  }
+  private static uint SendGuarded(uint n, INPUT[] inputs, int size)
+  {
+    WinPilotInputMonitor.Check();
+    WinPilotInputMonitor.MarkDispatched();
+    uint sent = SendInput(n, inputs, size);
+    for (int j = 0; j < sent; j++) TrackInput(inputs[j]);
+    if (sent != n) throw new InvalidOperationException("input_dispatch_failed: SendInput did not deliver the complete input sequence");
+    return sent;
+  }
+  private static uint SendRelease(uint n, INPUT[] inputs, int size)
+  {
+    List<INPUT> owned = new List<INPUT>();
+    foreach (INPUT i in inputs)
+    {
+      string key = i.type == 1 ? "k:" + i.u.ki.wVk + ":" + i.u.ki.wScan : null;
+      if (key != null && heldInputs.ContainsKey(key)) owned.Add(i);
+    }
+    if (owned.Count == 0) return 0;
+    uint sent = SendInput((uint)owned.Count, owned.ToArray(), size);
+    for (int j = 0; j < sent; j++) TrackInput(owned[j]);
+    return sent;
+  }
+  public static void ReleaseOwnedInput()
+  {
+    INPUT[] releases = new List<INPUT>(heldInputs.Values).ToArray();
+    if (releases.Length == 0) return;
+    uint sent = SendInput((uint)releases.Length, releases, Marshal.SizeOf(typeof(INPUT)));
+    for (int j = 0; j < sent; j++) TrackInput(releases[j]);
+  }
+  private static void MoveOwned(int x, int y)
+  {
+    int left = GetSystemMetrics(76), top = GetSystemMetrics(77);
+    int width = GetSystemMetrics(78), height = GetSystemMetrics(79);
+    if (width <= 0 || height <= 0) throw new InvalidOperationException("input_dispatch_failed: virtual desktop dimensions unavailable");
+    INPUT i = MkMouse(0x0001 | 0x8000 | 0x4000, 0);
+    i.u.mi.dx = (int)Math.Max(0, Math.Min(65535, ((x - left) + 0.5) * 65536.0 / width));
+    i.u.mi.dy = (int)Math.Max(0, Math.Min(65535, ((y - top) + 0.5) * 65536.0 / height));
+    SendGuarded(1, new INPUT[] { i }, Marshal.SizeOf(typeof(INPUT)));
+  }
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
@@ -382,6 +462,8 @@ public static class DshWin32
 
   public static bool PushWindowToBottom(IntPtr h)
   {
+    WinPilotInputMonitor.Check();
+    WinPilotInputMonitor.MarkDispatched();
     return SetWindowPos(h, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
   }
 
@@ -427,28 +509,38 @@ public static class DshWin32
 
   public static void ForceForeground(IntPtr h)
   {
+    WinPilotInputMonitor.Check();
+    WinPilotInputMonitor.MarkDispatched();
     // only restore MINIMIZED windows; never SW_RESTORE a visible/maximized window (would un-maximize it)
     if (IsIconic(h)) ShowWindow(h, 9);
     SetWindowPos(h, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     INPUT[] alt = new INPUT[] { MkKey(0x12, 0), MkKey(0x12, 2) };
-    SendInput(2, alt, Marshal.SizeOf(typeof(INPUT)));
-    System.Threading.Thread.Sleep(40);
+    SendGuarded(2, alt, Marshal.SizeOf(typeof(INPUT)));
+    WinPilotInputMonitor.Sleep(40);
     INPUT[] esc = new INPUT[] { MkKey(0x1B, 0), MkKey(0x1B, 2) };
-    SendInput(2, esc, Marshal.SizeOf(typeof(INPUT)));
-    System.Threading.Thread.Sleep(40);
+    SendGuarded(2, esc, Marshal.SizeOf(typeof(INPUT)));
+    WinPilotInputMonitor.Sleep(40);
     IntPtr f = GetForegroundWindow();
     // GetWindowThreadProcessId RETURNS the thread id; the out param receives the process id.
     uint fgPid; uint fgTid = GetWindowThreadProcessId(f, out fgPid);
     uint curPid; uint curTid = GetWindowThreadProcessId(h, out curPid);
     uint myTid = GetCurrentThreadId();
-    if (myTid != 0 && fgTid != 0 && myTid != fgTid) AttachThreadInput(myTid, fgTid, true);
-    if (fgTid != 0 && curTid != 0 && fgTid != curTid) AttachThreadInput(curTid, fgTid, true);
-    BringWindowToTop(h);
-    SetForegroundWindow(h);
-    SetFocus(h);
-    if (fgTid != 0 && curTid != 0 && fgTid != curTid) AttachThreadInput(curTid, fgTid, false);
-    if (myTid != 0 && fgTid != 0 && myTid != fgTid) AttachThreadInput(myTid, fgTid, false);
-    System.Threading.Thread.Sleep(150);
+    bool ownAttached = false, targetAttached = false;
+    try
+    {
+      if (myTid != 0 && fgTid != 0 && myTid != fgTid) ownAttached = AttachThreadInput(myTid, fgTid, true);
+      if (fgTid != 0 && curTid != 0 && fgTid != curTid) targetAttached = AttachThreadInput(curTid, fgTid, true);
+      WinPilotInputMonitor.Check();
+      BringWindowToTop(h);
+      SetForegroundWindow(h);
+      SetFocus(h);
+    }
+    finally
+    {
+      if (targetAttached) AttachThreadInput(curTid, fgTid, false);
+      if (ownAttached) AttachThreadInput(myTid, fgTid, false);
+    }
+    WinPilotInputMonitor.Sleep(150);
   }
 
   public static long ForegroundHwnd()
@@ -470,75 +562,39 @@ public static class DshWin32
     if (IsIconic(h)) return false;
     if (GetForegroundWindow() == h) return true;
     SetForegroundWindow(h);
-    System.Threading.Thread.Sleep(80);
+    WinPilotInputMonitor.Sleep(80);
     return GetForegroundWindow() == h;
-  }
-
-  // Milliseconds since the last REAL system input (keyboard or mouse), from the
-  // system-wide last-input tick. Returns -1 when the query fails, so callers can
-  // tell "unknown" from "idle for 0 ms".
-  //
-  // Win-Pilot's own BACKGROUND input (PostMessage/SendMessage, UIA patterns)
-  // bypasses the input queue and does NOT advance this value — measured, see
-  // test/fixtures/user-activity-probe.ps1 — so while dispatching in the
-  // background a small value means the user is interacting right now.
-  [StructLayout(LayoutKind.Sequential)]
-  public struct LastInputInfo { public uint cbSize; public uint dwTime; }
-
-  [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LastInputInfo plii);
-  [DllImport("kernel32.dll")] public static extern uint GetTickCount();
-
-  public static int LastInputIdleMs()
-  {
-    LastInputInfo li = new LastInputInfo();
-    li.cbSize = (uint)Marshal.SizeOf(typeof(LastInputInfo));
-    if (!GetLastInputInfo(ref li)) return -1;
-    // dwTime is a 32-bit tick that can wrap; unsigned subtraction handles that.
-    return (int)(GetTickCount() - li.dwTime);
-  }
-
-  // Process id owning the current foreground window; 0 when there is none.
-  // Used by the desktop-lock guard, which refuses input while a lock surface
-  // (LogonUI/LockApp) owns the foreground.
-  public static uint ForegroundProcessId()
-  {
-    IntPtr h = GetForegroundWindow();
-    if (h == IntPtr.Zero) return 0;
-    uint pid; GetWindowThreadProcessId(h, out pid);
-    return pid;
   }
 
   private static INPUT MkMouse(uint flags, uint data)
   {
     INPUT i = new INPUT(); i.type = 0; i.u.mi.dx = 0; i.u.mi.dy = 0;
-    i.u.mi.mouseData = data; i.u.mi.dwFlags = flags; i.u.mi.time = 0; i.u.mi.dwExtraInfo = IntPtr.Zero;
+    i.u.mi.mouseData = data; i.u.mi.dwFlags = flags; i.u.mi.time = 0; i.u.mi.dwExtraInfo = WinPilotInputMonitor.SelfTag;
     return i;
   }
 
   private static INPUT MkKey(ushort vk, uint flags)
   {
     INPUT i = new INPUT(); i.type = 1; i.u.ki.wVk = vk; i.u.ki.wScan = 0;
-    i.u.ki.dwFlags = flags; i.u.ki.time = 0; i.u.ki.dwExtraInfo = IntPtr.Zero;
+    i.u.ki.dwFlags = flags; i.u.ki.time = 0; i.u.ki.dwExtraInfo = WinPilotInputMonitor.SelfTag;
     return i;
   }
 
   private static INPUT MkUni(char c, uint flags)
   {
     INPUT i = new INPUT(); i.type = 1; i.u.ki.wVk = 0; i.u.ki.wScan = (ushort)c;
-    i.u.ki.dwFlags = flags; i.u.ki.time = 0; i.u.ki.dwExtraInfo = IntPtr.Zero;
+    i.u.ki.dwFlags = flags; i.u.ki.time = 0; i.u.ki.dwExtraInfo = WinPilotInputMonitor.SelfTag;
     return i;
   }
 
   public static void TypeText(string text)
   {
     if (string.IsNullOrEmpty(text)) return;
-    List<INPUT> ev = new List<INPUT>();
     foreach (char c in text)
     {
-      ev.Add(MkUni(c, 4));
-      ev.Add(MkUni(c, 6));
+      SendGuarded(2, new INPUT[] { MkUni(c, 4), MkUni(c, 6) }, Marshal.SizeOf(typeof(INPUT)));
+      WinPilotInputMonitor.Sleep(1);
     }
-    SendInput((uint)ev.Count, ev.ToArray(), Marshal.SizeOf(typeof(INPUT)));
   }
 
   public static ushort MapKey(string key)
@@ -689,18 +745,18 @@ public static class DshWin32
     ev.Add(MkKey(vk, 0));
     ev.Add(MkKey(vk, 2));
     for (int i = mods.Count - 1; i >= 0; i--) ev.Add(MkKey(mods[i], 2));
-    SendInput((uint)ev.Count, ev.ToArray(), Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded((uint)ev.Count, ev.ToArray(), Marshal.SizeOf(typeof(INPUT)));
   }
 
-  public static void MouseMove(int x, int y) { SetCursorPos(x, y); System.Threading.Thread.Sleep(40); }
+  public static void MouseMove(int x, int y) { MoveOwned(x, y); WinPilotInputMonitor.Sleep(40); }
 
   public static void MouseMoveWithModifiers(int x, int y, string modifiers)
   {
     string ignored; List<ushort> mods;
     ParseChord("", modifiers, out ignored, out mods);
-    foreach (ushort m in mods) SendInput(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
+    foreach (ushort m in mods) SendGuarded(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
     try { MouseMove(x, y); }
-    finally { for (int i = mods.Count - 1; i >= 0; i--) SendInput(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
+    finally { for (int i = mods.Count - 1; i >= 0; i--) SendRelease(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
   }
 
   public static void MouseClick(int x, int y)
@@ -712,7 +768,7 @@ public static class DshWin32
   // within the system double-click time so apps register them as 2/3-click sequences
   public static void MouseClickEx(int x, int y, int count, string button)
   {
-    SetCursorPos(x, y); System.Threading.Thread.Sleep(50);
+    MoveOwned(x, y); WinPilotInputMonitor.Sleep(50);
     uint downF = 0x0002, upF = 0x0004;
     uint mouseData = 0;
     string b = (button ?? "left").Trim().ToLowerInvariant();
@@ -726,8 +782,8 @@ public static class DshWin32
     {
       INPUT[] d = new INPUT[] { MkMouse(downF, mouseData) };
       INPUT[] u = new INPUT[] { MkMouse(upF, mouseData) };
-      SendInput(1, d, Marshal.SizeOf(typeof(INPUT))); System.Threading.Thread.Sleep(25);
-      SendInput(1, u, Marshal.SizeOf(typeof(INPUT))); System.Threading.Thread.Sleep(25);
+      SendGuarded(1, d, Marshal.SizeOf(typeof(INPUT))); WinPilotInputMonitor.Sleep(25);
+      SendGuarded(1, u, Marshal.SizeOf(typeof(INPUT))); WinPilotInputMonitor.Sleep(25);
     }
   }
 
@@ -735,69 +791,69 @@ public static class DshWin32
   {
     string ignored; List<ushort> mods;
     ParseChord("", modifiers, out ignored, out mods);
-    foreach (ushort m in mods) SendInput(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
+    foreach (ushort m in mods) SendGuarded(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
     try { MouseClickEx(x, y, count, button); }
-    finally { for (int i = mods.Count - 1; i >= 0; i--) SendInput(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
+    finally { for (int i = mods.Count - 1; i >= 0; i--) SendRelease(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
   }
 
   public static void Scroll(int x, int y, int amount, bool down)
   {
-    SetCursorPos(x, y); System.Threading.Thread.Sleep(50);
+    MoveOwned(x, y); WinPilotInputMonitor.Sleep(50);
     uint data = (uint)((down ? -1 : 1) * amount * 120);
     INPUT[] ev = new INPUT[] { MkMouse(0x0800, data) };
-    SendInput(1, ev, Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded(1, ev, Marshal.SizeOf(typeof(INPUT)));
   }
 
   public static void ScrollWithModifiers(int x, int y, int amount, bool down, string modifiers)
   {
     string ignored; List<ushort> mods;
     ParseChord("", modifiers, out ignored, out mods);
-    foreach (ushort m in mods) SendInput(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
+    foreach (ushort m in mods) SendGuarded(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
     try { Scroll(x, y, amount, down); }
-    finally { for (int i = mods.Count - 1; i >= 0; i--) SendInput(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
+    finally { for (int i = mods.Count - 1; i >= 0; i--) SendRelease(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
   }
 
   // horizontal wheel (WM_MOUSEHWHEEL equivalent): positive delta = scroll right
   public static void ScrollH(int x, int y, int amount, bool right)
   {
-    SetCursorPos(x, y); System.Threading.Thread.Sleep(50);
+    MoveOwned(x, y); WinPilotInputMonitor.Sleep(50);
     uint data = (uint)((right ? 1 : -1) * amount * 120);
     INPUT[] ev = new INPUT[] { MkMouse(0x1000, data) };
-    SendInput(1, ev, Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded(1, ev, Marshal.SizeOf(typeof(INPUT)));
   }
 
   public static void ScrollHWithModifiers(int x, int y, int amount, bool right, string modifiers)
   {
     string ignored; List<ushort> mods;
     ParseChord("", modifiers, out ignored, out mods);
-    foreach (ushort m in mods) SendInput(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
+    foreach (ushort m in mods) SendGuarded(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
     try { ScrollH(x, y, amount, right); }
-    finally { for (int i = mods.Count - 1; i >= 0; i--) SendInput(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
+    finally { for (int i = mods.Count - 1; i >= 0; i--) SendRelease(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
   }
 
   public static void Drag(int fx, int fy, int tx, int ty)
   {
-    SetCursorPos(fx, fy); System.Threading.Thread.Sleep(60);
+    MoveOwned(fx, fy); WinPilotInputMonitor.Sleep(60);
     INPUT[] d = new INPUT[] { MkMouse(0x0002, 0) };
-    SendInput(1, d, Marshal.SizeOf(typeof(INPUT))); System.Threading.Thread.Sleep(60);
+    SendGuarded(1, d, Marshal.SizeOf(typeof(INPUT))); WinPilotInputMonitor.Sleep(60);
     int steps = Math.Max(6, (Math.Abs(tx - fx) + Math.Abs(ty - fy)) / 12);
     for (int i = 1; i <= steps; i++)
     {
       int cx = fx + (tx - fx) * i / steps;
       int cy = fy + (ty - fy) * i / steps;
-      SetCursorPos(cx, cy);
-      System.Threading.Thread.Sleep(8);
+      MoveOwned(cx, cy);
+      WinPilotInputMonitor.Sleep(8);
     }
-    System.Threading.Thread.Sleep(60);
+    WinPilotInputMonitor.Sleep(60);
     INPUT[] u = new INPUT[] { MkMouse(0x0004, 0) };
-    SendInput(1, u, Marshal.SizeOf(typeof(INPUT))); System.Threading.Thread.Sleep(30);
+    SendGuarded(1, u, Marshal.SizeOf(typeof(INPUT))); WinPilotInputMonitor.Sleep(30);
   }
 
   public static void DragPath(int[] xs, int[] ys)
   {
     if (xs == null || ys == null || xs.Length < 2 || xs.Length != ys.Length) throw new Exception("drag path requires at least two points");
-    SetCursorPos(xs[0], ys[0]); System.Threading.Thread.Sleep(60);
-    SendInput(1, new INPUT[] { MkMouse(0x0002, 0) }, Marshal.SizeOf(typeof(INPUT))); System.Threading.Thread.Sleep(60);
+    MoveOwned(xs[0], ys[0]); WinPilotInputMonitor.Sleep(60);
+    SendGuarded(1, new INPUT[] { MkMouse(0x0002, 0) }, Marshal.SizeOf(typeof(INPUT))); WinPilotInputMonitor.Sleep(60);
     for (int i = 1; i < xs.Length; i++)
     {
       int distance = Math.Abs(xs[i] - xs[i - 1]) + Math.Abs(ys[i] - ys[i - 1]);
@@ -806,25 +862,25 @@ public static class DshWin32
       {
         int cx = xs[i - 1] + (xs[i] - xs[i - 1]) * j / steps;
         int cy = ys[i - 1] + (ys[i] - ys[i - 1]) * j / steps;
-        SetCursorPos(cx, cy); System.Threading.Thread.Sleep(8);
+        MoveOwned(cx, cy); WinPilotInputMonitor.Sleep(8);
       }
     }
-    System.Threading.Thread.Sleep(60);
-    SendInput(1, new INPUT[] { MkMouse(0x0004, 0) }, Marshal.SizeOf(typeof(INPUT))); System.Threading.Thread.Sleep(30);
+    WinPilotInputMonitor.Sleep(60);
+    SendGuarded(1, new INPUT[] { MkMouse(0x0004, 0) }, Marshal.SizeOf(typeof(INPUT))); WinPilotInputMonitor.Sleep(30);
   }
 
   public static void DragPathWithModifiers(int[] xs, int[] ys, string modifiers)
   {
     string ignored; List<ushort> mods;
     ParseChord("", modifiers, out ignored, out mods);
-    foreach (ushort m in mods) SendInput(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
+    foreach (ushort m in mods) SendGuarded(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
     try { DragPath(xs, ys); }
-    finally { for (int i = mods.Count - 1; i >= 0; i--) SendInput(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
+    finally { for (int i = mods.Count - 1; i >= 0; i--) SendRelease(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
   }
 
   public static void MouseDown(int x, int y, string button)
   {
-    SetCursorPos(x, y); System.Threading.Thread.Sleep(30);
+    MoveOwned(x, y); WinPilotInputMonitor.Sleep(30);
     uint flag = 0x0002;
     uint mouseData = 0;
     string b = (button ?? "left").Trim().ToLowerInvariant();
@@ -833,12 +889,12 @@ public static class DshWin32
     else if (b == "back") { flag = 0x0080; mouseData = 0x0001; }
     else if (b == "forward") { flag = 0x0080; mouseData = 0x0002; }
     INPUT[] d = new INPUT[] { MkMouse(flag, mouseData) };
-    SendInput(1, d, Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded(1, d, Marshal.SizeOf(typeof(INPUT)));
   }
 
   public static void MouseUp(int x, int y, string button)
   {
-    SetCursorPos(x, y); System.Threading.Thread.Sleep(30);
+    MoveOwned(x, y); WinPilotInputMonitor.Sleep(30);
     uint flag = 0x0004;
     uint mouseData = 0;
     string b = (button ?? "left").Trim().ToLowerInvariant();
@@ -847,7 +903,7 @@ public static class DshWin32
     else if (b == "back") { flag = 0x0100; mouseData = 0x0001; }
     else if (b == "forward") { flag = 0x0100; mouseData = 0x0002; }
     INPUT[] u = new INPUT[] { MkMouse(flag, mouseData) };
-    SendInput(1, u, Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded(1, u, Marshal.SizeOf(typeof(INPUT)));
   }
 
   public static void HoldKey(string key, string modifiers, int durationMs)
@@ -859,14 +915,14 @@ public static class DshWin32
     List<INPUT> down = new List<INPUT>();
     foreach (ushort m in mods) down.Add(MkKey(m, 0));
     down.Add(MkKey(vk, 0));
-    SendInput((uint)down.Count, down.ToArray(), Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded((uint)down.Count, down.ToArray(), Marshal.SizeOf(typeof(INPUT)));
 
-    System.Threading.Thread.Sleep(durationMs);
+    WinPilotInputMonitor.Sleep(durationMs);
 
     List<INPUT> up = new List<INPUT>();
     up.Add(MkKey(vk, 2));
     for (int i = mods.Count - 1; i >= 0; i--) up.Add(MkKey(mods[i], 2));
-    SendInput((uint)up.Count, up.ToArray(), Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded((uint)up.Count, up.ToArray(), Marshal.SizeOf(typeof(INPUT)));
   }
 }
 

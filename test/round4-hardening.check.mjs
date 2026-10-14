@@ -73,13 +73,13 @@ assert.ok(
 )
 assert.match(
   helperSrc,
-  /if \(fgTid != 0 && curTid != 0 && fgTid != curTid\) AttachThreadInput\(curTid, fgTid, true\);/,
+  /if \(fgTid != 0 && curTid != 0 && fgTid != curTid\) targetAttached = AttachThreadInput\(curTid, fgTid, true\);/,
   'AttachThreadInput(attach) must use thread ids with zero guards'
 )
 assert.match(
   helperSrc,
-  /if \(fgTid != 0 && curTid != 0 && fgTid != curTid\) AttachThreadInput\(curTid, fgTid, false\);/,
-  'AttachThreadInput(detach) must use thread ids with zero guards'
+  /finally\s*\{\s*if \(targetAttached\) AttachThreadInput\(curTid, fgTid, false\);\s*if \(ownAttached\) AttachThreadInput\(myTid, fgTid, false\);/,
+  'successful thread input attachments must be detached even when input is interrupted'
 )
 assert.ok(
   !helperSrc.includes('GetWindowThreadProcessId(f, out fgTid)') &&

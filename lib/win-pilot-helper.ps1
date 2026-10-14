@@ -47,6 +47,257 @@ using System.Text;
 using System.IO;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Threading;
+
+
+// Shared by every action in the helper process. No key contents are retained.
+public static class WinPilotInputMonitor
+{
+  public static readonly IntPtr SelfTag = new IntPtr(0x5750494E);
+  private static readonly object State = new object();
+  private static readonly object Lifecycle = new object();
+  private static readonly ManualResetEvent Ready = new ManualResetEvent(false);
+  private static readonly ManualResetEvent Interrupted = new ManualResetEvent(false);
+  private static readonly HookProc KeyboardCallback = KeyboardHook;
+  private static readonly HookProc MouseCallback = MouseHook;
+  private static Thread worker;
+  private static uint threadId;
+  private static IntPtr keyboardHook, mouseHook;
+  private static bool started, stopped, active, requiresObservation, dispatched;
+  private static long generation;
+  private static string failure;
+
+  static WinPilotInputMonitor()
+  {
+    AppDomain.CurrentDomain.ProcessExit += delegate { Stop(); };
+    AppDomain.CurrentDomain.DomainUnload += delegate { Stop(); };
+  }
+
+  public static bool HasDispatched { get { lock (State) { return dispatched; } } }
+
+  public static void EnsureStarted()
+  {
+    lock (Lifecycle)
+    {
+      lock (State)
+      {
+        if (stopped) throw Unavailable("monitor stopped");
+        if (!started)
+        {
+          started = true;
+          worker = new Thread(Run);
+          worker.IsBackground = true;
+          worker.Name = "Win-Pilot input hooks";
+          worker.Start();
+        }
+      }
+      if (!Ready.WaitOne(5000))
+      {
+        lock (State) { failure = "hook thread did not initialize"; Interrupted.Set(); }
+      }
+      lock (State) { CheckHealth(); }
+    }
+  }
+
+  public static void BeginAction()
+  {
+    lock (State) { dispatched = false; }
+    EnsureStarted();
+    lock (State)
+    {
+      CheckHealth();
+      if (requiresObservation)
+        throw new InvalidOperationException("observation_required: observe the window after user input before sending more input");
+      Interrupted.Reset();
+      active = true;
+    }
+  }
+
+  public static void Check()
+  {
+    lock (State)
+    {
+      if (!active) return;
+      CheckHealth();
+      if (requiresObservation)
+        throw new InvalidOperationException("user_input_interrupted: user input interrupted the active action");
+    }
+  }
+
+  public static void EndAction() { lock (State) { active = false; } }
+  public static void MarkDispatched() { lock (State) { if (active) dispatched = true; } }
+
+  public static long BeginObservation()
+  {
+    EnsureStarted();
+    lock (State) { CheckHealth(); return generation; }
+  }
+
+  public static bool AcceptObservation(long observedGeneration)
+  {
+    lock (State)
+    {
+      CheckHealth();
+      // Checking and clearing under the callback's lock closes the re-arm race.
+      if (active || observedGeneration != generation) return false;
+      requiresObservation = false;
+      Interrupted.Reset();
+      return true;
+    }
+  }
+
+  public static void Sleep(int milliseconds)
+  {
+    if (milliseconds < 0) throw new ArgumentOutOfRangeException("milliseconds");
+    bool guarded;
+    lock (State) { guarded = active; }
+    // Observation/housekeeping waits must keep their duration after cancellation.
+    if (!guarded) { Thread.Sleep(milliseconds); return; }
+    Check();
+    Interrupted.WaitOne(milliseconds);
+    Check();
+  }
+
+  public static void Stop()
+  {
+    lock (Lifecycle)
+    {
+      Thread ending;
+      uint endingId;
+      lock (State)
+      {
+        if (stopped) return;
+        stopped = true;
+        ending = worker;
+        endingId = threadId;
+        Interrupted.Set();
+      }
+      if (endingId != 0) PostThreadMessage(endingId, 0x0012, UIntPtr.Zero, IntPtr.Zero);
+      if (ending != null && ending != Thread.CurrentThread) ending.Join(2000);
+    }
+  }
+
+  private static InvalidOperationException Unavailable(string detail)
+  {
+    return new InvalidOperationException("input_monitor_unavailable: " + detail);
+  }
+
+  // Caller holds State. A failed monitor is never silently restarted.
+  private static void CheckHealth()
+  {
+    if (stopped || failure != null || worker == null || !worker.IsAlive ||
+        keyboardHook == IntPtr.Zero || mouseHook == IntPtr.Zero)
+      throw Unavailable(failure ?? (stopped ? "monitor stopped" : "hook thread is unavailable"));
+  }
+
+  private static void RecordInput(IntPtr extraInfo)
+  {
+    if (extraInfo == SelfTag) return;
+    lock (State)
+    {
+      // Injected flags do not reveal the sender. Other applications count too.
+      generation++;
+      requiresObservation = true;
+      if (active)
+      {
+        Interrupted.Set();
+      }
+    }
+  }
+
+  private static IntPtr KeyboardHook(int code, IntPtr message, IntPtr data)
+  {
+    if (code >= 0)
+    {
+      try { RecordInput(Marshal.ReadIntPtr(data, 16)); }
+      catch { CallbackFailed(); }
+    }
+    return CallNextHookEx(IntPtr.Zero, code, message, data);
+  }
+
+  private static IntPtr MouseHook(int code, IntPtr message, IntPtr data)
+  {
+    if (code >= 0)
+    {
+      // MSLLHOOKSTRUCT aligns ULONG_PTR after its five 32-bit fields.
+      try { RecordInput(Marshal.ReadIntPtr(data, IntPtr.Size == 8 ? 24 : 20)); }
+      catch { CallbackFailed(); }
+    }
+    return CallNextHookEx(IntPtr.Zero, code, message, data);
+  }
+
+  private static void CallbackFailed()
+  {
+    lock (State) { failure = "input hook callback failed"; Interrupted.Set(); }
+  }
+
+  private static void Run()
+  {
+    IntPtr keyboard = IntPtr.Zero, mouse = IntPtr.Zero;
+    try
+    {
+      MSG message;
+      // Ensure the thread owns a queue before Stop can post WM_QUIT.
+      PeekMessage(out message, IntPtr.Zero, 0, 0, 0);
+      lock (State) { threadId = GetCurrentThreadId(); }
+      IntPtr module = GetModuleHandle(null);
+      keyboard = SetWindowsHookEx(13, KeyboardCallback, module, 0);
+      if (keyboard == IntPtr.Zero) throw new InvalidOperationException("keyboard hook installation failed (" + Marshal.GetLastWin32Error() + ")");
+      mouse = SetWindowsHookEx(14, MouseCallback, module, 0);
+      if (mouse == IntPtr.Zero) throw new InvalidOperationException("mouse hook installation failed (" + Marshal.GetLastWin32Error() + ")");
+      lock (State) { keyboardHook = keyboard; mouseHook = mouse; }
+      Ready.Set();
+      int result;
+      while ((result = GetMessage(out message, IntPtr.Zero, 0, 0)) > 0)
+      {
+        TranslateMessage(ref message);
+        DispatchMessage(ref message);
+      }
+      if (result < 0) throw new InvalidOperationException("hook message loop failed (" + Marshal.GetLastWin32Error() + ")");
+    }
+    catch (Exception exception)
+    {
+      lock (State) { failure = exception.Message; }
+    }
+    finally
+    {
+      if (mouse != IntPtr.Zero) UnhookWindowsHookEx(mouse);
+      if (keyboard != IntPtr.Zero) UnhookWindowsHookEx(keyboard);
+      lock (State)
+      {
+        keyboardHook = mouseHook = IntPtr.Zero;
+        if (!stopped && failure == null) failure = "hook thread exited";
+        Interrupted.Set();
+      }
+      Ready.Set();
+    }
+  }
+
+  [StructLayout(LayoutKind.Sequential)]
+  private struct MSG
+  {
+    public IntPtr hwnd;
+    public uint message;
+    public UIntPtr wParam;
+    public IntPtr lParam;
+    public uint time;
+    public int x, y;
+    public uint privateData;
+  }
+
+  private delegate IntPtr HookProc(int code, IntPtr message, IntPtr data);
+  [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr SetWindowsHookEx(int id, HookProc callback, IntPtr module, uint thread);
+  [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr message, IntPtr data);
+  [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hook);
+  [DllImport("user32.dll", SetLastError = true)] private static extern int GetMessage(out MSG message, IntPtr hwnd, uint min, uint max);
+  [DllImport("user32.dll")] private static extern bool PeekMessage(out MSG message, IntPtr hwnd, uint min, uint max, uint remove);
+  [DllImport("user32.dll")] private static extern bool TranslateMessage(ref MSG message);
+  [DllImport("user32.dll")] private static extern IntPtr DispatchMessage(ref MSG message);
+  [DllImport("user32.dll")] private static extern bool PostThreadMessage(uint thread, uint message, UIntPtr wParam, IntPtr lParam);
+  [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandle(string name);
+}
+
 
 public static class DshWin32
 {
@@ -117,9 +368,86 @@ public static class DshWin32
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
-  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
   [DllImport("user32.dll")] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
+  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
+  [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+  [DllImport("user32.dll", SetLastError = true)] private static extern bool CloseDesktop(IntPtr desktop);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool GetUserObjectInformation(IntPtr handle, int index, StringBuilder value, int length, out int needed);
+  public static bool IsDesktopLocked()
+  {
+    IntPtr desktop = OpenInputDesktop(0, false, 1);
+    if (desktop == IntPtr.Zero) return true;
+    try
+    {
+      StringBuilder name = new StringBuilder(256); int needed;
+      if (!GetUserObjectInformation(desktop, 2, name, name.Capacity * 2, out needed)) return true;
+      return !string.Equals(name.ToString(), "Default", StringComparison.OrdinalIgnoreCase);
+    }
+    finally { CloseDesktop(desktop); }
+  }
+
+  // Track only Win-Pilot's held input, so interruption cleanup never sends
+  // arbitrary releases for keys/buttons pressed by the user.
+  private static readonly Dictionary<string, INPUT> heldInputs = new Dictionary<string, INPUT>();
+  private static void TrackInput(INPUT i)
+  {
+    if (i.type == 1)
+    {
+      string key = "k:" + i.u.ki.wVk + ":" + i.u.ki.wScan;
+      if ((i.u.ki.dwFlags & 2) != 0) heldInputs.Remove(key);
+      else { i.u.ki.dwFlags |= 2; heldInputs[key] = i; }
+    }
+    else
+    {
+      uint[] downs = { 2, 8, 32, 128 }, ups = { 4, 16, 64, 256 };
+      for (int j = 0; j < downs.Length; j++)
+      {
+        string key = "m:" + downs[j] + ":" + i.u.mi.mouseData;
+        if ((i.u.mi.dwFlags & ups[j]) != 0) heldInputs.Remove(key);
+        else if ((i.u.mi.dwFlags & downs[j]) != 0) { i.u.mi.dwFlags = ups[j]; heldInputs[key] = i; }
+      }
+    }
+  }
+  private static uint SendGuarded(uint n, INPUT[] inputs, int size)
+  {
+    WinPilotInputMonitor.Check();
+    WinPilotInputMonitor.MarkDispatched();
+    uint sent = SendInput(n, inputs, size);
+    for (int j = 0; j < sent; j++) TrackInput(inputs[j]);
+    if (sent != n) throw new InvalidOperationException("input_dispatch_failed: SendInput did not deliver the complete input sequence");
+    return sent;
+  }
+  private static uint SendRelease(uint n, INPUT[] inputs, int size)
+  {
+    List<INPUT> owned = new List<INPUT>();
+    foreach (INPUT i in inputs)
+    {
+      string key = i.type == 1 ? "k:" + i.u.ki.wVk + ":" + i.u.ki.wScan : null;
+      if (key != null && heldInputs.ContainsKey(key)) owned.Add(i);
+    }
+    if (owned.Count == 0) return 0;
+    uint sent = SendInput((uint)owned.Count, owned.ToArray(), size);
+    for (int j = 0; j < sent; j++) TrackInput(owned[j]);
+    return sent;
+  }
+  public static void ReleaseOwnedInput()
+  {
+    INPUT[] releases = new List<INPUT>(heldInputs.Values).ToArray();
+    if (releases.Length == 0) return;
+    uint sent = SendInput((uint)releases.Length, releases, Marshal.SizeOf(typeof(INPUT)));
+    for (int j = 0; j < sent; j++) TrackInput(releases[j]);
+  }
+  private static void MoveOwned(int x, int y)
+  {
+    int left = GetSystemMetrics(76), top = GetSystemMetrics(77);
+    int width = GetSystemMetrics(78), height = GetSystemMetrics(79);
+    if (width <= 0 || height <= 0) throw new InvalidOperationException("input_dispatch_failed: virtual desktop dimensions unavailable");
+    INPUT i = MkMouse(0x0001 | 0x8000 | 0x4000, 0);
+    i.u.mi.dx = (int)Math.Max(0, Math.Min(65535, ((x - left) + 0.5) * 65536.0 / width));
+    i.u.mi.dy = (int)Math.Max(0, Math.Min(65535, ((y - top) + 0.5) * 65536.0 / height));
+    SendGuarded(1, new INPUT[] { i }, Marshal.SizeOf(typeof(INPUT)));
+  }
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
@@ -382,6 +710,8 @@ public static class DshWin32
 
   public static bool PushWindowToBottom(IntPtr h)
   {
+    WinPilotInputMonitor.Check();
+    WinPilotInputMonitor.MarkDispatched();
     return SetWindowPos(h, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
   }
 
@@ -427,28 +757,38 @@ public static class DshWin32
 
   public static void ForceForeground(IntPtr h)
   {
+    WinPilotInputMonitor.Check();
+    WinPilotInputMonitor.MarkDispatched();
     // only restore MINIMIZED windows; never SW_RESTORE a visible/maximized window (would un-maximize it)
     if (IsIconic(h)) ShowWindow(h, 9);
     SetWindowPos(h, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     INPUT[] alt = new INPUT[] { MkKey(0x12, 0), MkKey(0x12, 2) };
-    SendInput(2, alt, Marshal.SizeOf(typeof(INPUT)));
-    System.Threading.Thread.Sleep(40);
+    SendGuarded(2, alt, Marshal.SizeOf(typeof(INPUT)));
+    WinPilotInputMonitor.Sleep(40);
     INPUT[] esc = new INPUT[] { MkKey(0x1B, 0), MkKey(0x1B, 2) };
-    SendInput(2, esc, Marshal.SizeOf(typeof(INPUT)));
-    System.Threading.Thread.Sleep(40);
+    SendGuarded(2, esc, Marshal.SizeOf(typeof(INPUT)));
+    WinPilotInputMonitor.Sleep(40);
     IntPtr f = GetForegroundWindow();
     // GetWindowThreadProcessId RETURNS the thread id; the out param receives the process id.
     uint fgPid; uint fgTid = GetWindowThreadProcessId(f, out fgPid);
     uint curPid; uint curTid = GetWindowThreadProcessId(h, out curPid);
     uint myTid = GetCurrentThreadId();
-    if (myTid != 0 && fgTid != 0 && myTid != fgTid) AttachThreadInput(myTid, fgTid, true);
-    if (fgTid != 0 && curTid != 0 && fgTid != curTid) AttachThreadInput(curTid, fgTid, true);
-    BringWindowToTop(h);
-    SetForegroundWindow(h);
-    SetFocus(h);
-    if (fgTid != 0 && curTid != 0 && fgTid != curTid) AttachThreadInput(curTid, fgTid, false);
-    if (myTid != 0 && fgTid != 0 && myTid != fgTid) AttachThreadInput(myTid, fgTid, false);
-    System.Threading.Thread.Sleep(150);
+    bool ownAttached = false, targetAttached = false;
+    try
+    {
+      if (myTid != 0 && fgTid != 0 && myTid != fgTid) ownAttached = AttachThreadInput(myTid, fgTid, true);
+      if (fgTid != 0 && curTid != 0 && fgTid != curTid) targetAttached = AttachThreadInput(curTid, fgTid, true);
+      WinPilotInputMonitor.Check();
+      BringWindowToTop(h);
+      SetForegroundWindow(h);
+      SetFocus(h);
+    }
+    finally
+    {
+      if (targetAttached) AttachThreadInput(curTid, fgTid, false);
+      if (ownAttached) AttachThreadInput(myTid, fgTid, false);
+    }
+    WinPilotInputMonitor.Sleep(150);
   }
 
   public static long ForegroundHwnd()
@@ -470,75 +810,39 @@ public static class DshWin32
     if (IsIconic(h)) return false;
     if (GetForegroundWindow() == h) return true;
     SetForegroundWindow(h);
-    System.Threading.Thread.Sleep(80);
+    WinPilotInputMonitor.Sleep(80);
     return GetForegroundWindow() == h;
-  }
-
-  // Milliseconds since the last REAL system input (keyboard or mouse), from the
-  // system-wide last-input tick. Returns -1 when the query fails, so callers can
-  // tell "unknown" from "idle for 0 ms".
-  //
-  // Win-Pilot's own BACKGROUND input (PostMessage/SendMessage, UIA patterns)
-  // bypasses the input queue and does NOT advance this value — measured, see
-  // test/fixtures/user-activity-probe.ps1 — so while dispatching in the
-  // background a small value means the user is interacting right now.
-  [StructLayout(LayoutKind.Sequential)]
-  public struct LastInputInfo { public uint cbSize; public uint dwTime; }
-
-  [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LastInputInfo plii);
-  [DllImport("kernel32.dll")] public static extern uint GetTickCount();
-
-  public static int LastInputIdleMs()
-  {
-    LastInputInfo li = new LastInputInfo();
-    li.cbSize = (uint)Marshal.SizeOf(typeof(LastInputInfo));
-    if (!GetLastInputInfo(ref li)) return -1;
-    // dwTime is a 32-bit tick that can wrap; unsigned subtraction handles that.
-    return (int)(GetTickCount() - li.dwTime);
-  }
-
-  // Process id owning the current foreground window; 0 when there is none.
-  // Used by the desktop-lock guard, which refuses input while a lock surface
-  // (LogonUI/LockApp) owns the foreground.
-  public static uint ForegroundProcessId()
-  {
-    IntPtr h = GetForegroundWindow();
-    if (h == IntPtr.Zero) return 0;
-    uint pid; GetWindowThreadProcessId(h, out pid);
-    return pid;
   }
 
   private static INPUT MkMouse(uint flags, uint data)
   {
     INPUT i = new INPUT(); i.type = 0; i.u.mi.dx = 0; i.u.mi.dy = 0;
-    i.u.mi.mouseData = data; i.u.mi.dwFlags = flags; i.u.mi.time = 0; i.u.mi.dwExtraInfo = IntPtr.Zero;
+    i.u.mi.mouseData = data; i.u.mi.dwFlags = flags; i.u.mi.time = 0; i.u.mi.dwExtraInfo = WinPilotInputMonitor.SelfTag;
     return i;
   }
 
   private static INPUT MkKey(ushort vk, uint flags)
   {
     INPUT i = new INPUT(); i.type = 1; i.u.ki.wVk = vk; i.u.ki.wScan = 0;
-    i.u.ki.dwFlags = flags; i.u.ki.time = 0; i.u.ki.dwExtraInfo = IntPtr.Zero;
+    i.u.ki.dwFlags = flags; i.u.ki.time = 0; i.u.ki.dwExtraInfo = WinPilotInputMonitor.SelfTag;
     return i;
   }
 
   private static INPUT MkUni(char c, uint flags)
   {
     INPUT i = new INPUT(); i.type = 1; i.u.ki.wVk = 0; i.u.ki.wScan = (ushort)c;
-    i.u.ki.dwFlags = flags; i.u.ki.time = 0; i.u.ki.dwExtraInfo = IntPtr.Zero;
+    i.u.ki.dwFlags = flags; i.u.ki.time = 0; i.u.ki.dwExtraInfo = WinPilotInputMonitor.SelfTag;
     return i;
   }
 
   public static void TypeText(string text)
   {
     if (string.IsNullOrEmpty(text)) return;
-    List<INPUT> ev = new List<INPUT>();
     foreach (char c in text)
     {
-      ev.Add(MkUni(c, 4));
-      ev.Add(MkUni(c, 6));
+      SendGuarded(2, new INPUT[] { MkUni(c, 4), MkUni(c, 6) }, Marshal.SizeOf(typeof(INPUT)));
+      WinPilotInputMonitor.Sleep(1);
     }
-    SendInput((uint)ev.Count, ev.ToArray(), Marshal.SizeOf(typeof(INPUT)));
   }
 
   public static ushort MapKey(string key)
@@ -689,18 +993,18 @@ public static class DshWin32
     ev.Add(MkKey(vk, 0));
     ev.Add(MkKey(vk, 2));
     for (int i = mods.Count - 1; i >= 0; i--) ev.Add(MkKey(mods[i], 2));
-    SendInput((uint)ev.Count, ev.ToArray(), Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded((uint)ev.Count, ev.ToArray(), Marshal.SizeOf(typeof(INPUT)));
   }
 
-  public static void MouseMove(int x, int y) { SetCursorPos(x, y); System.Threading.Thread.Sleep(40); }
+  public static void MouseMove(int x, int y) { MoveOwned(x, y); WinPilotInputMonitor.Sleep(40); }
 
   public static void MouseMoveWithModifiers(int x, int y, string modifiers)
   {
     string ignored; List<ushort> mods;
     ParseChord("", modifiers, out ignored, out mods);
-    foreach (ushort m in mods) SendInput(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
+    foreach (ushort m in mods) SendGuarded(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
     try { MouseMove(x, y); }
-    finally { for (int i = mods.Count - 1; i >= 0; i--) SendInput(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
+    finally { for (int i = mods.Count - 1; i >= 0; i--) SendRelease(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
   }
 
   public static void MouseClick(int x, int y)
@@ -712,7 +1016,7 @@ public static class DshWin32
   // within the system double-click time so apps register them as 2/3-click sequences
   public static void MouseClickEx(int x, int y, int count, string button)
   {
-    SetCursorPos(x, y); System.Threading.Thread.Sleep(50);
+    MoveOwned(x, y); WinPilotInputMonitor.Sleep(50);
     uint downF = 0x0002, upF = 0x0004;
     uint mouseData = 0;
     string b = (button ?? "left").Trim().ToLowerInvariant();
@@ -726,8 +1030,8 @@ public static class DshWin32
     {
       INPUT[] d = new INPUT[] { MkMouse(downF, mouseData) };
       INPUT[] u = new INPUT[] { MkMouse(upF, mouseData) };
-      SendInput(1, d, Marshal.SizeOf(typeof(INPUT))); System.Threading.Thread.Sleep(25);
-      SendInput(1, u, Marshal.SizeOf(typeof(INPUT))); System.Threading.Thread.Sleep(25);
+      SendGuarded(1, d, Marshal.SizeOf(typeof(INPUT))); WinPilotInputMonitor.Sleep(25);
+      SendGuarded(1, u, Marshal.SizeOf(typeof(INPUT))); WinPilotInputMonitor.Sleep(25);
     }
   }
 
@@ -735,69 +1039,69 @@ public static class DshWin32
   {
     string ignored; List<ushort> mods;
     ParseChord("", modifiers, out ignored, out mods);
-    foreach (ushort m in mods) SendInput(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
+    foreach (ushort m in mods) SendGuarded(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
     try { MouseClickEx(x, y, count, button); }
-    finally { for (int i = mods.Count - 1; i >= 0; i--) SendInput(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
+    finally { for (int i = mods.Count - 1; i >= 0; i--) SendRelease(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
   }
 
   public static void Scroll(int x, int y, int amount, bool down)
   {
-    SetCursorPos(x, y); System.Threading.Thread.Sleep(50);
+    MoveOwned(x, y); WinPilotInputMonitor.Sleep(50);
     uint data = (uint)((down ? -1 : 1) * amount * 120);
     INPUT[] ev = new INPUT[] { MkMouse(0x0800, data) };
-    SendInput(1, ev, Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded(1, ev, Marshal.SizeOf(typeof(INPUT)));
   }
 
   public static void ScrollWithModifiers(int x, int y, int amount, bool down, string modifiers)
   {
     string ignored; List<ushort> mods;
     ParseChord("", modifiers, out ignored, out mods);
-    foreach (ushort m in mods) SendInput(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
+    foreach (ushort m in mods) SendGuarded(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
     try { Scroll(x, y, amount, down); }
-    finally { for (int i = mods.Count - 1; i >= 0; i--) SendInput(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
+    finally { for (int i = mods.Count - 1; i >= 0; i--) SendRelease(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
   }
 
   // horizontal wheel (WM_MOUSEHWHEEL equivalent): positive delta = scroll right
   public static void ScrollH(int x, int y, int amount, bool right)
   {
-    SetCursorPos(x, y); System.Threading.Thread.Sleep(50);
+    MoveOwned(x, y); WinPilotInputMonitor.Sleep(50);
     uint data = (uint)((right ? 1 : -1) * amount * 120);
     INPUT[] ev = new INPUT[] { MkMouse(0x1000, data) };
-    SendInput(1, ev, Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded(1, ev, Marshal.SizeOf(typeof(INPUT)));
   }
 
   public static void ScrollHWithModifiers(int x, int y, int amount, bool right, string modifiers)
   {
     string ignored; List<ushort> mods;
     ParseChord("", modifiers, out ignored, out mods);
-    foreach (ushort m in mods) SendInput(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
+    foreach (ushort m in mods) SendGuarded(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
     try { ScrollH(x, y, amount, right); }
-    finally { for (int i = mods.Count - 1; i >= 0; i--) SendInput(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
+    finally { for (int i = mods.Count - 1; i >= 0; i--) SendRelease(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
   }
 
   public static void Drag(int fx, int fy, int tx, int ty)
   {
-    SetCursorPos(fx, fy); System.Threading.Thread.Sleep(60);
+    MoveOwned(fx, fy); WinPilotInputMonitor.Sleep(60);
     INPUT[] d = new INPUT[] { MkMouse(0x0002, 0) };
-    SendInput(1, d, Marshal.SizeOf(typeof(INPUT))); System.Threading.Thread.Sleep(60);
+    SendGuarded(1, d, Marshal.SizeOf(typeof(INPUT))); WinPilotInputMonitor.Sleep(60);
     int steps = Math.Max(6, (Math.Abs(tx - fx) + Math.Abs(ty - fy)) / 12);
     for (int i = 1; i <= steps; i++)
     {
       int cx = fx + (tx - fx) * i / steps;
       int cy = fy + (ty - fy) * i / steps;
-      SetCursorPos(cx, cy);
-      System.Threading.Thread.Sleep(8);
+      MoveOwned(cx, cy);
+      WinPilotInputMonitor.Sleep(8);
     }
-    System.Threading.Thread.Sleep(60);
+    WinPilotInputMonitor.Sleep(60);
     INPUT[] u = new INPUT[] { MkMouse(0x0004, 0) };
-    SendInput(1, u, Marshal.SizeOf(typeof(INPUT))); System.Threading.Thread.Sleep(30);
+    SendGuarded(1, u, Marshal.SizeOf(typeof(INPUT))); WinPilotInputMonitor.Sleep(30);
   }
 
   public static void DragPath(int[] xs, int[] ys)
   {
     if (xs == null || ys == null || xs.Length < 2 || xs.Length != ys.Length) throw new Exception("drag path requires at least two points");
-    SetCursorPos(xs[0], ys[0]); System.Threading.Thread.Sleep(60);
-    SendInput(1, new INPUT[] { MkMouse(0x0002, 0) }, Marshal.SizeOf(typeof(INPUT))); System.Threading.Thread.Sleep(60);
+    MoveOwned(xs[0], ys[0]); WinPilotInputMonitor.Sleep(60);
+    SendGuarded(1, new INPUT[] { MkMouse(0x0002, 0) }, Marshal.SizeOf(typeof(INPUT))); WinPilotInputMonitor.Sleep(60);
     for (int i = 1; i < xs.Length; i++)
     {
       int distance = Math.Abs(xs[i] - xs[i - 1]) + Math.Abs(ys[i] - ys[i - 1]);
@@ -806,25 +1110,25 @@ public static class DshWin32
       {
         int cx = xs[i - 1] + (xs[i] - xs[i - 1]) * j / steps;
         int cy = ys[i - 1] + (ys[i] - ys[i - 1]) * j / steps;
-        SetCursorPos(cx, cy); System.Threading.Thread.Sleep(8);
+        MoveOwned(cx, cy); WinPilotInputMonitor.Sleep(8);
       }
     }
-    System.Threading.Thread.Sleep(60);
-    SendInput(1, new INPUT[] { MkMouse(0x0004, 0) }, Marshal.SizeOf(typeof(INPUT))); System.Threading.Thread.Sleep(30);
+    WinPilotInputMonitor.Sleep(60);
+    SendGuarded(1, new INPUT[] { MkMouse(0x0004, 0) }, Marshal.SizeOf(typeof(INPUT))); WinPilotInputMonitor.Sleep(30);
   }
 
   public static void DragPathWithModifiers(int[] xs, int[] ys, string modifiers)
   {
     string ignored; List<ushort> mods;
     ParseChord("", modifiers, out ignored, out mods);
-    foreach (ushort m in mods) SendInput(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
+    foreach (ushort m in mods) SendGuarded(1, new INPUT[] { MkKey(m, 0) }, Marshal.SizeOf(typeof(INPUT)));
     try { DragPath(xs, ys); }
-    finally { for (int i = mods.Count - 1; i >= 0; i--) SendInput(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
+    finally { for (int i = mods.Count - 1; i >= 0; i--) SendRelease(1, new INPUT[] { MkKey(mods[i], 2) }, Marshal.SizeOf(typeof(INPUT))); }
   }
 
   public static void MouseDown(int x, int y, string button)
   {
-    SetCursorPos(x, y); System.Threading.Thread.Sleep(30);
+    MoveOwned(x, y); WinPilotInputMonitor.Sleep(30);
     uint flag = 0x0002;
     uint mouseData = 0;
     string b = (button ?? "left").Trim().ToLowerInvariant();
@@ -833,12 +1137,12 @@ public static class DshWin32
     else if (b == "back") { flag = 0x0080; mouseData = 0x0001; }
     else if (b == "forward") { flag = 0x0080; mouseData = 0x0002; }
     INPUT[] d = new INPUT[] { MkMouse(flag, mouseData) };
-    SendInput(1, d, Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded(1, d, Marshal.SizeOf(typeof(INPUT)));
   }
 
   public static void MouseUp(int x, int y, string button)
   {
-    SetCursorPos(x, y); System.Threading.Thread.Sleep(30);
+    MoveOwned(x, y); WinPilotInputMonitor.Sleep(30);
     uint flag = 0x0004;
     uint mouseData = 0;
     string b = (button ?? "left").Trim().ToLowerInvariant();
@@ -847,7 +1151,7 @@ public static class DshWin32
     else if (b == "back") { flag = 0x0100; mouseData = 0x0001; }
     else if (b == "forward") { flag = 0x0100; mouseData = 0x0002; }
     INPUT[] u = new INPUT[] { MkMouse(flag, mouseData) };
-    SendInput(1, u, Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded(1, u, Marshal.SizeOf(typeof(INPUT)));
   }
 
   public static void HoldKey(string key, string modifiers, int durationMs)
@@ -859,14 +1163,14 @@ public static class DshWin32
     List<INPUT> down = new List<INPUT>();
     foreach (ushort m in mods) down.Add(MkKey(m, 0));
     down.Add(MkKey(vk, 0));
-    SendInput((uint)down.Count, down.ToArray(), Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded((uint)down.Count, down.ToArray(), Marshal.SizeOf(typeof(INPUT)));
 
-    System.Threading.Thread.Sleep(durationMs);
+    WinPilotInputMonitor.Sleep(durationMs);
 
     List<INPUT> up = new List<INPUT>();
     up.Add(MkKey(vk, 2));
     for (int i = mods.Count - 1; i >= 0; i--) up.Add(MkKey(mods[i], 2));
-    SendInput((uint)up.Count, up.ToArray(), Marshal.SizeOf(typeof(INPUT)));
+    SendGuarded((uint)up.Count, up.ToArray(), Marshal.SizeOf(typeof(INPUT)));
   }
 }
 
@@ -1844,9 +2148,12 @@ function Write-StatusState {
 function Notify-Cursor {
   param([int]$X, [int]$Y, [string]$Label)
   $on = Get-OverlayEnabled
-  if ($on) { Ensure-OverlayProcess; Ensure-StatusbarProcess }
+  $pill = Get-PayloadValue 'status_pill'
+  if ($null -eq $pill) { $pill = $true }
+  if ($on) { Ensure-OverlayProcess }
+  if ($pill) { Ensure-StatusbarProcess }
   Write-CursorState -X $X -Y $Y -Label $Label -Show $on
-  Write-StatusState -Show $on
+  Write-StatusState -Show ([bool]$pill)
 }
 function Get-BackgroundCapabilityRecord {
   param([IntPtr]$Hwnd, $Element)
@@ -1993,22 +2300,43 @@ function Send-BackgroundText {
   param([IntPtr]$Hwnd, [string]$Text)
   $res = [IntPtr]::Zero
   foreach ($ch in $Text.ToCharArray()) {
+    [WinPilotInputMonitor]::Check()
+    if ($ch -eq [char]13) { continue }
     if ($ch -eq [char]10) {
-      $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0100, [IntPtr]13, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-      $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0102, [IntPtr]13, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-      $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0101, [IntPtr]13, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+      $pressed = New-Object 'System.Collections.Generic.List[int]'
+      $failed = $true
+      try {
+        Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0100 -VirtualKey 13 -PressedKeys $pressed
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched()
+        $sent = [DshWin32]::SendMessageTimeout($Hwnd, 0x0102, [IntPtr]13, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+        if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: target window did not process the background character' }
+        $failed = $false
+      } finally {
+        if ($pressed.Contains(13)) {
+          # Cleanup must run even after Check() reports interruption.
+          if ($failed) { try { Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0101 -VirtualKey 13 -Release } catch { } }
+          else { Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0101 -VirtualKey 13 -Release }
+        }
+      }
       continue
     }
-    if ($ch -eq [char]13) { continue }
-    $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0102, [IntPtr][int]$ch, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-    Start-Sleep -Milliseconds 4
+    [WinPilotInputMonitor]::MarkDispatched()
+    $sent = [DshWin32]::SendMessageTimeout($Hwnd, 0x0102, [IntPtr][int]$ch, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+    if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: target window did not process the background character' }
+    [WinPilotInputMonitor]::Sleep(4)
   }
 }
 
 function Send-BackgroundKeyMessage {
-  param([IntPtr]$Hwnd, [uint32]$Message, [int]$VirtualKey, [switch]$Async)
+  param([IntPtr]$Hwnd, [uint32]$Message, [int]$VirtualKey, [switch]$Async, [switch]$Release, [System.Collections.Generic.List[int]]$PressedKeys)
+  if (-not $Release) { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched() }
+  # A timed-out synchronous down may already be executing in the receiver.
+  # Track it after Check, immediately before submitting, so cleanup balances it.
+  $ownsDown = ($Message -eq 0x0100 -and $null -ne $PressedKeys)
+  if ($ownsDown) { $PressedKeys.Add($VirtualKey) }
   if ($Async) {
     if (-not [DshWin32]::PostMessage($Hwnd, $Message, [IntPtr]$VirtualKey, [IntPtr]::Zero)) {
+      if ($ownsDown) { [void]$PressedKeys.Remove($VirtualKey) }
       throw 'background_unavailable: Chromium renderer rejected the posted key message'
     }
     return
@@ -2016,6 +2344,16 @@ function Send-BackgroundKeyMessage {
   $res = [IntPtr]::Zero
   $sent = [DshWin32]::SendMessageTimeout($Hwnd, $Message, [IntPtr]$VirtualKey, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
   if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: target window did not process the background key message' }
+}
+
+function Release-BackgroundKeys {
+  param([IntPtr]$Hwnd, [int[]]$Keys, [switch]$Async)
+  $failure = $null
+  for ($i = $Keys.Count - 1; $i -ge 0; $i--) {
+    try { Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0101 -VirtualKey $Keys[$i] -Async:$Async -Release }
+    catch { if ($null -eq $failure) { $failure = $_ } }
+  }
+  if ($failure) { throw $failure }
 }
 
 function Send-BackgroundKey {
@@ -2035,10 +2373,19 @@ function Send-BackgroundKey {
       elseif ($m -in @('win','meta','super','cmd','command')) { $modVks += 0x5B }
     }
   }
-  foreach ($mvk in $modVks) { Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0100 -VirtualKey $mvk -Async:$Async }
-  Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0100 -VirtualKey $vk -Async:$Async
-  Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0101 -VirtualKey $vk -Async:$Async
-  for ($i = $modVks.Count - 1; $i -ge 0; $i--) { Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0101 -VirtualKey $modVks[$i] -Async:$Async }
+  $pressed = New-Object 'System.Collections.Generic.List[int]'
+  $failed = $true
+  try {
+    foreach ($keyCode in ($modVks + @($vk))) {
+      if ($pressed.Contains($keyCode)) { continue }
+      Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0100 -VirtualKey $keyCode -Async:$Async -PressedKeys $pressed
+    }
+    [WinPilotInputMonitor]::Check()
+    $failed = $false
+  } finally {
+    if ($failed) { try { Release-BackgroundKeys -Hwnd $Hwnd -Keys $pressed.ToArray() -Async:$Async } catch { } }
+    else { Release-BackgroundKeys -Hwnd $Hwnd -Keys $pressed.ToArray() -Async:$Async }
+  }
 }
 
 function Send-BackgroundHoldKey {
@@ -2058,12 +2405,19 @@ function Send-BackgroundHoldKey {
       elseif ($m -in @('win','meta','super','cmd','command')) { $modVks += 0x5B }
     }
   }
-  $res = [IntPtr]::Zero
-  foreach ($mvk in $modVks) { $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0100, [IntPtr]$mvk, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res) }
-  $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0100, [IntPtr]$vk, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-  Start-Sleep -Milliseconds $DurationMs
-  $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0101, [IntPtr]$vk, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-  for ($i = $modVks.Count - 1; $i -ge 0; $i--) { $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0101, [IntPtr]$modVks[$i], [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res) }
+  $pressed = New-Object 'System.Collections.Generic.List[int]'
+  $failed = $true
+  try {
+    foreach ($keyCode in ($modVks + @($vk))) {
+      if ($pressed.Contains($keyCode)) { continue }
+      Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0100 -VirtualKey $keyCode -PressedKeys $pressed
+    }
+    [WinPilotInputMonitor]::Sleep($DurationMs)
+    $failed = $false
+  } finally {
+    if ($failed) { try { Release-BackgroundKeys -Hwnd $Hwnd -Keys $pressed.ToArray() } catch { } }
+    else { Release-BackgroundKeys -Hwnd $Hwnd -Keys $pressed.ToArray() }
+  }
 }
 
 function Get-UiaParent {
@@ -2099,17 +2453,41 @@ function Send-BackgroundMouseButton {
   $cpt = [DshWin32]::ScreenToClientPoint($Hwnd, $Sx, $Sy)
   $lParam = [IntPtr](($cpt.Y -band 0xFFFF) -shl 16 -bor ($cpt.X -band 0xFFFF))
   $res = [IntPtr]::Zero
-  foreach ($mvk in $modVks) { $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0100, [IntPtr]$mvk, [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res) }
+  $pressed = New-Object 'System.Collections.Generic.List[int]'
+  $mouseDown = $false
+  $failed = $true
+  $wUp = ($wDown -band 0xFFFF0000) -bor $wMods
   try {
-    $wDown = $wDown -bor $wMods
-    $null = [DshWin32]::SendMessageTimeout($Hwnd, $msgDown, [IntPtr]$wDown, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-    $null = [DshWin32]::SendMessageTimeout($Hwnd, $msgUp, [IntPtr]$wMods, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-    for ($i = 1; $i -lt $Count; $i++) {
-      $null = [DshWin32]::SendMessageTimeout($Hwnd, $msgDbl, [IntPtr]$wDown, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
-      $null = [DshWin32]::SendMessageTimeout($Hwnd, $msgUp, [IntPtr]$wMods, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+    foreach ($mvk in $modVks) {
+      if ($pressed.Contains($mvk)) { continue }
+      Send-BackgroundKeyMessage -Hwnd $Hwnd -Message 0x0100 -VirtualKey $mvk -PressedKeys $pressed
     }
+    $wDown = $wDown -bor $wMods
+    for ($i = 0; $i -lt [Math]::Max(1, $Count); $i++) {
+      $message = $msgDown
+      if ($i -gt 0) { $message = $msgDbl }
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched()
+      $mouseDown = $true
+      $sent = [DshWin32]::SendMessageTimeout($Hwnd, $message, [IntPtr]$wDown, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+      if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: target window did not process the background mouse message' }
+      [WinPilotInputMonitor]::Check()
+      # A button we pressed must be released even if user input has cancelled us.
+      $sent = [DshWin32]::SendMessageTimeout($Hwnd, $msgUp, [IntPtr]$wUp, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+      if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: target window did not process the background mouse release' }
+      $mouseDown = $false
+    }
+    $failed = $false
   } finally {
-    for ($i = $modVks.Count - 1; $i -ge 0; $i--) { $null = [DshWin32]::SendMessageTimeout($Hwnd, 0x0101, [IntPtr]$modVks[$i], [IntPtr]::Zero, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res) }
+    $releaseFailure = $null
+    if ($mouseDown) {
+      try {
+        $sent = [DshWin32]::SendMessageTimeout($Hwnd, $msgUp, [IntPtr]$wUp, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+        if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: target window did not process the background mouse release' }
+      } catch { $releaseFailure = $_ }
+    }
+    try { Release-BackgroundKeys -Hwnd $Hwnd -Keys $pressed.ToArray() }
+    catch { if ($null -eq $releaseFailure) { $releaseFailure = $_ } }
+    if (-not $failed -and $releaseFailure) { throw $releaseFailure }
   }
 }
 
@@ -2136,15 +2514,15 @@ function Invoke-FromPoint {
   for ($i = 0; $i -lt 12 -and $null -ne $el; $i++) {
     $ip = $null
     if ($el.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$ip)) {
-      $ip.Invoke(); return @{ ok = $true; method = 'invoke'; name = $el.Current.Name; rect = $el.Current.BoundingRectangle }
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $ip.Invoke(); return @{ ok = $true; method = 'invoke'; name = $el.Current.Name; rect = $el.Current.BoundingRectangle }
     }
     $tp = $null
     if ($el.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$tp)) {
-      $tp.Toggle(); return @{ ok = $true; method = 'toggle'; name = $el.Current.Name; rect = $el.Current.BoundingRectangle }
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $tp.Toggle(); return @{ ok = $true; method = 'toggle'; name = $el.Current.Name; rect = $el.Current.BoundingRectangle }
     }
     $sp = $null
     if ($el.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$sp)) {
-      $sp.Select(); return @{ ok = $true; method = 'selection'; name = $el.Current.Name; rect = $el.Current.BoundingRectangle }
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $sp.Select(); return @{ ok = $true; method = 'selection'; name = $el.Current.Name; rect = $el.Current.BoundingRectangle }
     }
     $el = Get-UiaParent $el
   }
@@ -2324,6 +2702,7 @@ function Invoke-FromPointInWindow {
       if ($null -eq $method) { throw 'background_unavailable: target has no verified UIA action pattern; unsupported paths were cached' }
       $name = $best.Current.Name
       $rect = $best.Current.BoundingRectangle
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched()
       if ($method -eq 'invoke') { $bp.Invoke() }
       elseif ($method -eq 'toggle') { $bp.Toggle() }
       elseif ($method -eq 'selection') { $bp.Select() }
@@ -2374,10 +2753,7 @@ function Get-OverlayPoint-Element {
     return $null
   }
   try {
-    $sip = $null
-    if ($Element.Current.IsOffscreen -and $Element.TryGetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern, [ref]$sip)) {
-      try { $sip.ScrollIntoView() } catch { }
-    }
+    # Drawing the overlay must not scroll or otherwise mutate the target.
     $er = $Element.Current.BoundingRectangle
     if ($er.Width -gt 0 -and $er.Height -gt 0) {
       $cx = Safe-Int ($er.X + $er.Width / 2)
@@ -2875,66 +3251,56 @@ function Split-AppCommand {
 $script:InputActions = @(
   'click', 'press_key', 'type_text', 'scroll', 'drag', 'set_value',
   'perform_secondary_action', 'mouse_move', 'mouse_down', 'mouse_up',
-  'hold_key', 'select_text', 'activate_window', 'close_window', 'minimize_window'
+  'hold_key', 'select_text', 'activate_window', 'close_window', 'minimize_window',
+  'paste', 'launch_app'
 )
+$script:heldBackgroundButtons = @{}
 
-# The desktop-lock surfaces: Windows presents one of these as the foreground
-# window while the workstation is locked or the secure desktop is up. Input sent
-# then either vanishes or lands in the lock UI, so refuse before dispatch.
-$script:LockProcessNames = @('logonui', 'lockapp', 'winlogon', 'screensaver')
+function Send-OwnedBackgroundButton {
+  param([IntPtr]$Hwnd, [uint32]$Message, [string]$Button, [IntPtr]$WParam, [IntPtr]$LParam, [bool]$IsDown)
+  [WinPilotInputMonitor]::Check()
+  [WinPilotInputMonitor]::MarkDispatched()
+  $key = "$($Hwnd.ToInt64()):$Button"
+  if ($IsDown) {
+    $up = switch ($Button) { 'left' { 0x0202 }; 'right' { 0x0205 }; 'middle' { 0x0208 }; default { 0x020C } }
+    $script:heldBackgroundButtons[$key] = @{ hwnd = $Hwnd; message = $up; wParam = [IntPtr]($WParam.ToInt64() -band 0xFFFF0000); lParam = $LParam }
+  }
+  $res = [IntPtr]::Zero
+  $sent = [DshWin32]::SendMessageTimeout($Hwnd, $Message, $WParam, $LParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+  if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: background button delivery was not confirmed' }
+  if (-not $IsDown) { $script:heldBackgroundButtons.Remove($key) }
+}
 
+function Release-OwnedBackgroundButtons {
+  $failure = $null
+  foreach ($key in @($script:heldBackgroundButtons.Keys)) {
+    $owned = $script:heldBackgroundButtons[$key]
+    $res = [IntPtr]::Zero
+    try {
+      $sent = [DshWin32]::SendMessageTimeout($owned.hwnd, $owned.message, $owned.wParam, $owned.lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+      if ($sent -eq [IntPtr]::Zero) { throw 'input_cleanup_failed: background button release was not confirmed' }
+      $script:heldBackgroundButtons.Remove($key)
+    } catch { if ($null -eq $failure) { $failure = $_ } }
+  }
+  if ($failure) { throw $failure }
+}
+
+# The actual input desktop must be accessible and non-secure before input.
 function Test-DesktopLocked {
-  try {
-    $pid = [int][DshWin32]::ForegroundProcessId()
-    if ($pid -le 0) { return $false }
-    $name = Get-ProcessNameFast -ProcessId $pid -Cache $null
-    if (-not $name) { return $false }
-    $base = ([string]$name).ToLowerInvariant() -replace '\.exe$', ''
-    return ($script:LockProcessNames -contains $base)
-  } catch {
-    # Detection failure must not block normal work; the guard is advisory.
-    return $false
-  }
+  return [DshWin32]::IsDesktopLocked()
 }
 
-# User-activity interruption guard.
-#
-# Codex's Windows runtime installs a low-level keyboard/mouse hook
-# (`src/input/interruption.rs`, "failed to install keyboard hook") and aborts
-# "guarded input" the moment it sees the user interact. Win-Pilot has no
-# equivalent. Rather than install a hook — which AV/EDR products watch for and
-# which needs its own privilege story — this uses GetLastInputInfo, the
-# system-wide "when did real input last arrive" tick.
-#
-# Measured on this host (test/fixtures/user-activity-probe.ps1): Win-Pilot's own
-# BACKGROUND input does NOT advance that tick, because PostMessage/SendMessage
-# and UIA ValuePattern/Invoke bypass the input queue. So while dispatching in the
-# background, a moving tick means the user. Real SendInput/keybd_event DO advance
-# it, which is why the guard is deliberately scoped to background dispatch.
-function Test-UserActivity {
-  try {
-    $seconds = Get-UserActivityGraceSeconds
-    if ($seconds -le 0) { return $false }
-    $idleMs = [DshWin32]::LastInputIdleMs()
-    if ($idleMs -lt 0) { return $false }
-    return ($idleMs -lt ($seconds * 1000))
-  } catch {
-    # Detection failure must not block normal work; the guard is advisory.
-    return $false
+function Test-ProcessDescendant {
+  param([uint32]$ProcessId, [uint32]$AncestorId)
+  if ($AncestorId -eq 0) { return $false }
+  $seen = @{}
+  for ($depth = 0; $depth -lt 32 -and $ProcessId -gt 0; $depth++) {
+    if ($ProcessId -eq $AncestorId) { return $true }
+    if ($seen.ContainsKey($ProcessId)) { return $false }
+    $seen[$ProcessId] = $true
+    $ProcessId = [DshWin32]::QueryParentProcessId($ProcessId)
   }
-}
-
-function Get-UserActivityGraceSeconds {
-  # `userActivityGuard` accepts a boolean (true -> the 2s default window) or a
-  # number of seconds, so callers can widen it on a slow host.
-  $raw = Get-PayloadValue 'user_activity_guard'
-  if ($null -eq $raw) { return 0 }
-  if ($raw -is [bool]) { return $(if ($raw) { 2 } else { 0 }) }
-  $seconds = 0.0
-  if (-not [double]::TryParse([string]$raw, [ref]$seconds)) { return 0 }
-  if ($seconds -lt 0) { return 0 }
-  if ($seconds -gt 60) { return 60 }
-  return $seconds
+  return $false
 }
 
 function Assert-ForegroundTarget {
@@ -2949,6 +3315,24 @@ function Assert-ForegroundTarget {
     throw "foreground_activation_unconfirmed: target hwnd $($Win.Hwnd.ToInt64()) did not become foreground; no real input was sent"
   }
   return $true
+}
+
+function Invoke-BackgroundRangeScroll {
+  param($Pattern, [int]$Amount, [bool]$Down)
+  for ($n = 0; $n -lt $Amount; $n++) {
+    $current = $Pattern.Current
+    if ($current.IsReadOnly) { throw 'target_read_only: range value is read-only' }
+    $step = [double]$current.SmallChange
+    if ([double]::IsNaN($step) -or [double]::IsInfinity($step) -or $step -le 0) {
+      throw 'background_unavailable: range value does not expose a positive SmallChange'
+    }
+    if (-not $Down) { $step = -$step }
+    $next = [Math]::Max($current.Minimum, [Math]::Min($current.Maximum, $current.Value + $step))
+    if ($next -eq $current.Value) { break }
+    [WinPilotInputMonitor]::Check()
+    [WinPilotInputMonitor]::MarkDispatched()
+    $Pattern.SetValue($next)
+  }
 }
 
 function Get-ClipboardTextSafe {
@@ -3140,8 +3524,7 @@ function Invoke-MouseButtonAction {
       }
       $cpt = [DshWin32]::ScreenToClientPoint($h, $sx, $sy)
       $lParam = [IntPtr](($cpt.Y -band 0xFFFF) -shl 16 -bor ($cpt.X -band 0xFFFF))
-      $res = [IntPtr]::Zero
-      $null = [DshWin32]::SendMessageTimeout($h, $msg, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+      Send-OwnedBackgroundButton -Hwnd $h -Message $msg -Button $button -WParam $wParam -LParam $lParam -IsDown $IsDown
       $Result.method = 'wm_message'
       $Result.target_hwnd = $h.ToInt64()
       $Result.button = $button
@@ -3175,47 +3558,36 @@ function Invoke-ActionRequest {
   $script:autoChosenHwnd = $null
   $prevUserFg = [DshWin32]::GetForegroundWindow()
   $dispatchMode = Get-Dispatch
+  $guardedInput = ($script:InputActions -contains $Action) -and -not ($Action -eq 'launch_app' -and [bool](Get-PayloadValue 'headless'))
+  $guardStarted = $false
+  $observationTicket = $null
 
-  # Desktop-lock guard: refuse input actions before any dispatch while a lock
-  # surface owns the foreground. A locked desktop is a hard stop, not a retry —
+  # Desktop-lock guard: refuse input actions before any dispatch while an inaccessible or secure
+  # input desktop is active. A locked desktop is a hard stop, not a retry —
   # input either vanishes or lands in the lock UI, so reporting it as a normal
   # failure would invite the caller to retry into a void. Observation and
   # enumeration stay allowed so the caller can see the state.
-  if ($script:InputActions -contains $Action) {
-    $guard = Get-PayloadValue 'lock_guard'
-    if ($null -eq $guard) { $guard = $true }
-    if ([bool]$guard -and (Test-DesktopLocked)) {
+  if ($guardedInput) {
+    if (Test-DesktopLocked) {
       $result.ok = $false
       $result.outcome = 'not_executed'
       $result.error_code = 'screen_locked'
       $result.retry = 'never'
       $result.action_sent = $false
-      $result.message = 'The Windows desktop is locked (a lock surface owns the foreground); no input was sent. Ask the user to unlock the desktop and re-observe.'
-      return $result
-    }
-  }
-
-  # User-activity guard: while dispatching in the background, if the user is
-  # interacting right now, do not inject input into their session. This is the
-  # Codex "guarded input" posture — the user wins, and the caller re-observes —
-  # implemented with the last-input tick instead of a keyboard hook.
-  #
-  # Scoped to background dispatch on purpose: real foreground input advances the
-  # same tick Win-Pilot reads, so the guard could not tell our input from theirs.
-  if ($dispatchMode -eq 'background' -and $script:InputActions -contains $Action) {
-    if (Test-UserActivity) {
-      $result.ok = $false
-      $result.outcome = 'not_executed'
-      $result.error_code = 'user_active'
-      $result.retry = 'retry'
-      $result.action_sent = $false
-      $result.needs_observation = $true
-      $result.message = 'The user is interacting with the desktop right now; no input was sent, so Win-Pilot does not compete for control. Re-observe after the user pauses, or set user_activity_guard to 0 for this call to override.'
+      $result.message = 'The Windows desktop is locked (the input desktop is inaccessible or secure); no input was sent. Ask the user to unlock the desktop and re-observe.'
       return $result
     }
   }
 
   try {
+    if ($guardedInput) {
+      [WinPilotInputMonitor]::BeginAction()
+      $guardStarted = $true
+    }
+    if ($Action -eq 'get_window_state') {
+      try { $observationTicket = [WinPilotInputMonitor]::BeginObservation() }
+      catch { $result.input_monitor_available = $false }
+    }
     switch ($Action) {
     'list_apps' {
       $wins = @(Get-CandidateWindows -App '')
@@ -3264,7 +3636,7 @@ function Invoke-ActionRequest {
       $shot = Get-PayloadValue 'screenshot'
       if ($null -eq $shot) { $shot = $true }
       $withText = Get-PayloadValue 'include_text'
-      if ($null -eq $withText) { $withText = $false }
+      if ($null -eq $withText) { $withText = $true }
       # `disable_diffing` (ZCode/Computer Use spelling) returns a complete tree
       # instead of a delta against the previous observation.
       $disableDiffing = Get-PayloadValue 'disable_diffing'
@@ -3452,7 +3824,7 @@ function Invoke-ActionRequest {
           $pt = Get-OverlayPoint-Element -Element $el -Win $win
           if ($pt) { Notify-Cursor -X $pt[0] -Y $pt[1] -Label 'set_value' }
         }
-        $vp.SetValue($value)
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $vp.SetValue($value)
         # read back so outcome becomes 'verified' instead of an unproven 'dispatched'
         $result.verified = ([string]$vp.Current.Value -ceq [string]$value)
         $result.method = 'value_pattern'
@@ -3473,7 +3845,7 @@ function Invoke-ActionRequest {
         $result.method = 'capability_cache_update'
         $result.message = "Element $element has no ValuePattern; cached this unsupported background path until the next observation refresh."
       } else {
-        $el.SetFocus()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $el.SetFocus()
         Start-Sleep -Milliseconds 100
         [DshWin32]::TypeText($value)
         $result.method = 'focus_type'
@@ -3640,7 +4012,7 @@ function Invoke-ActionRequest {
             if ($hasScroll) {
               if ($resolvedPattern) { $scp = $resolvedPattern.pattern }
               $none = [System.Windows.Automation.ScrollAmount]::NoAmount
-              for ($n = 0; $n -lt $amount; $n++) { if ($right) { $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeIncrement, $none) } else { $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeDecrement, $none) } }
+              for ($n = 0; $n -lt $amount; $n++) { if ($right) { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeIncrement, $none) } else { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeDecrement, $none) } }
               $result.method = 'scroll_pattern'; $done = $true; break
             }
             $el = Get-UiaParent $el
@@ -3654,7 +4026,7 @@ function Invoke-ActionRequest {
               $client = [DshWin32]::ScreenToClientPoint($h, $sx, $sy)
               $lParam = [IntPtr](($client.Y -band 0xFFFF) -shl 16 -bor ($client.X -band 0xFFFF))
               $res = [IntPtr]::Zero
-              $null = [DshWin32]::SendMessageTimeout($h, 0x020E, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+              [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $null = [DshWin32]::SendMessageTimeout($h, 0x020E, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
               $result.method = 'wm_mousehwheel_target'
               $result.message = "Scrolled $dir x$amount via WM_MOUSEHWHEEL to verified target hwnd $($h.ToInt64())"
             } else {
@@ -3676,7 +4048,7 @@ function Invoke-ActionRequest {
               $wParam = [IntPtr]($delta -shl 16)
               $lParam = [IntPtr](($sy -band 0xFFFF) -shl 16 -bor ($sx -band 0xFFFF))
               $res = [IntPtr]::Zero
-              $null = [DshWin32]::SendMessageTimeout($h, 0x020E, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+              [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $null = [DshWin32]::SendMessageTimeout($h, 0x020E, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
               $result.method = 'wm_mousehwheel'
               $result.message = "Scrolled $dir x$amount via WM_MOUSEHWHEEL to hwnd $($h.ToInt64())"
             } else {
@@ -3700,7 +4072,7 @@ function Invoke-ActionRequest {
               if ($docScroll -and $docScroll.supported) {
                 $dscp = $docScroll.pattern
                 $none = [System.Windows.Automation.ScrollAmount]::NoAmount
-                for ($n = 0; $n -lt $amount; $n++) { if ($down) { $dscp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeIncrement) } else { $dscp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeDecrement) } }
+                for ($n = 0; $n -lt $amount; $n++) { if ($down) { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $dscp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeIncrement) } else { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $dscp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeDecrement) } }
                 $result.method = 'scroll_pattern'; $done = $true
                 $result.message = "Scrolled $dir x$amount via ScrollPattern on target window document"
               }
@@ -3720,7 +4092,7 @@ function Invoke-ActionRequest {
               $hasRange = if ($resolvedRange) { [bool]$resolvedRange.supported } else { $el.TryGetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern, [ref]$rvp) }
               if ($hasRange) {
                 if ($resolvedRange) { $rvp = $resolvedRange.pattern }
-                for ($n = 0; $n -lt $amount; $n++) { if ($down) { $rvp.SmallIncrement() } else { $rvp.SmallDecrement() } }
+                Invoke-BackgroundRangeScroll -Pattern $rvp -Amount $amount -Down $down
                 $result.method = 'range_value'; $done = $true; break
               }
               $resolvedScroll = if ($win) { Resolve-BackgroundPattern -Hwnd $win.Hwnd -Element $el -Name 'scroll' -Pattern ([System.Windows.Automation.ScrollPattern]::Pattern) } else { $null }
@@ -3729,7 +4101,7 @@ function Invoke-ActionRequest {
               if ($hasScroll) {
                 if ($resolvedScroll) { $scp = $resolvedScroll.pattern }
                 $none = [System.Windows.Automation.ScrollAmount]::NoAmount
-                for ($n = 0; $n -lt $amount; $n++) { if ($down) { $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeIncrement) } else { $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeDecrement) } }
+                for ($n = 0; $n -lt $amount; $n++) { if ($down) { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeIncrement) } else { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeDecrement) } }
                 $result.method = 'scroll_pattern'; $done = $true; break
               }
               $el = Get-UiaParent $el
@@ -3754,7 +4126,7 @@ function Invoke-ActionRequest {
               $client = [DshWin32]::ScreenToClientPoint($h, $sx, $sy)
               $lParam = [IntPtr](($client.Y -band 0xFFFF) -shl 16 -bor ($client.X -band 0xFFFF))
               $res = [IntPtr]::Zero
-              $null = [DshWin32]::SendMessageTimeout($h, 0x020A, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+              [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $null = [DshWin32]::SendMessageTimeout($h, 0x020A, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
               $result.method = if ($win) { 'wm_mousewheel_target' } else { 'wm_mousewheel' }
               $result.message = "Scrolled $dir x$amount via WM_MOUSEWHEEL to hwnd $($h.ToInt64())"
             } else {
@@ -3821,14 +4193,16 @@ function Invoke-ActionRequest {
       if ($dispatch -eq 'background') {
         Notify-Cursor -X $fx -Y $fy -Label 'drag'
         $pt = New-Object System.Windows.Point($fx, $fy)
-        $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
+        $el = if ($win) { (Find-TargetHitsAt -Hwnd $win.Hwnd -X $fx -Y $fy).best } else { [System.Windows.Automation.AutomationElement]::FromPoint($pt) }
         $tp = $null
         $moved = $false
         for ($i = 0; $i -lt 8 -and $null -ne $el; $i++) {
+          if ($win -and -not (Test-ElementInWindow -Element $el -Hwnd $win.Hwnd)) { break }
           if ($el.TryGetCurrentPattern([System.Windows.Automation.TransformPattern]::Pattern, [ref]$tp) -and $tp.Current.CanMove) {
             $rc = $el.Current.BoundingRectangle
             $newX = $rc.X + ($tx - $fx)
             $newY = $rc.Y + ($ty - $fy)
+            [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched()
             $tp.Move($newX, $newY)
             $result.method = 'transform_move'
             $result.message = 'Dragged element via TransformPattern.Move (background)'
@@ -3898,20 +4272,32 @@ function Invoke-ActionRequest {
         $previous = Get-ClipboardTextSafe
         $hadPrevious = $true
       } catch { $hadPrevious = $false }
-      Set-ClipboardTextSafe -Text $text
-      $h = Find-TextInputHwnd $win.Hwnd
-      if ($h -eq [IntPtr]::Zero) { $h = $win.Hwnd }
-      if ($dispatch -eq 'foreground') {
-        [DshWin32]::KeyChord('v', 'ctrl')
-      } else {
-        Send-BackgroundKey -Hwnd $h -Key 'v' -Modifiers 'ctrl'
-      }
-      if ($hadPrevious) {
-        try { Set-ClipboardTextSafe -Text $previous } catch { /* restore is best-effort */ }
+      $result.clipboard_restored = $false
+      try {
+        [WinPilotInputMonitor]::Check()
+        Set-ClipboardTextSafe -Text $text
+        $h = Find-TextInputHwnd $win.Hwnd
+        if ($h -eq [IntPtr]::Zero) { $h = $win.Hwnd }
+        if ($dispatch -eq 'foreground') {
+          [DshWin32]::KeyChord('v', 'ctrl')
+        } else {
+          Send-BackgroundKey -Hwnd $h -Key 'v' -Modifiers 'ctrl'
+        }
+      } finally {
+        if ($hadPrevious) {
+          try {
+            # Do not overwrite clipboard content the user copied during input.
+            if ((Get-ClipboardTextSafe) -ceq $text) {
+              Set-ClipboardTextSafe -Text $previous
+              $result.clipboard_restored = $true
+            }
+          } catch { }
+        }
       }
       $result.length = $text.Length
       $result.method = if ($dispatch -eq 'foreground') { 'sendinput_paste' } else { 'wm_key_paste' }
-      $result.message = "Pasted $($text.Length) char(s) via Ctrl+V; the previous clipboard was restored"
+      $result.message = "Pasted $($text.Length) char(s) via Ctrl+V"
+      if ($result.clipboard_restored) { $result.message += '; previous clipboard text restored' }
     }
 
     'list_displays' {
@@ -4020,7 +4406,7 @@ function Invoke-ActionRequest {
       # Command hosts frequently create a short-lived console HWND before
       # handing work to the actual application.  Treat them as launchers so a
       # transient console can never be returned as the user's target.
-      $isLikelyLauncher = ($baseExe -in @('cmd', 'powershell', 'pwsh', 'wscript', 'cscript'))
+      $isLikelyLauncher = ($baseExe -in @('cmd', 'powershell', 'pwsh', 'node', 'wscript', 'cscript'))
       $headless = [bool](Get-PayloadValue 'headless')
       if ($headless -and -not $isChromiumBrowser) { throw 'headless is supported only for Chromium browsers' }
       if ($isChromiumBrowser) {
@@ -4089,6 +4475,7 @@ function Invoke-ActionRequest {
       # as a URI scheme, so only treat it as a protocol when the colon is not
       # followed by a slash.
       $isActivationProtocol = $filePath -match '^[A-Za-z][A-Za-z0-9+.-]*:(?![\\/])'
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched()
       if ($foregroundLaunch) {
         $proc = if ($isActivationProtocol) {
           Start-Process -FilePath explorer.exe -ArgumentList $filePath -WindowStyle Normal -PassThru
@@ -4102,7 +4489,7 @@ function Invoke-ActionRequest {
         $launchPid = [DshWin32]::LaunchShellSilent($filePath, $launchArgs)
         # ShellExecuteEx may successfully route an activation to an existing
         # process without returning a process handle. Keep pid=0 in that case;
-        # the bounded delegated-window resolver below will identify the actual HWND.
+        # the resolver will leave the window unresolved without process ancestry.
         $proc = [pscustomobject]@{ Id = [int]$launchPid }
       }
       $result.message = "Started $filePath ($($argList.Count) argument(s)) (launched $style; $launchDisposition)"
@@ -4206,28 +4593,11 @@ function Invoke-ActionRequest {
       if ($wins.Count -gt 0) {
         $result.hwnd = $wins[0].Hwnd.ToInt64()
         $resolvedWindow = $wins[0]
-        # A persistent profile may still contain Chrome's session-restore
-        # bubble even with the startup flag. Dismiss only the small popup close
-        # button inside this exact owned window before returning control.
-        try {
-          $root = [System.Windows.Automation.AutomationElement]::FromHandle($wins[0].Hwnd)
-          foreach ($candidate in @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition))) {
-            $cr = $candidate.Current.BoundingRectangle
-            if ($candidate.Current.NativeWindowHandle -ne 0 -and $cr.Width -le 500 -and $cr.Height -le 400 -and $cr.X -gt ($wins[0].Rect.Left + 600) -and $cr.Y -gt ($wins[0].Rect.Top + 80)) {
-              [DshWin32]::PostMessage([IntPtr]$candidate.Current.NativeWindowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-              break
-            }
-            if ($cr.Width -le 60 -and $cr.Height -le 60 -and $cr.X -gt ($wins[0].Rect.Left + 600) -and $cr.Y -gt ($wins[0].Rect.Top + 80)) {
-              $ip = $null
-              if ($candidate.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$ip)) { $ip.Invoke(); break }
-            }
-          }
-        } catch { }
       } elseif (-not $isChromiumBrowser) {
         # Some real Windows apps (notably packaged/UWP apps) receive activation
         # through a broker.  The PID returned by Start-Process then owns no
         # window even though a new app window appears.  Adopt it only when the
-        # settled desktop delta has exactly one viable candidate; otherwise leave
+        # launched process ancestry and settled desktop delta identify one candidate; otherwise leave
         # the identity unresolved rather than risking a user's pre-existing
         # window.  In particular, do not stop at the first delta: command hosts
         # can briefly create a console before the delegated app appears.
@@ -4243,9 +4613,10 @@ function Invoke-ActionRequest {
             # A command host can also be the process that owns a genuine GUI
             # (for example a script-hosted WinForms app), so reject only its
             # recognizable console window rather than every PowerShell process.
-            $candidateIsConsoleHost = $candidateProcess -in @('cmd', 'WindowsTerminal', 'OpenConsole', 'conhost') -or (
+            $candidateIsConsoleHost = $candidateProcess -in @('cmd', 'node', 'WindowsTerminal', 'OpenConsole', 'conhost') -or (
               ($candidateProcess -in @('powershell', 'pwsh')) -and $candidateTitle -match '(?i)^(Windows PowerShell|PowerShell|管理员:|Administrator:)'
             )
+            (Test-ProcessDescendant -ProcessId $_.Pid -AncestorId $proc.Id) -and
             ($preLaunchHwnds -notcontains $_.Hwnd.ToInt64()) -and $_.Title -and
             -not $_.Minimized -and ($_.Rect.Right - $_.Rect.Left) -ge 50 -and
             ($_.Rect.Bottom - $_.Rect.Top) -ge 32 -and
@@ -4287,7 +4658,7 @@ function Invoke-ActionRequest {
         # refresh the returned geometry so callers never inherit a minimized rect.
         if (-not $foregroundLaunch) {
           try {
-            [DshWin32]::ShowWindow($resolvedWindow.Hwnd, [DshWin32]::SW_SHOWNOACTIVATE) | Out-Null
+            [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); [DshWin32]::ShowWindow($resolvedWindow.Hwnd, [DshWin32]::SW_SHOWNOACTIVATE) | Out-Null
             $result.background_demoted = [bool]([DshWin32]::PushWindowToBottom($resolvedWindow.Hwnd))
             $settled = $null
             for ($settleAttempt = 0; $settleAttempt -lt 16; $settleAttempt++) {
@@ -4399,7 +4770,7 @@ function Invoke-ActionRequest {
       $hwnd = if ($hwndVal) { [int64]$hwndVal } else { 0 }
       $win = Resolve-TargetWindow -App $app -Index $idx -Hwnd $hwnd
       $targetHwnd = $win.Hwnd
-      $null = [DshWin32]::ShowWindow($targetHwnd, 6)
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $null = [DshWin32]::ShowWindow($targetHwnd, 6)
       for ($i = 0; $i -lt 10 -and -not [DshWin32]::IsIconic($targetHwnd); $i++) {
         Start-Sleep -Milliseconds 50
       }
@@ -4419,7 +4790,7 @@ function Invoke-ActionRequest {
       $win = Resolve-TargetWindow -App $app -Index $idx -Hwnd $hwnd
       $targetHwnd = $win.Hwnd
       $title = $win.Title
-      $sendOk = [DshWin32]::CloseWindowGracefully($targetHwnd, 3000)
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $sendOk = [DshWin32]::CloseWindowGracefully($targetHwnd, 3000)
       for ($i = 0; $i -lt 10; $i++) {
         if (-not [DshWin32]::IsWindow($targetHwnd)) { break }
         Start-Sleep -Milliseconds 50
@@ -4690,7 +5061,7 @@ function Invoke-ActionRequest {
           throw "element $element does not support InvokePattern; cannot perform '$perform'"
         }
         $ip = $resolvedPattern.pattern
-        $ip.Invoke()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $ip.Invoke()
         $result.method = 'invoke_pattern'
         $result.message = "Performed '$perform' on element $element via InvokePattern"
       } elseif ($perform -in @('toggle', 'switch')) {
@@ -4700,7 +5071,7 @@ function Invoke-ActionRequest {
           throw "element $element does not support TogglePattern; cannot perform '$perform'"
         }
         $tog = $resolvedPattern.pattern
-        $tog.Toggle()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $tog.Toggle()
         $result.method = 'toggle_pattern'
         $result.message = "Performed '$perform' on element $element via TogglePattern"
       } elseif ($perform -eq 'select') {
@@ -4710,7 +5081,7 @@ function Invoke-ActionRequest {
           throw "element $element does not support SelectionItemPattern; cannot perform '$perform'"
         }
         $sel = $resolvedPattern.pattern
-        $sel.Select()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $sel.Select()
         $result.method = 'selection_pattern'
         $result.message = "Performed '$perform' on element $element via SelectionItemPattern"
       } elseif ($perform -eq 'add_to_selection') {
@@ -4720,7 +5091,7 @@ function Invoke-ActionRequest {
           throw "element $element does not support SelectionItemPattern; cannot perform '$perform'"
         }
         $sel = $resolvedPattern.pattern
-        $sel.AddToSelection()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $sel.AddToSelection()
         $result.method = 'selection_pattern'
         $result.message = "Performed '$perform' on element $element via SelectionItemPattern"
       } elseif ($perform -eq 'remove_from_selection') {
@@ -4730,7 +5101,7 @@ function Invoke-ActionRequest {
           throw "element $element does not support SelectionItemPattern; cannot perform '$perform'"
         }
         $sel = $resolvedPattern.pattern
-        $sel.RemoveFromSelection()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $sel.RemoveFromSelection()
         $result.method = 'selection_pattern'
         $result.message = "Performed '$perform' on element $element via SelectionItemPattern"
       } elseif ($perform -eq 'expand') {
@@ -4740,7 +5111,7 @@ function Invoke-ActionRequest {
           throw "element $element does not support ExpandCollapsePattern; cannot perform '$perform'"
         }
         $exp = $resolvedPattern.pattern
-        $exp.Expand()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $exp.Expand()
         $result.method = 'expand_pattern'
         $result.message = "Performed '$perform' on element $element via ExpandCollapsePattern"
       } elseif ($perform -eq 'collapse') {
@@ -4750,11 +5121,11 @@ function Invoke-ActionRequest {
           throw "element $element does not support ExpandCollapsePattern; cannot perform '$perform'"
         }
         $exp = $resolvedPattern.pattern
-        $exp.Collapse()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $exp.Collapse()
         $result.method = 'expand_pattern'
         $result.message = "Performed '$perform' on element $element via ExpandCollapsePattern"
       } elseif ($perform -in @('focus', 'set_focus')) {
-        $el.SetFocus()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $el.SetFocus()
         $result.method = 'set_focus'
         $result.message = "Focused element $element"
       } elseif ($perform -in @('scroll_up', 'scroll_down', 'scroll_left', 'scroll_right')) {
@@ -4765,10 +5136,10 @@ function Invoke-ActionRequest {
         }
         $scp = $resolvedPattern.pattern
         $none = [System.Windows.Automation.ScrollAmount]::NoAmount
-        if ($perform -eq 'scroll_up') { $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeDecrement) }
-        elseif ($perform -eq 'scroll_down') { $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeIncrement) }
-        elseif ($perform -eq 'scroll_left') { $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeDecrement, $none) }
-        else { $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeIncrement, $none) }
+        if ($perform -eq 'scroll_up') { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeDecrement) }
+        elseif ($perform -eq 'scroll_down') { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeIncrement) }
+        elseif ($perform -eq 'scroll_left') { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeDecrement, $none) }
+        else { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeIncrement, $none) }
         $result.method = 'scroll_pattern'
         $result.message = "Performed '$perform' on element $element via ScrollPattern"
       } else {
@@ -4871,7 +5242,7 @@ function Invoke-ActionRequest {
         if ($len -gt 0) {
           $null = $doc.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::End, [System.Windows.Automation.TextUnit]::Character, $len)
         }
-        $doc.Select()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $doc.Select()
         $grab = $len + 32
         if ($len -le 0) { $grab = 64 }
         $selText = $doc.GetText($grab)
@@ -4894,12 +5265,31 @@ function Invoke-ActionRequest {
       throw "unknown action: $Action"
     }
   }
+  if ($guardStarted) { [WinPilotInputMonitor]::Check() }
+  if ($null -ne $observationTicket) {
+    $result.input_monitor_available = $true
+    $result.needs_observation = -not [WinPilotInputMonitor]::AcceptObservation($observationTicket)
+  }
 }
 catch {
   $result.ok = $false
   $result.message = "$($_.Exception.Message)"
+  if ($result.message -match '(user_input_interrupted|observation_required|input_monitor_unavailable):') {
+    $result.error_code = $Matches[1]
+    $result.action_sent = [WinPilotInputMonitor]::HasDispatched
+    $result.needs_observation = $true
+    $result.retry = 'never'
+  }
 }
 finally {
+  if ($guardedInput) {
+    try {
+      if (-not $result.ok) {
+        try { Release-OwnedBackgroundButtons } catch { $result.cleanup_error = $_.Exception.Message }
+        [DshWin32]::ReleaseOwnedInput()
+      }
+    } finally { [WinPilotInputMonitor]::EndAction() }
+  }
   # A state-derived input is single-use, including a failed/uncertain attempt.
   # A helper restart also discards the cache: never remap an old index by rescanning.
   if ($Action -notin @('get_window_state', 'get_window', 'list_apps', 'list_windows', 'list_displays', 'screenshot', 'zoom', 'cursor_position', 'read_clipboard', 'wait')) {
@@ -4923,7 +5313,7 @@ finally {
     if ($curFg -ne [IntPtr]::Zero -and $curFg -ne $prevUserFg) {
       $result.focus_changed = $true
       $result.focus_policy = $focusPolicy
-      if ($focusPolicy -eq 'restore') {
+      if ($focusPolicy -eq 'restore' -and $result.ok) {
         # Best-effort, non-preemptive: SetForegroundWindow only succeeds when
         # Windows permits it (e.g. the target belongs to the foreground thread
         # or the user is not interacting). No AttachThreadInput, no synthetic
@@ -4962,7 +5352,9 @@ finally {
     $result.needs_observation = -not [bool]$result.verified
   } elseif (-not $result.ok) {
     $result.outcome = 'unknown'
-    if ($result.error_code -eq 'wait_condition_timeout') {
+    if ($result.error_code -in @('user_input_interrupted', 'observation_required', 'input_monitor_unavailable')) {
+      if (-not $result.action_sent) { $result.outcome = 'not_executed' }
+    } elseif ($result.error_code -eq 'wait_condition_timeout') {
       # This is an observed, bounded read-only condition failure, not an
       # ambiguous transport or input outcome. Preserve its retry-safe meaning.
       $result.outcome = 'not_executed'
