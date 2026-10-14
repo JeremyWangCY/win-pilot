@@ -1,6 +1,6 @@
 {
   "name": "win-pilot",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Agent-neutral Windows and Chromium computer-use runtime for Codex, Claude Code, Qoder, Pi, and DeepSeek Harness.",
   "type": "module",
   "main": "lib/index.js",
