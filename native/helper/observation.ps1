@@ -785,6 +785,23 @@ function Get-FocusedElementText {
 
 function Get-SelectedText {
   param([IntPtr]$Hwnd, [int]$MaxLen = 3000)
+  # Never call GetText on a selection range object.
+  #
+  # On Chromium/Electron windows the TextPatternRange returned by GetSelection()
+  # has a broken native handle: calling GetText on it access-violates inside
+  # MS.Internal.Automation.UiaCoreApi.RawTextRange_GetText (0xC0000005), which
+  # kills the whole helper process. A native access violation cannot be caught by
+  # try/catch, so the surrounding `catch` was never able to protect this call.
+  #
+  # Measured on this host against a live Electron window:
+  #   selection[0].GetText(3000)                 -> 0xC0000005 (process dies)
+  #   selection[0].CompareEndpoints(...)         -> returns empty, also unsafe to trust
+  #   document-range clone moved onto the same   -> 3000 chars, no crash
+  #   endpoints, then GetText on THAT object
+  #
+  # So the selection is read through a clone of the element's DocumentRange whose
+  # endpoints are moved onto the selection's. Same element, same provider, same
+  # text — only the broken range object is avoided.
   try {
     $root = [System.Windows.Automation.AutomationElement]::FromHandle($Hwnd)
     $candidates = New-Object System.Collections.Generic.List[System.Windows.Automation.AutomationElement]
@@ -794,11 +811,25 @@ function Get-SelectedText {
     foreach ($element in $candidates) {
       $pattern = $null
       if (-not $element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) { continue }
+      # A provider that cannot report a selection has nothing to read.
+      if ($pattern.SupportedTextSelection -eq [System.Windows.Automation.SupportedTextSelection]::None) { continue }
       $selection = @($pattern.GetSelection())
-      if ($selection.Count -gt 0) {
-        $text = $selection[0].GetText($MaxLen)
-        if ($text) { return $text }
-      }
+      if ($selection.Count -eq 0) { continue }
+      $sel = $selection[0]
+      # Read through the document range, which carries a valid handle on providers
+      # whose selection range does not.
+      $doc = $pattern.DocumentRange
+      $probe = $doc.Clone()
+      $probe.MoveEndpointByRange(
+        [System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start,
+        $sel,
+        [System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start)
+      $probe.MoveEndpointByRange(
+        [System.Windows.Automation.Text.TextPatternRangeEndpoint]::End,
+        $sel,
+        [System.Windows.Automation.Text.TextPatternRangeEndpoint]::End)
+      $text = $probe.GetText($MaxLen)
+      if ($text) { return $text }
     }
   } catch { }
   return ''
