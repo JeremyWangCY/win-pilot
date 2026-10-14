@@ -137,66 +137,56 @@ function Split-AppCommand {
 $script:InputActions = @(
   'click', 'press_key', 'type_text', 'scroll', 'drag', 'set_value',
   'perform_secondary_action', 'mouse_move', 'mouse_down', 'mouse_up',
-  'hold_key', 'select_text', 'activate_window', 'close_window', 'minimize_window'
+  'hold_key', 'select_text', 'activate_window', 'close_window', 'minimize_window',
+  'paste', 'launch_app'
 )
+$script:heldBackgroundButtons = @{}
 
-# The desktop-lock surfaces: Windows presents one of these as the foreground
-# window while the workstation is locked or the secure desktop is up. Input sent
-# then either vanishes or lands in the lock UI, so refuse before dispatch.
-$script:LockProcessNames = @('logonui', 'lockapp', 'winlogon', 'screensaver')
+function Send-OwnedBackgroundButton {
+  param([IntPtr]$Hwnd, [uint32]$Message, [string]$Button, [IntPtr]$WParam, [IntPtr]$LParam, [bool]$IsDown)
+  [WinPilotInputMonitor]::Check()
+  [WinPilotInputMonitor]::MarkDispatched()
+  $key = "$($Hwnd.ToInt64()):$Button"
+  if ($IsDown) {
+    $up = switch ($Button) { 'left' { 0x0202 }; 'right' { 0x0205 }; 'middle' { 0x0208 }; default { 0x020C } }
+    $script:heldBackgroundButtons[$key] = @{ hwnd = $Hwnd; message = $up; wParam = [IntPtr]($WParam.ToInt64() -band 0xFFFF0000); lParam = $LParam }
+  }
+  $res = [IntPtr]::Zero
+  $sent = [DshWin32]::SendMessageTimeout($Hwnd, $Message, $WParam, $LParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+  if ($sent -eq [IntPtr]::Zero) { throw 'input_timeout: background button delivery was not confirmed' }
+  if (-not $IsDown) { $script:heldBackgroundButtons.Remove($key) }
+}
 
+function Release-OwnedBackgroundButtons {
+  $failure = $null
+  foreach ($key in @($script:heldBackgroundButtons.Keys)) {
+    $owned = $script:heldBackgroundButtons[$key]
+    $res = [IntPtr]::Zero
+    try {
+      $sent = [DshWin32]::SendMessageTimeout($owned.hwnd, $owned.message, $owned.wParam, $owned.lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+      if ($sent -eq [IntPtr]::Zero) { throw 'input_cleanup_failed: background button release was not confirmed' }
+      $script:heldBackgroundButtons.Remove($key)
+    } catch { if ($null -eq $failure) { $failure = $_ } }
+  }
+  if ($failure) { throw $failure }
+}
+
+# The actual input desktop must be accessible and non-secure before input.
 function Test-DesktopLocked {
-  try {
-    $pid = [int][DshWin32]::ForegroundProcessId()
-    if ($pid -le 0) { return $false }
-    $name = Get-ProcessNameFast -ProcessId $pid -Cache $null
-    if (-not $name) { return $false }
-    $base = ([string]$name).ToLowerInvariant() -replace '\.exe$', ''
-    return ($script:LockProcessNames -contains $base)
-  } catch {
-    # Detection failure must not block normal work; the guard is advisory.
-    return $false
-  }
+  return [DshWin32]::IsDesktopLocked()
 }
 
-# User-activity interruption guard.
-#
-# Codex's Windows runtime installs a low-level keyboard/mouse hook
-# (`a low-level input hook`, "failed to install keyboard hook") and aborts
-# "guarded input" the moment it sees the user interact. Win-Pilot has no
-# equivalent. Rather than install a hook — which AV/EDR products watch for and
-# which needs its own privilege story — this uses GetLastInputInfo, the
-# system-wide "when did real input last arrive" tick.
-#
-# Measured on this host (test/fixtures/user-activity-probe.ps1): Win-Pilot's own
-# BACKGROUND input does NOT advance that tick, because PostMessage/SendMessage
-# and UIA ValuePattern/Invoke bypass the input queue. So while dispatching in the
-# background, a moving tick means the user. Real SendInput/keybd_event DO advance
-# it, which is why the guard is deliberately scoped to background dispatch.
-function Test-UserActivity {
-  try {
-    $seconds = Get-UserActivityGraceSeconds
-    if ($seconds -le 0) { return $false }
-    $idleMs = [DshWin32]::LastInputIdleMs()
-    if ($idleMs -lt 0) { return $false }
-    return ($idleMs -lt ($seconds * 1000))
-  } catch {
-    # Detection failure must not block normal work; the guard is advisory.
-    return $false
+function Test-ProcessDescendant {
+  param([uint32]$ProcessId, [uint32]$AncestorId)
+  if ($AncestorId -eq 0) { return $false }
+  $seen = @{}
+  for ($depth = 0; $depth -lt 32 -and $ProcessId -gt 0; $depth++) {
+    if ($ProcessId -eq $AncestorId) { return $true }
+    if ($seen.ContainsKey($ProcessId)) { return $false }
+    $seen[$ProcessId] = $true
+    $ProcessId = [DshWin32]::QueryParentProcessId($ProcessId)
   }
-}
-
-function Get-UserActivityGraceSeconds {
-  # `userActivityGuard` accepts a boolean (true -> the 2s default window) or a
-  # number of seconds, so callers can widen it on a slow host.
-  $raw = Get-PayloadValue 'user_activity_guard'
-  if ($null -eq $raw) { return 0 }
-  if ($raw -is [bool]) { return $(if ($raw) { 2 } else { 0 }) }
-  $seconds = 0.0
-  if (-not [double]::TryParse([string]$raw, [ref]$seconds)) { return 0 }
-  if ($seconds -lt 0) { return 0 }
-  if ($seconds -gt 60) { return 60 }
-  return $seconds
+  return $false
 }
 
 function Assert-ForegroundTarget {
@@ -211,6 +201,24 @@ function Assert-ForegroundTarget {
     throw "foreground_activation_unconfirmed: target hwnd $($Win.Hwnd.ToInt64()) did not become foreground; no real input was sent"
   }
   return $true
+}
+
+function Invoke-BackgroundRangeScroll {
+  param($Pattern, [int]$Amount, [bool]$Down)
+  for ($n = 0; $n -lt $Amount; $n++) {
+    $current = $Pattern.Current
+    if ($current.IsReadOnly) { throw 'target_read_only: range value is read-only' }
+    $step = [double]$current.SmallChange
+    if ([double]::IsNaN($step) -or [double]::IsInfinity($step) -or $step -le 0) {
+      throw 'background_unavailable: range value does not expose a positive SmallChange'
+    }
+    if (-not $Down) { $step = -$step }
+    $next = [Math]::Max($current.Minimum, [Math]::Min($current.Maximum, $current.Value + $step))
+    if ($next -eq $current.Value) { break }
+    [WinPilotInputMonitor]::Check()
+    [WinPilotInputMonitor]::MarkDispatched()
+    $Pattern.SetValue($next)
+  }
 }
 
 function Get-ClipboardTextSafe {
@@ -402,8 +410,7 @@ function Invoke-MouseButtonAction {
       }
       $cpt = [DshWin32]::ScreenToClientPoint($h, $sx, $sy)
       $lParam = [IntPtr](($cpt.Y -band 0xFFFF) -shl 16 -bor ($cpt.X -band 0xFFFF))
-      $res = [IntPtr]::Zero
-      $null = [DshWin32]::SendMessageTimeout($h, $msg, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+      Send-OwnedBackgroundButton -Hwnd $h -Message $msg -Button $button -WParam $wParam -LParam $lParam -IsDown $IsDown
       $Result.method = 'wm_message'
       $Result.target_hwnd = $h.ToInt64()
       $Result.button = $button
@@ -437,47 +444,36 @@ function Invoke-ActionRequest {
   $script:autoChosenHwnd = $null
   $prevUserFg = [DshWin32]::GetForegroundWindow()
   $dispatchMode = Get-Dispatch
+  $guardedInput = ($script:InputActions -contains $Action) -and -not ($Action -eq 'launch_app' -and [bool](Get-PayloadValue 'headless'))
+  $guardStarted = $false
+  $observationTicket = $null
 
-  # Desktop-lock guard: refuse input actions before any dispatch while a lock
-  # surface owns the foreground. A locked desktop is a hard stop, not a retry —
+  # Desktop-lock guard: refuse input actions before any dispatch while an inaccessible or secure
+  # input desktop is active. A locked desktop is a hard stop, not a retry —
   # input either vanishes or lands in the lock UI, so reporting it as a normal
   # failure would invite the caller to retry into a void. Observation and
   # enumeration stay allowed so the caller can see the state.
-  if ($script:InputActions -contains $Action) {
-    $guard = Get-PayloadValue 'lock_guard'
-    if ($null -eq $guard) { $guard = $true }
-    if ([bool]$guard -and (Test-DesktopLocked)) {
+  if ($guardedInput) {
+    if (Test-DesktopLocked) {
       $result.ok = $false
       $result.outcome = 'not_executed'
       $result.error_code = 'screen_locked'
       $result.retry = 'never'
       $result.action_sent = $false
-      $result.message = 'The Windows desktop is locked (a lock surface owns the foreground); no input was sent. Ask the user to unlock the desktop and re-observe.'
-      return $result
-    }
-  }
-
-  # User-activity guard: while dispatching in the background, if the user is
-  # interacting right now, do not inject input into their session. This is the
-  # Codex "guarded input" posture — the user wins, and the caller re-observes —
-  # implemented with the last-input tick instead of a keyboard hook.
-  #
-  # Scoped to background dispatch on purpose: real foreground input advances the
-  # same tick Win-Pilot reads, so the guard could not tell our input from theirs.
-  if ($dispatchMode -eq 'background' -and $script:InputActions -contains $Action) {
-    if (Test-UserActivity) {
-      $result.ok = $false
-      $result.outcome = 'not_executed'
-      $result.error_code = 'user_active'
-      $result.retry = 'retry'
-      $result.action_sent = $false
-      $result.needs_observation = $true
-      $result.message = 'The user is interacting with the desktop right now; no input was sent, so Win-Pilot does not compete for control. Re-observe after the user pauses, or set user_activity_guard to 0 for this call to override.'
+      $result.message = 'The Windows desktop is locked (the input desktop is inaccessible or secure); no input was sent. Ask the user to unlock the desktop and re-observe.'
       return $result
     }
   }
 
   try {
+    if ($guardedInput) {
+      [WinPilotInputMonitor]::BeginAction()
+      $guardStarted = $true
+    }
+    if ($Action -eq 'get_window_state') {
+      try { $observationTicket = [WinPilotInputMonitor]::BeginObservation() }
+      catch { $result.input_monitor_available = $false }
+    }
     switch ($Action) {
     'list_apps' {
       $wins = @(Get-CandidateWindows -App '')
@@ -526,7 +522,7 @@ function Invoke-ActionRequest {
       $shot = Get-PayloadValue 'screenshot'
       if ($null -eq $shot) { $shot = $true }
       $withText = Get-PayloadValue 'include_text'
-      if ($null -eq $withText) { $withText = $false }
+      if ($null -eq $withText) { $withText = $true }
       # `disable_diffing` (ZCode/Computer Use spelling) returns a complete tree
       # instead of a delta against the previous observation.
       $disableDiffing = Get-PayloadValue 'disable_diffing'
@@ -714,7 +710,7 @@ function Invoke-ActionRequest {
           $pt = Get-OverlayPoint-Element -Element $el -Win $win
           if ($pt) { Notify-Cursor -X $pt[0] -Y $pt[1] -Label 'set_value' }
         }
-        $vp.SetValue($value)
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $vp.SetValue($value)
         # read back so outcome becomes 'verified' instead of an unproven 'dispatched'
         $result.verified = ([string]$vp.Current.Value -ceq [string]$value)
         $result.method = 'value_pattern'
@@ -735,7 +731,7 @@ function Invoke-ActionRequest {
         $result.method = 'capability_cache_update'
         $result.message = "Element $element has no ValuePattern; cached this unsupported background path until the next observation refresh."
       } else {
-        $el.SetFocus()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $el.SetFocus()
         Start-Sleep -Milliseconds 100
         [DshWin32]::TypeText($value)
         $result.method = 'focus_type'
@@ -902,7 +898,7 @@ function Invoke-ActionRequest {
             if ($hasScroll) {
               if ($resolvedPattern) { $scp = $resolvedPattern.pattern }
               $none = [System.Windows.Automation.ScrollAmount]::NoAmount
-              for ($n = 0; $n -lt $amount; $n++) { if ($right) { $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeIncrement, $none) } else { $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeDecrement, $none) } }
+              for ($n = 0; $n -lt $amount; $n++) { if ($right) { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeIncrement, $none) } else { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeDecrement, $none) } }
               $result.method = 'scroll_pattern'; $done = $true; break
             }
             $el = Get-UiaParent $el
@@ -916,7 +912,7 @@ function Invoke-ActionRequest {
               $client = [DshWin32]::ScreenToClientPoint($h, $sx, $sy)
               $lParam = [IntPtr](($client.Y -band 0xFFFF) -shl 16 -bor ($client.X -band 0xFFFF))
               $res = [IntPtr]::Zero
-              $null = [DshWin32]::SendMessageTimeout($h, 0x020E, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+              [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $null = [DshWin32]::SendMessageTimeout($h, 0x020E, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
               $result.method = 'wm_mousehwheel_target'
               $result.message = "Scrolled $dir x$amount via WM_MOUSEHWHEEL to verified target hwnd $($h.ToInt64())"
             } else {
@@ -938,7 +934,7 @@ function Invoke-ActionRequest {
               $wParam = [IntPtr]($delta -shl 16)
               $lParam = [IntPtr](($sy -band 0xFFFF) -shl 16 -bor ($sx -band 0xFFFF))
               $res = [IntPtr]::Zero
-              $null = [DshWin32]::SendMessageTimeout($h, 0x020E, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+              [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $null = [DshWin32]::SendMessageTimeout($h, 0x020E, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
               $result.method = 'wm_mousehwheel'
               $result.message = "Scrolled $dir x$amount via WM_MOUSEHWHEEL to hwnd $($h.ToInt64())"
             } else {
@@ -962,7 +958,7 @@ function Invoke-ActionRequest {
               if ($docScroll -and $docScroll.supported) {
                 $dscp = $docScroll.pattern
                 $none = [System.Windows.Automation.ScrollAmount]::NoAmount
-                for ($n = 0; $n -lt $amount; $n++) { if ($down) { $dscp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeIncrement) } else { $dscp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeDecrement) } }
+                for ($n = 0; $n -lt $amount; $n++) { if ($down) { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $dscp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeIncrement) } else { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $dscp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeDecrement) } }
                 $result.method = 'scroll_pattern'; $done = $true
                 $result.message = "Scrolled $dir x$amount via ScrollPattern on target window document"
               }
@@ -982,7 +978,7 @@ function Invoke-ActionRequest {
               $hasRange = if ($resolvedRange) { [bool]$resolvedRange.supported } else { $el.TryGetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern, [ref]$rvp) }
               if ($hasRange) {
                 if ($resolvedRange) { $rvp = $resolvedRange.pattern }
-                for ($n = 0; $n -lt $amount; $n++) { if ($down) { $rvp.SmallIncrement() } else { $rvp.SmallDecrement() } }
+                Invoke-BackgroundRangeScroll -Pattern $rvp -Amount $amount -Down $down
                 $result.method = 'range_value'; $done = $true; break
               }
               $resolvedScroll = if ($win) { Resolve-BackgroundPattern -Hwnd $win.Hwnd -Element $el -Name 'scroll' -Pattern ([System.Windows.Automation.ScrollPattern]::Pattern) } else { $null }
@@ -991,7 +987,7 @@ function Invoke-ActionRequest {
               if ($hasScroll) {
                 if ($resolvedScroll) { $scp = $resolvedScroll.pattern }
                 $none = [System.Windows.Automation.ScrollAmount]::NoAmount
-                for ($n = 0; $n -lt $amount; $n++) { if ($down) { $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeIncrement) } else { $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeDecrement) } }
+                for ($n = 0; $n -lt $amount; $n++) { if ($down) { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeIncrement) } else { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeDecrement) } }
                 $result.method = 'scroll_pattern'; $done = $true; break
               }
               $el = Get-UiaParent $el
@@ -1016,7 +1012,7 @@ function Invoke-ActionRequest {
               $client = [DshWin32]::ScreenToClientPoint($h, $sx, $sy)
               $lParam = [IntPtr](($client.Y -band 0xFFFF) -shl 16 -bor ($client.X -band 0xFFFF))
               $res = [IntPtr]::Zero
-              $null = [DshWin32]::SendMessageTimeout($h, 0x020A, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
+              [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $null = [DshWin32]::SendMessageTimeout($h, 0x020A, $wParam, $lParam, [DshWin32]::SMTO_ABORTIFHUNG, 3000, [ref]$res)
               $result.method = if ($win) { 'wm_mousewheel_target' } else { 'wm_mousewheel' }
               $result.message = "Scrolled $dir x$amount via WM_MOUSEWHEEL to hwnd $($h.ToInt64())"
             } else {
@@ -1083,14 +1079,16 @@ function Invoke-ActionRequest {
       if ($dispatch -eq 'background') {
         Notify-Cursor -X $fx -Y $fy -Label 'drag'
         $pt = New-Object System.Windows.Point($fx, $fy)
-        $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
+        $el = if ($win) { (Find-TargetHitsAt -Hwnd $win.Hwnd -X $fx -Y $fy).best } else { [System.Windows.Automation.AutomationElement]::FromPoint($pt) }
         $tp = $null
         $moved = $false
         for ($i = 0; $i -lt 8 -and $null -ne $el; $i++) {
+          if ($win -and -not (Test-ElementInWindow -Element $el -Hwnd $win.Hwnd)) { break }
           if ($el.TryGetCurrentPattern([System.Windows.Automation.TransformPattern]::Pattern, [ref]$tp) -and $tp.Current.CanMove) {
             $rc = $el.Current.BoundingRectangle
             $newX = $rc.X + ($tx - $fx)
             $newY = $rc.Y + ($ty - $fy)
+            [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched()
             $tp.Move($newX, $newY)
             $result.method = 'transform_move'
             $result.message = 'Dragged element via TransformPattern.Move (background)'
@@ -1160,20 +1158,32 @@ function Invoke-ActionRequest {
         $previous = Get-ClipboardTextSafe
         $hadPrevious = $true
       } catch { $hadPrevious = $false }
-      Set-ClipboardTextSafe -Text $text
-      $h = Find-TextInputHwnd $win.Hwnd
-      if ($h -eq [IntPtr]::Zero) { $h = $win.Hwnd }
-      if ($dispatch -eq 'foreground') {
-        [DshWin32]::KeyChord('v', 'ctrl')
-      } else {
-        Send-BackgroundKey -Hwnd $h -Key 'v' -Modifiers 'ctrl'
-      }
-      if ($hadPrevious) {
-        try { Set-ClipboardTextSafe -Text $previous } catch { /* restore is best-effort */ }
+      $result.clipboard_restored = $false
+      try {
+        [WinPilotInputMonitor]::Check()
+        Set-ClipboardTextSafe -Text $text
+        $h = Find-TextInputHwnd $win.Hwnd
+        if ($h -eq [IntPtr]::Zero) { $h = $win.Hwnd }
+        if ($dispatch -eq 'foreground') {
+          [DshWin32]::KeyChord('v', 'ctrl')
+        } else {
+          Send-BackgroundKey -Hwnd $h -Key 'v' -Modifiers 'ctrl'
+        }
+      } finally {
+        if ($hadPrevious) {
+          try {
+            # Do not overwrite clipboard content the user copied during input.
+            if ((Get-ClipboardTextSafe) -ceq $text) {
+              Set-ClipboardTextSafe -Text $previous
+              $result.clipboard_restored = $true
+            }
+          } catch { }
+        }
       }
       $result.length = $text.Length
       $result.method = if ($dispatch -eq 'foreground') { 'sendinput_paste' } else { 'wm_key_paste' }
-      $result.message = "Pasted $($text.Length) char(s) via Ctrl+V; the previous clipboard was restored"
+      $result.message = "Pasted $($text.Length) char(s) via Ctrl+V"
+      if ($result.clipboard_restored) { $result.message += '; previous clipboard text restored' }
     }
 
     'list_displays' {
@@ -1282,7 +1292,7 @@ function Invoke-ActionRequest {
       # Command hosts frequently create a short-lived console HWND before
       # handing work to the actual application.  Treat them as launchers so a
       # transient console can never be returned as the user's target.
-      $isLikelyLauncher = ($baseExe -in @('cmd', 'powershell', 'pwsh', 'wscript', 'cscript'))
+      $isLikelyLauncher = ($baseExe -in @('cmd', 'powershell', 'pwsh', 'node', 'wscript', 'cscript'))
       $headless = [bool](Get-PayloadValue 'headless')
       if ($headless -and -not $isChromiumBrowser) { throw 'headless is supported only for Chromium browsers' }
       if ($isChromiumBrowser) {
@@ -1351,6 +1361,7 @@ function Invoke-ActionRequest {
       # as a URI scheme, so only treat it as a protocol when the colon is not
       # followed by a slash.
       $isActivationProtocol = $filePath -match '^[A-Za-z][A-Za-z0-9+.-]*:(?![\\/])'
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched()
       if ($foregroundLaunch) {
         $proc = if ($isActivationProtocol) {
           Start-Process -FilePath explorer.exe -ArgumentList $filePath -WindowStyle Normal -PassThru
@@ -1364,7 +1375,7 @@ function Invoke-ActionRequest {
         $launchPid = [DshWin32]::LaunchShellSilent($filePath, $launchArgs)
         # ShellExecuteEx may successfully route an activation to an existing
         # process without returning a process handle. Keep pid=0 in that case;
-        # the bounded delegated-window resolver below will identify the actual HWND.
+        # the resolver will leave the window unresolved without process ancestry.
         $proc = [pscustomobject]@{ Id = [int]$launchPid }
       }
       $result.message = "Started $filePath ($($argList.Count) argument(s)) (launched $style; $launchDisposition)"
@@ -1468,28 +1479,11 @@ function Invoke-ActionRequest {
       if ($wins.Count -gt 0) {
         $result.hwnd = $wins[0].Hwnd.ToInt64()
         $resolvedWindow = $wins[0]
-        # A persistent profile may still contain Chrome's session-restore
-        # bubble even with the startup flag. Dismiss only the small popup close
-        # button inside this exact owned window before returning control.
-        try {
-          $root = [System.Windows.Automation.AutomationElement]::FromHandle($wins[0].Hwnd)
-          foreach ($candidate in @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition))) {
-            $cr = $candidate.Current.BoundingRectangle
-            if ($candidate.Current.NativeWindowHandle -ne 0 -and $cr.Width -le 500 -and $cr.Height -le 400 -and $cr.X -gt ($wins[0].Rect.Left + 600) -and $cr.Y -gt ($wins[0].Rect.Top + 80)) {
-              [DshWin32]::PostMessage([IntPtr]$candidate.Current.NativeWindowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-              break
-            }
-            if ($cr.Width -le 60 -and $cr.Height -le 60 -and $cr.X -gt ($wins[0].Rect.Left + 600) -and $cr.Y -gt ($wins[0].Rect.Top + 80)) {
-              $ip = $null
-              if ($candidate.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$ip)) { $ip.Invoke(); break }
-            }
-          }
-        } catch { }
       } elseif (-not $isChromiumBrowser) {
         # Some real Windows apps (notably packaged/UWP apps) receive activation
         # through a broker.  The PID returned by Start-Process then owns no
         # window even though a new app window appears.  Adopt it only when the
-        # settled desktop delta has exactly one viable candidate; otherwise leave
+        # launched process ancestry and settled desktop delta identify one candidate; otherwise leave
         # the identity unresolved rather than risking a user's pre-existing
         # window.  In particular, do not stop at the first delta: command hosts
         # can briefly create a console before the delegated app appears.
@@ -1505,9 +1499,10 @@ function Invoke-ActionRequest {
             # A command host can also be the process that owns a genuine GUI
             # (for example a script-hosted WinForms app), so reject only its
             # recognizable console window rather than every PowerShell process.
-            $candidateIsConsoleHost = $candidateProcess -in @('cmd', 'WindowsTerminal', 'OpenConsole', 'conhost') -or (
+            $candidateIsConsoleHost = $candidateProcess -in @('cmd', 'node', 'WindowsTerminal', 'OpenConsole', 'conhost') -or (
               ($candidateProcess -in @('powershell', 'pwsh')) -and $candidateTitle -match '(?i)^(Windows PowerShell|PowerShell|管理员:|Administrator:)'
             )
+            (Test-ProcessDescendant -ProcessId $_.Pid -AncestorId $proc.Id) -and
             ($preLaunchHwnds -notcontains $_.Hwnd.ToInt64()) -and $_.Title -and
             -not $_.Minimized -and ($_.Rect.Right - $_.Rect.Left) -ge 50 -and
             ($_.Rect.Bottom - $_.Rect.Top) -ge 32 -and
@@ -1549,7 +1544,7 @@ function Invoke-ActionRequest {
         # refresh the returned geometry so callers never inherit a minimized rect.
         if (-not $foregroundLaunch) {
           try {
-            [DshWin32]::ShowWindow($resolvedWindow.Hwnd, [DshWin32]::SW_SHOWNOACTIVATE) | Out-Null
+            [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); [DshWin32]::ShowWindow($resolvedWindow.Hwnd, [DshWin32]::SW_SHOWNOACTIVATE) | Out-Null
             $result.background_demoted = [bool]([DshWin32]::PushWindowToBottom($resolvedWindow.Hwnd))
             $settled = $null
             for ($settleAttempt = 0; $settleAttempt -lt 16; $settleAttempt++) {
@@ -1661,7 +1656,7 @@ function Invoke-ActionRequest {
       $hwnd = if ($hwndVal) { [int64]$hwndVal } else { 0 }
       $win = Resolve-TargetWindow -App $app -Index $idx -Hwnd $hwnd
       $targetHwnd = $win.Hwnd
-      $null = [DshWin32]::ShowWindow($targetHwnd, 6)
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $null = [DshWin32]::ShowWindow($targetHwnd, 6)
       for ($i = 0; $i -lt 10 -and -not [DshWin32]::IsIconic($targetHwnd); $i++) {
         Start-Sleep -Milliseconds 50
       }
@@ -1681,7 +1676,7 @@ function Invoke-ActionRequest {
       $win = Resolve-TargetWindow -App $app -Index $idx -Hwnd $hwnd
       $targetHwnd = $win.Hwnd
       $title = $win.Title
-      $sendOk = [DshWin32]::CloseWindowGracefully($targetHwnd, 3000)
+      [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $sendOk = [DshWin32]::CloseWindowGracefully($targetHwnd, 3000)
       for ($i = 0; $i -lt 10; $i++) {
         if (-not [DshWin32]::IsWindow($targetHwnd)) { break }
         Start-Sleep -Milliseconds 50
@@ -1952,7 +1947,7 @@ function Invoke-ActionRequest {
           throw "element $element does not support InvokePattern; cannot perform '$perform'"
         }
         $ip = $resolvedPattern.pattern
-        $ip.Invoke()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $ip.Invoke()
         $result.method = 'invoke_pattern'
         $result.message = "Performed '$perform' on element $element via InvokePattern"
       } elseif ($perform -in @('toggle', 'switch')) {
@@ -1962,7 +1957,7 @@ function Invoke-ActionRequest {
           throw "element $element does not support TogglePattern; cannot perform '$perform'"
         }
         $tog = $resolvedPattern.pattern
-        $tog.Toggle()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $tog.Toggle()
         $result.method = 'toggle_pattern'
         $result.message = "Performed '$perform' on element $element via TogglePattern"
       } elseif ($perform -eq 'select') {
@@ -1972,7 +1967,7 @@ function Invoke-ActionRequest {
           throw "element $element does not support SelectionItemPattern; cannot perform '$perform'"
         }
         $sel = $resolvedPattern.pattern
-        $sel.Select()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $sel.Select()
         $result.method = 'selection_pattern'
         $result.message = "Performed '$perform' on element $element via SelectionItemPattern"
       } elseif ($perform -eq 'add_to_selection') {
@@ -1982,7 +1977,7 @@ function Invoke-ActionRequest {
           throw "element $element does not support SelectionItemPattern; cannot perform '$perform'"
         }
         $sel = $resolvedPattern.pattern
-        $sel.AddToSelection()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $sel.AddToSelection()
         $result.method = 'selection_pattern'
         $result.message = "Performed '$perform' on element $element via SelectionItemPattern"
       } elseif ($perform -eq 'remove_from_selection') {
@@ -1992,7 +1987,7 @@ function Invoke-ActionRequest {
           throw "element $element does not support SelectionItemPattern; cannot perform '$perform'"
         }
         $sel = $resolvedPattern.pattern
-        $sel.RemoveFromSelection()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $sel.RemoveFromSelection()
         $result.method = 'selection_pattern'
         $result.message = "Performed '$perform' on element $element via SelectionItemPattern"
       } elseif ($perform -eq 'expand') {
@@ -2002,7 +1997,7 @@ function Invoke-ActionRequest {
           throw "element $element does not support ExpandCollapsePattern; cannot perform '$perform'"
         }
         $exp = $resolvedPattern.pattern
-        $exp.Expand()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $exp.Expand()
         $result.method = 'expand_pattern'
         $result.message = "Performed '$perform' on element $element via ExpandCollapsePattern"
       } elseif ($perform -eq 'collapse') {
@@ -2012,11 +2007,11 @@ function Invoke-ActionRequest {
           throw "element $element does not support ExpandCollapsePattern; cannot perform '$perform'"
         }
         $exp = $resolvedPattern.pattern
-        $exp.Collapse()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $exp.Collapse()
         $result.method = 'expand_pattern'
         $result.message = "Performed '$perform' on element $element via ExpandCollapsePattern"
       } elseif ($perform -in @('focus', 'set_focus')) {
-        $el.SetFocus()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $el.SetFocus()
         $result.method = 'set_focus'
         $result.message = "Focused element $element"
       } elseif ($perform -in @('scroll_up', 'scroll_down', 'scroll_left', 'scroll_right')) {
@@ -2027,10 +2022,10 @@ function Invoke-ActionRequest {
         }
         $scp = $resolvedPattern.pattern
         $none = [System.Windows.Automation.ScrollAmount]::NoAmount
-        if ($perform -eq 'scroll_up') { $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeDecrement) }
-        elseif ($perform -eq 'scroll_down') { $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeIncrement) }
-        elseif ($perform -eq 'scroll_left') { $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeDecrement, $none) }
-        else { $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeIncrement, $none) }
+        if ($perform -eq 'scroll_up') { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeDecrement) }
+        elseif ($perform -eq 'scroll_down') { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll($none, [System.Windows.Automation.ScrollAmount]::LargeIncrement) }
+        elseif ($perform -eq 'scroll_left') { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeDecrement, $none) }
+        else { [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $scp.Scroll([System.Windows.Automation.ScrollAmount]::LargeIncrement, $none) }
         $result.method = 'scroll_pattern'
         $result.message = "Performed '$perform' on element $element via ScrollPattern"
       } else {
@@ -2133,7 +2128,7 @@ function Invoke-ActionRequest {
         if ($len -gt 0) {
           $null = $doc.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::End, [System.Windows.Automation.TextUnit]::Character, $len)
         }
-        $doc.Select()
+        [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched(); $doc.Select()
         $grab = $len + 32
         if ($len -le 0) { $grab = 64 }
         $selText = $doc.GetText($grab)
@@ -2156,12 +2151,31 @@ function Invoke-ActionRequest {
       throw "unknown action: $Action"
     }
   }
+  if ($guardStarted) { [WinPilotInputMonitor]::Check() }
+  if ($null -ne $observationTicket) {
+    $result.input_monitor_available = $true
+    $result.needs_observation = -not [WinPilotInputMonitor]::AcceptObservation($observationTicket)
+  }
 }
 catch {
   $result.ok = $false
   $result.message = "$($_.Exception.Message)"
+  if ($result.message -match '(user_input_interrupted|observation_required|input_monitor_unavailable):') {
+    $result.error_code = $Matches[1]
+    $result.action_sent = [WinPilotInputMonitor]::HasDispatched
+    $result.needs_observation = $true
+    $result.retry = 'never'
+  }
 }
 finally {
+  if ($guardedInput) {
+    try {
+      if (-not $result.ok) {
+        try { Release-OwnedBackgroundButtons } catch { $result.cleanup_error = $_.Exception.Message }
+        [DshWin32]::ReleaseOwnedInput()
+      }
+    } finally { [WinPilotInputMonitor]::EndAction() }
+  }
   # A state-derived input is single-use, including a failed/uncertain attempt.
   # A helper restart also discards the cache: never remap an old index by rescanning.
   if ($Action -notin @('get_window_state', 'get_window', 'list_apps', 'list_windows', 'list_displays', 'screenshot', 'zoom', 'cursor_position', 'read_clipboard', 'wait')) {
@@ -2185,7 +2199,7 @@ finally {
     if ($curFg -ne [IntPtr]::Zero -and $curFg -ne $prevUserFg) {
       $result.focus_changed = $true
       $result.focus_policy = $focusPolicy
-      if ($focusPolicy -eq 'restore') {
+      if ($focusPolicy -eq 'restore' -and $result.ok) {
         # Best-effort, non-preemptive: SetForegroundWindow only succeeds when
         # Windows permits it (e.g. the target belongs to the foreground thread
         # or the user is not interacting). No AttachThreadInput, no synthetic
@@ -2224,7 +2238,9 @@ finally {
     $result.needs_observation = -not [bool]$result.verified
   } elseif (-not $result.ok) {
     $result.outcome = 'unknown'
-    if ($result.error_code -eq 'wait_condition_timeout') {
+    if ($result.error_code -in @('user_input_interrupted', 'observation_required', 'input_monitor_unavailable')) {
+      if (-not $result.action_sent) { $result.outcome = 'not_executed' }
+    } elseif ($result.error_code -eq 'wait_condition_timeout') {
       # This is an observed, bounded read-only condition failure, not an
       # ambiguous transport or input outcome. Preserve its retry-safe meaning.
       $result.outcome = 'not_executed'

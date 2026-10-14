@@ -4,6 +4,23 @@ import { defineComputerTool, stopDaemon } from '../lib/index.js'
 
 const tool = defineComputerTool((value) => value, {})
 
+function assertWindowsMatchIdentity(windows, apps, identityKey) {
+  const matchingPids = new Set(apps.filter(app => app.identity?.identity_key === identityKey).map(app => app.pid))
+  for (const window of windows) {
+    assert.ok(matchingPids.has(window.pid), `window PID ${window.pid} must belong to identity ${identityKey}`)
+    assert.equal(window.app_identity, undefined)
+  }
+}
+
+const sharedIdentity = 'win32:C:/fixture/shared.exe'
+const fixtureApps = [
+  { pid: 101, identity: { identity_key: sharedIdentity } },
+  { pid: 102, identity: { identity_key: sharedIdentity } },
+  { pid: 103, identity: { identity_key: 'win32:C:/fixture/other.exe' } },
+]
+assert.doesNotThrow(() => assertWindowsMatchIdentity([{ pid: 101 }, { pid: 102 }], fixtureApps, sharedIdentity))
+assert.throws(() => assertWindowsMatchIdentity([{ pid: 103 }], fixtureApps, sharedIdentity), /must belong to identity/)
+
 // Schema contract.
 const props = tool.parameters.properties
 assert.ok(props.action.enum.includes('get_app_identity'))
@@ -63,10 +80,7 @@ const exactWindows = await tool.execute({
 })
 assert.equal(exactWindows.ok, true, JSON.stringify(exactWindows))
 assert.ok(exactWindows.windows.length > 0)
-for (const window of exactWindows.windows) {
-  assert.equal(window.pid, candidate.pid)
-  assert.equal(window.app_identity, undefined)
-}
+assertWindowsMatchIdentity(exactWindows.windows, appsResult.apps, candidate.identity.identity_key)
 
 // The same exact identity can target get_window without title/process ambiguity.
 const exactWindow = exactWindows.windows[0]

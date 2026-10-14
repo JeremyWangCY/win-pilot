@@ -17,7 +17,8 @@ if (packaged) {
 }
 // Windows PowerShell 5.1 treats UTF-8 .ps1 files without a BOM as the active ANSI code page.
 // The helper contains intentional Unicode source text, so emit UTF-8 with BOM to make parsing deterministic on every Windows host.
-const output = '\uFEFF' + names.map(name => fs.readFileSync(path.join(nativeDir, `${name}.ps1`), 'utf8').replace(/^\uFEFF/, '')).join('')
+const monitor = fs.readFileSync(path.join(nativeDir, 'input-interruption.cs'), 'utf8').replace(/^using [^;]+;\r?\n/gm, '')
+const output = '\uFEFF' + names.map(name => fs.readFileSync(path.join(nativeDir, `${name}.ps1`), 'utf8').replace(/^\uFEFF/, '').replace('// WIN_PILOT_INPUT_MONITOR', monitor)).join('')
 // Line endings are compared normalized. `core.autocrlf=true` (the default on
 // Windows checkouts) rewrites the committed bundle to CRLF while a fresh
 // generation emits LF, and a source file that arrived with mixed endings can
