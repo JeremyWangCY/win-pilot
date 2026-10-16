@@ -15,6 +15,7 @@ class LayoutTest
         string output=Path.GetFullPath(args[0]);Directory.CreateDirectory(output);
         var type=Assembly.Load("win-pilot-task-desktop").GetType("WinPilotTaskDesktop.DesktopWindow",true)!;
         using var form=(Form)Activator.CreateInstance(type,[Guid.NewGuid().ToString(),true])!;
+        ManualInputChecks.FreezeBackgroundTimers(form);
         form.Location=new(-15000,-15000);form.ShowInTaskbar=false;
         var samples=new List<object>();Exception? failure=null;
         void Capture(string name)
@@ -51,12 +52,12 @@ class LayoutTest
                 form.Location=new(-15000,-15000);if(form.Width<=compact.Width)throw new Exception("Expand did not enlarge preview");Capture("expanded");
                 expand.PerformClick();if(form.Size!=compact)throw new Exception("Compact size was not restored");
                 Capture("restored");
-                ManualInputChecks.Run(form,type,args.Contains("--inject-early-input-fault"));
+                ManualInputChecks.Run(form,type,args.Contains("--inject-early-input-fault"),args.Contains("--force-slow-test"));
             }catch(Exception error){failure=error;}
             finally{form.Close();}
         };
         form.Shown+=(_,_)=>timer.Start();Application.Run(form);
-        var report=new {status=failure==null?"pass":"fail",preview_only=true,windows_session_created=false,samples,error=failure?.ToString()};
+        var report=new {status=failure==null?"pass":"fail",preview_only=true,windows_session_created=false,force_slow_test=args.Contains("--force-slow-test"),samples,error=failure?.ToString()};
         File.WriteAllText(Path.Combine(output,"report.json"),JsonSerializer.Serialize(report,new JsonSerializerOptions{WriteIndented=true}));
         Console.WriteLine(JsonSerializer.Serialize(report));return failure==null?0:1;
     }
@@ -69,12 +70,23 @@ static class ManualInputChecks
     static void Set(object target,string name,object? value)=>target.GetType().GetField(name,Fields)!.SetValue(target,value);
     static object? Call(object target,string name,params object[] args)=>target.GetType().GetMethod(name,Fields)!.Invoke(target,args);
     static void Require(bool condition,string message){if(!condition)throw new Exception(message);}
+    internal static void FreezeBackgroundTimers(Form form){
+        foreach(string name in new[]{"timer","startupTimer"})((System.Windows.Forms.Timer)Get(form,name)!).Stop();
+        RequireBackgroundTimersFrozen(form);
+    }
+    static void RequireBackgroundTimersFrozen(Form form){
+        foreach(string name in new[]{"timer","startupTimer"})Require(!((System.Windows.Forms.Timer)Get(form,name)!).Enabled,"Fixture background timer unexpectedly enabled: "+name);
+    }
     static void PumpUntil(Func<bool> ready,string message){
         var deadline=Environment.TickCount64+2000;
         while(!ready()&&Environment.TickCount64<deadline){Application.DoEvents();Thread.Sleep(2);}
         Require(ready(),message);
     }
-    internal static void Run(Form form,Type desktopType,bool injectEarlyInputFault)
+    static void PumpFor(int milliseconds){
+        var deadline=Environment.TickCount64+milliseconds;
+        do{Application.DoEvents();Thread.Sleep(2);}while(Environment.TickCount64<deadline);
+    }
+    internal static void Run(Form form,Type desktopType,bool injectEarlyInputFault,bool forceSlowTest)
     {
         // Exercise the shipped RdpView and DesktopWindow.Pause against a memory
         // worker ACK. The ActiveX control is never connected to any server.
@@ -84,7 +96,7 @@ static class ManualInputChecks
         using var workerWriter=new ProbeWorkerWriter(output){AutoFlush=true};
         var originalReady=Get(form,"workerReady");
         var originalLiveRefresh=Get(form,"liveRefresh");
-        ((System.Windows.Forms.Timer)Get(form,"timer")!).Stop();
+        FreezeBackgroundTimers(form);
         // Poll must not enumerate real sessions. An unfinished in-memory refresh
         // suppresses that background query; Connected remains the real COM zero.
         Set(form,"liveRefresh",new TaskCompletionSource<bool>().Task);
@@ -144,7 +156,7 @@ static class ManualInputChecks
             // Login is a separate incomplete handshake. It must not override the
             // compact-view gate, even though expanded login accepts user input.
             using(var loginForm=(Form)Activator.CreateInstance(desktopType,[Guid.NewGuid().ToString(),true])!){
-                ((System.Windows.Forms.Timer)Get(loginForm,"timer")!).Stop();
+                FreezeBackgroundTimers(loginForm);
                 Set(loginForm,"view",view);Set(loginForm,"connected",true);
                 Call(loginForm,"ConfigureManualInput");Call(loginForm,"UpdateState");
                 Require(!(bool)Get(view,"AllowUserInput")!,"Compact Windows login must keep user input gated");
@@ -189,6 +201,7 @@ static class ManualInputChecks
             // Drive the actual idle Poll -> Resume path. The memory writer makes
             // the synthetic connected flag match the disconnected COM immediately
             // after dispatch, so Poll cannot invent a real disconnect/worker stop.
+            if(forceSlowTest){PumpFor(600);RequireBackgroundTimersFrozen(form);}
             Reset();Feed(0x201,1);Feed(0x202,0);Acknowledge(true);probe.Delivered.Clear();
             var infoType=desktopType.Assembly.GetType("WinPilotTaskDesktop.ProcessIdentity+Info",true)!;
             Set(form,"workerIdentity",Activator.CreateInstance(infoType,[0u,77u,"synthetic-unused-image",0L,"synthetic-unused-user"]));
@@ -197,8 +210,23 @@ static class ManualInputChecks
             Set(form,"lastManualInput",Environment.TickCount64-11000);requestCount=Requests().Length;Call(form,"Poll");
             Require(Requests().Length==requestCount+1&&Requests()[^1]["command"]!.ToString()=="resume","Idle must dispatch exactly one memory-worker Resume");
             Require(!(bool)Get(view,"AllowUserInput")!,"Resume must gate user input before its ACK");
+            if(forceSlowTest){PumpFor(600);RequireBackgroundTimersFrozen(form);}
+            // Force the memory worker to exercise SendWorker's asynchronous
+            // write boundary rather than relying on fast local stream writes.
+            var slowWrite=new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if(forceSlowTest)workerWriter.NextWriteGate=slowWrite.Task;
             Require(Feed(0x201,1)&&Feed(0x202,0),"New mouse gesture during pending Resume must wait for a fresh Pause ACK");
-            Require(Pending().Count==2&&Requests()[^1]["command"]!.ToString()=="pause"&&probe.Delivered.Count==0,"Resume/Pause race must queue the gesture without early delivery");
+            if(forceSlowTest){PumpFor(600);RequireBackgroundTimersFrozen(form);}
+            Require(Pending().Count==2&&probe.Delivered.Count==0,"Both requests must be pending without early delivery while the Pause write is in flight");
+            if(forceSlowTest){
+                Require(Requests()[^1]["command"]!.ToString()=="resume","Controlled slow Pause write must remain queued until explicitly released");
+                slowWrite.SetResult(true);
+            }
+            // SendWorker registers pending before acquiring pipeWrite and awaiting
+            // WriteLineAsync. Observe the actual wire write before asserting its
+            // command, including when a slow runner yields at that boundary.
+            PumpUntil(()=>Requests()[^1]["command"]!.ToString()=="pause","Queued Pause was not written to the memory worker");
+            Require(Pending().Count==2&&Requests()[^1]["command"]!.ToString()=="pause"&&probe.Delivered.Count==0,"Resume/Pause race must queue the gesture without early delivery; "+JsonSerializer.Serialize(new{pending=Pending().Count,commands=Requests().Select(r=>r["command"]!.ToString()),delivered=probe.Delivered,acquiring=Get(view,"acquiringInput"),timer=((System.Windows.Forms.Timer)Get(form,"timer")!).Enabled,startupTimer=((System.Windows.Forms.Timer)Get(form,"startupTimer")!).Enabled}));
             Reply("resume",true);PumpUntil(()=>Pending().Count==1,"Resume ACK did not settle");Application.DoEvents();
             Require((bool)Get(form,"paused")!&&probe.Delivered.Count==0&&!(bool)Get(view,"AllowUserInput")!,"Late Resume ACK must not restore AI ownership after newer manual input");
             Reply("pause",true);PumpUntil(()=>!(bool)Get(view,"acquiringInput")!,"New manual gesture did not finish its Pause handshake");
@@ -228,6 +256,12 @@ sealed class InputProbe:NativeWindow,IDisposable
 sealed class ProbeWorkerWriter:StreamWriter
 {
     internal Action<string>? AfterWrite;
+    internal Task? NextWriteGate;
     internal ProbeWorkerWriter(Stream stream):base(stream,new UTF8Encoding(false),4096,true){}
-    public override Task WriteLineAsync(string? value){var written=base.WriteLineAsync(value);AfterWrite?.Invoke(value??"");return written;}
+    public override Task WriteLineAsync(string? value){
+        var gate=NextWriteGate;NextWriteGate=null;
+        if(gate!=null)return GatedWrite(value,gate);
+        var written=base.WriteLineAsync(value);AfterWrite?.Invoke(value??"");return written;
+    }
+    async Task GatedWrite(string? value,Task gate){await gate;await base.WriteLineAsync(value);AfterWrite?.Invoke(value??"");}
 }
