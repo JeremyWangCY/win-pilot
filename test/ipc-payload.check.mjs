@@ -52,7 +52,7 @@ assert.ok(
   "lib/index.js spawn arguments must not pass '-PayloadJson'"
 )
 assert.ok(
-  indexSrc.includes("child.stdin.end(stringifyHelperJson(args || {}), 'ascii')"),
+  indexSrc.includes("child.stdin.end(stringifyHelperJson({ ...(args || {}), cancellation_path:cancellationPath }), 'ascii')"),
   'lib/index.js must stream ASCII-safe JSON via child.stdin.end'
 )
 assert.ok(

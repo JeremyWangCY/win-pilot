@@ -7,12 +7,12 @@ import { defineComputerTool, stopDaemon } from '../lib/index.js'
 const helperSrc = fs.readFileSync(new URL('../lib/win-pilot-helper.ps1', import.meta.url), 'utf8')
 assert.match(
   helperSrc,
-  /function\s+Find-ElementByIndex[\s\S]*?\$script:cachedTreeHwnd\s*-eq\s*\$Hwnd\s*-and\s*\$null\s*-ne\s*\$script:cachedElements\s*-and\s*\$Index\s*-ge\s*1\s*-and\s*\$Index\s*-le\s*\$script:cachedElements\.Count/,
+  /function\s+Find-ElementByIndex[\s\S]*?\$script:cachedTreeHwnd\s*-eq\s*\$Hwnd\s*-and\s*\$null\s*-ne\s*\$script:cachedElements\s*-and\s*\$script:cachedElements\.ContainsKey\(\$Index\)/,
   'Find-ElementByIndex must prioritize $script:cachedElements cache'
 )
 assert.match(
   helperSrc,
-  /\$cached\s*=\s*\$script:cachedElements\[\$Index\s*-\s*1\][\s\S]*?\$cached\.Current\.ProcessId[\s\S]*?return\s+\$cached/,
+  /\$cached\s*=\s*\$script:cachedElements\[\$Index\][\s\S]*?\$cached\.Current\.ProcessId[\s\S]*?return\s+\$cached/,
   'Find-ElementByIndex must verify cached element liveness and return O(1)'
 )
 

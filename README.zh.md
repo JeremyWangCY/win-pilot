@@ -4,7 +4,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-0078D4) ![Node](https://img.shields.io/badge/node-%3E%3D22.12-339933)
 
-Win-Pilot 是面向 Windows Computer Use 的 Agent Plugin。它通过同一个 `computer` 工具操作桌面应用和隔离 Chromium 会话，并让插件、MCP、CLI、Skill 与原生宿主 Adapter 共用完全一致的动作、恢复规则和返回结果。
+Win-Pilot 提供 Windows 电脑操控，优先适配 DeepSeek Harness。`computer` 工具可操作当前桌面，或由用户在设置中开启独立任务桌面，通过紧凑窗口查看、暂停和接管。插件、MCP、CLI 与原生接入共用同一运行时。
 
 ## 功能
 
@@ -18,6 +18,7 @@ Win-Pilot 是面向 Windows Computer Use 的 Agent Plugin。它通过同一个 `
 | 通用后备入口 | 支持工具的 Agent 使用 stdio MCP；仅支持 shell 的 Agent 使用 JSON CLI + Skill |
 | Schema 可移植性 | 工具 Schema 持续验证 OpenAI 与 Gemini 系列消费者 |
 | DSH Provider 生命周期 | 配置表单要求 DSH 0.2.0-rc.2+；占用唯一的 `computerUse` Provider 槽位 |
+| 可选独立任务桌面 | Windows 子会话，默认432×300无标题栏小窗，展开后自动接管与空闲交还 |
 
 ## 环境要求
 
@@ -25,6 +26,7 @@ Win-Pilot 是面向 Windows Computer Use 的 Agent Plugin。它通过同一个 `
 - Node.js 22.12 或更高版本
 - Windows PowerShell 5.1
 - 可选 .NET 8 Runtime，用于 WGC 截图
+- 独立任务桌面需要 .NET 8 Windows Desktop Runtime
 - 支持 Agent Plugin、stdio MCP 或 shell 的 Agent
 
 ## 快速开始
@@ -80,7 +82,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-预期版本为 `0.1.11`、平台为 `win32`，doctor 的必要检查全部为 `ok`。
+本版预期版本为 `0.2.0`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
 
 ### 更新
 
@@ -98,6 +100,12 @@ DSH profile 需要单独重启。需要刷新 Win-Pilot 管理的 Skill 副本�
 如果沙箱会在每条命令结束后回收子进程，应由宿主的常驻插件或 MCP supervisor 启动 `win-pilot mcp`，不要从一次性命令中强行脱离进程。仅支持 shell 的 Agent 可以调用一次性的 `win-pilot request`。
 
 ## 使用方法
+
+0.2.0 新增会话级 `stop` / `resume`、正在执行及排队请求的取消，以及每用户的原子控制锁。停止后仍可观察。桌面元素使用稳定的稀疏编号，无障碍树输出 `full` / `delta` / `no_change`；隐藏观察不推进模型可见基线。富文本 `paste` 支持 `format: text | html | md`，恢复受支持的原剪贴板格式，并保留用户并发复制的新内容。Markdown 仅支持部分语法。
+
+浏览器新增 `browser_frames`、`browser_filechooser`、`browser_claim_tab` 和 `browser_finalize`。同源子框架使用 `frame_id` 及语义引用；跨域框架和 OOPIF 明确拒绝。标签认领绑定当前控制会话，修改时传回 `claim_id`，完成后交付释放控制，不主动切换标签。先开启文件选择器监听，再打开选择器、读取事件，随后在 60 秒内将单次 `filechooser_id` 及明确的绝对文件路径传给 `browser_upload`。当前仍使用显式本机 CDP 连接，尚未提供用户浏览器扩展。
+
+原生取消在系统调用之间检查；阻塞的系统/UIA 调用可能需要限时结束子进程，并返回结果不确定，此时应先观察。剪贴板恢复无法提供操作系统级的原子比较交换保证。
 
 插件和 MCP 宿主会获得 `computer` 工具。仅支持 shell 的宿主使用相同的 JSON 接口：
 
@@ -121,7 +129,7 @@ MCP `tools/list` 返回的实时 Schema 是完整参数和默认值的权威定�
 
 ## 设置
 
-在 DeepSeek Harness **0.2.0-rc.2 或更新版本**中，打开「设置 → Win-Pilot」或插件详情页。当前宿主直接投射插件的 `Config`，三个布尔偏好通过实时引用立即生效。
+在 DeepSeek Harness **0.2.0-rc.2 或更新版本**中，打开「设置 → Win-Pilot」或插件详情页。当前宿主直接投射插件的 `Config`。显示偏好实时生效；电脑操作环境只影响新任务。
 
 | 偏好 | 默认值 | 作用 |
 |---|---|---|
@@ -129,7 +137,15 @@ MCP `tools/list` 返回的实时 Schema 是完整参数和默认值的权威定�
 | `statusPill` | `true` | 显示运行状态提示 |
 | `browserHeadlessDefault` | `false` | 浏览器在后台运行，不显示窗口 |
 
-用户设置仅有这三项。数值限制和输入策略采用内部默认值，旧设置不再改变它们；必需的 Windows/Meta 系统按键能力始终开启。后台输入、锁屏检查、用户输入中断、焦点让路和窗口文字读取依据已核对的 Codex 行为。没有宿主的 CLI/MCP 安装使用内置默认值。
+`desktopEnvironment` 默认 `current`（当前桌面），可选 `task`（独立任务窗口）。保存后对新任务生效；已有任务保持原桌面，避免已观察的目标悄然改变。关闭时，模型工具定义、运行时技能和诊断不宣传独立桌面选项。开启后，电脑动作、观察、剪贴板和恢复都使用同一任务桌面；连接失败不会转到主桌面。浏览器动作只能使用同一任务启动的浏览器。
+
+小窗采用浅色、无原生标题栏的样式，默认432×300，只留放大收回、置顶和关闭。放大后直接点击、拖动或输入即可接管；AI 停止输入确认后才交付第一个手势。空闲10秒后交还 AI，按住鼠标或按键期间不会自动交还。缩小后为只读预览；右键工具栏可打开本机登录设置。首次完成 Windows 功能准备与本机登录，可选择通过当前用户 DPAPI 和凭据管理器记住登录，密码只在本机窗口输入。需要 .NET 8 Windows Desktop Runtime 及可用的 Windows 子会话功能；更换 Windows 用户、密码或系统策略后可能需要重新设置。
+
+更新已加载的插件后，先重启 DeepSeek Harness 再保存新增选项。行为和验证限制见[独立任务桌面](./docs/task-desktop.md)。
+
+查看原生窗口：`win-pilot desktop --preview`。预览不能连接会话或执行电脑动作。正常连接入口为 `win-pilot desktop`，受启动拦截约束。源码构建使用 `npm run build:desktop`，无会话测试使用 `npm run test:desktop`。这些增量尚未发布到 npm 或 GitHub。
+
+数值限制和输入策略采用内部默认值，旧设置不再改变它们；必需的 Windows/Meta 系统按键能力始终开启。后台输入、锁屏检查、用户输入中断、焦点让路和窗口文字读取依据已核对的 Codex 行为。没有宿主的 CLI/MCP 安装使用内置默认值。
 
 ## 工作原理
 
@@ -165,6 +181,9 @@ Win-Pilot 以当前 Windows 用户权限运行，不包含遥测，也不会上�
 ```powershell
 git clone https://github.com/JeremyWangCY/win-pilot.git
 cd win-pilot
+npm run build:wgc
+npm run build:desktop
+npm run test:desktop
 npm test
 npm pack --dry-run
 ```

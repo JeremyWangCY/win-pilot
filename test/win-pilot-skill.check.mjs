@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
-import { WIN_PILOT_SKILL, WIN_PILOT_SKILL_HINT } from '../lib/win-pilot-skill.js'
-import { apply, defineComputerTool } from '../lib/index.js'
+import childProcess from 'node:child_process'
+import { syncBuiltinESMExports } from 'node:module'
+
+const originalSpawn = childProcess.spawn
+childProcess.spawn = () => { throw new Error('REAL PROCESS START FORBIDDEN IN SKILL TEST') }
+syncBuiltinESMExports()
+const { WIN_PILOT_SKILL, WIN_PILOT_SKILL_HINT, createWinPilotSkill } = await import('../lib/win-pilot-skill.js')
+const { apply, defineComputerTool } = await import('../lib/index.js')
 
 assert.equal(WIN_PILOT_SKILL.name, 'win-pilot')
 assert.equal(WIN_PILOT_SKILL.source, 'runtime')
@@ -19,4 +25,11 @@ apply({
 })
 assert.equal(registeredSkill, WIN_PILOT_SKILL, 'apply registers the exact model-facing skill with DSH')
 assert.equal(registeredTool?.name, 'computer', 'apply registers the computer tool under DSH schema validation')
+assert.doesNotMatch(JSON.stringify({ skill:WIN_PILOT_SKILL, description:registered.description, parameters:registered.parameters }), /task.?desktop|second desktop|alternate session|independent.*desktop|virtual desktop/i)
+const taskSkill = createWinPilotSkill('task')
+assert.match(taskSkill.content, /Never fall back to the main desktop/)
+assert.match(taskSkill.content, /Foreground input inside this task desktop is allowed/)
+assert.doesNotMatch(taskSkill.content, /Use foreground interaction only|cannot be guaranteed independent/)
+childProcess.spawn = originalSpawn
+syncBuiltinESMExports()
 console.log('PASS: Win-Pilot runtime skill is complete and discoverable from computer')
