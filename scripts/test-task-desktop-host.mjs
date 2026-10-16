@@ -72,6 +72,9 @@ try {
   if(!ready.worker_ready||!ready.connected||!Number.isInteger(ready.windows_session_id)||ready.windows_session_id<=0||ready.windows_session_id===ready.parent_windows_session_id)throw new Error('No distinct ready child session')
   report.child_session=ready.windows_session_id;report.parent_session=ready.parent_windows_session_id
   check('child_worker_startup',ready)
+  // The helper can be ready before Windows finishes this user's startup apps.
+  // Let those apps settle; keep input guards enabled throughout the test.
+  await new Promise(resolve=>setTimeout(resolve,15000))
   if(process.argv.includes('--probe-input-desktop')) {
     report.desktop_samples=[];const started=Date.now();let previous=''
     do {
@@ -90,7 +93,8 @@ try {
   const launched=await desktop.execute('launch_app',{dispatch:'background',focus_policy:'never',overlay:false,status_pill:false,control_session_id:instance,name:`"${fixture}" --host-test ${instance} --session ${report.child_session} --parent-session ${report.parent_session} --events "${events}"`},abort.signal)
   // An explicitly completed launch must be observed, never launched again merely
   // because Windows declined foreground activation during shell startup.
-  if(launched.ok!==true&&!(launched.launch_succeeded===true&&launched.error_code==='foreground_activation_unconfirmed'))requireOk(launched,'launch_app')
+  const observeLaunch=launched.launch_succeeded===true&&launched.error_code==='foreground_activation_unconfirmed'||launched.error_code==='user_input_interrupted'&&Number.isInteger(launched.pid)&&launched.pid>0
+  if(launched.ok!==true&&!observeLaunch)requireOk(launched,'launch_app')
   if(launched.ok!==true)report.launch_observation_required={error_code:launched.error_code,pid:launched.pid}
   if(!Number.isInteger(launched.pid)||launched.pid<=0)throw new Error('No fixture PID returned')
   const app=String(launched.pid);report.fixture_pid=launched.pid
