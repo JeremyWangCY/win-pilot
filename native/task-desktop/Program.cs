@@ -63,6 +63,8 @@ static class Native
     [DllImport("user32.dll",SetLastError=true)]internal static extern bool PrintWindow(IntPtr window,IntPtr dc,uint flags);
     [DllImport("user32.dll",EntryPoint="SendMessageW")]internal static extern IntPtr SendWindowMessage(IntPtr window,int message,IntPtr wParam,IntPtr lParam);
     [DllImport("user32.dll")] internal static extern bool IsChild(IntPtr parent,IntPtr child);
+    internal delegate bool ChildWindowVisitor(IntPtr window,IntPtr state);
+    [DllImport("user32.dll")]internal static extern bool EnumChildWindows(IntPtr parent,ChildWindowVisitor visitor,IntPtr state);
     [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint process);
     [DllImport("kernel32.dll")] internal static extern bool ProcessIdToSessionId(uint process,out uint session);
     [DllImport("user32.dll")] internal static extern short VkKeyScanW(char ch);
@@ -78,12 +80,15 @@ static class Native
 
 sealed class RdpView : AxHost,IMessageFilter
 {
-    public RdpView():base("8B918B82-7985-4C24-89DF-C33AD2BBFBCD") { Application.AddMessageFilter(this); }
+    public RdpView():base("8B918B82-7985-4C24-89DF-C33AD2BBFBCD") { Application.AddMessageFilter(this);inputWindowTimer.Tick+=(_,_)=>BindInputWindows(); }
     public object Client => GetOcx();
     public bool AllowUserInput;
     public Func<Task<bool>>? AcquireUserInput;
     public Action? UserActivity;
     readonly List<Message> queuedInput=new();
+    readonly List<InputWindow> inputWindows=new();
+    readonly System.Windows.Forms.Timer inputWindowTimer=new(){Interval=250};
+    volatile bool replayingInput;
     readonly HashSet<long> heldInput=new();
     public bool HasHeldUserInput=>heldInput.Count>0;
     public void ReleaseUserInputTracking()=>heldInput.Clear();
@@ -110,12 +115,42 @@ sealed class RdpView : AxHost,IMessageFilter
         try{
             bool allowed=AcquireUserInput!=null&&await AcquireUserInput();
             if(!allowed||!AllowUserInput||IsDisposed||AcquireUserInput==null)return;
-            foreach(var message in queuedInput.ToArray())if(Native.IsWindow(message.HWnd)&&(message.HWnd==Handle||Native.IsChild(Handle,message.HWnd)))Native.SendWindowMessage(message.HWnd,message.Msg,message.WParam,message.LParam);
+            foreach(var message in queuedInput.ToArray())ReplayInput(message);
         }catch(Exception e){AllowUserInput=false;Program.Emit(new{@event="manual_input_failed",message=e.Message});}
         finally{queuedInput.Clear();acquiringInput=false;}
     }
-    protected override void WndProc(ref Message message){if(!AllowUserInput&&((message.Msg>=0x100&&message.Msg<=0x109)||(message.Msg>=0x200&&message.Msg<=0x20e)))return;base.WndProc(ref message);}
-    protected override void Dispose(bool disposing){if(disposing)Application.RemoveMessageFilter(this);base.Dispose(disposing);}
+    void ReplayInput(Message message){
+        if(IsDisposed||!AllowUserInput||!Native.IsWindow(message.HWnd)||(message.HWnd!=Handle&&!Native.IsChild(Handle,message.HWnd)))return;
+        replayingInput=true;try{Native.SendWindowMessage(message.HWnd,message.Msg,message.WParam,message.LParam);}finally{replayingInput=false;}
+    }
+    void ReceiveInput(Message message){if(IsDisposed)return;if(!PreFilterMessage(ref message))ReplayInput(message);}
+    sealed class InputWindow : NativeWindow {
+        readonly RdpView owner;
+        internal InputWindow(RdpView view,IntPtr window){owner=view;AssignHandle(window);}
+        protected override void WndProc(ref Message message){
+            // Native ActiveX child windows also receive synchronous messages,
+            // which never pass through WinForms' IMessageFilter.
+            if(IsInput(message.Msg)&&!owner.replayingInput){
+                var copy=message;
+                if(owner.InvokeRequired){try{owner.BeginInvoke(new Action(()=>owner.ReceiveInput(copy)));}catch(InvalidOperationException){}}
+                else owner.ReceiveInput(copy);
+                return;
+            }
+            base.WndProc(ref message);
+        }
+    }
+    void BindInputWindows(){
+        if(!IsHandleCreated||IsDisposed)return;
+        inputWindows.RemoveAll(window=>window.Handle==IntPtr.Zero);
+        Native.EnumChildWindows(Handle,(window,_)=>{
+            Native.GetWindowThreadProcessId(window,out uint process);
+            if(process==(uint)Environment.ProcessId&&Control.FromHandle(window)==null&&!inputWindows.Any(bound=>bound.Handle==window))try{inputWindows.Add(new(this,window));}catch(InvalidOperationException){}
+            return true;
+        },IntPtr.Zero);
+    }
+    protected override void OnHandleCreated(EventArgs e){base.OnHandleCreated(e);inputWindowTimer.Start();BindInputWindows();}
+    protected override void WndProc(ref Message message){if(IsHandleCreated&&IsInput(message.Msg)&&!replayingInput){ReceiveInput(message);return;}base.WndProc(ref message);}
+    protected override void Dispose(bool disposing){if(disposing){Application.RemoveMessageFilter(this);inputWindowTimer.Dispose();foreach(var window in inputWindows)window.ReleaseHandle();inputWindows.Clear();}base.Dispose(disposing);}
 }
 
 sealed class DesktopWindow : Form
@@ -197,7 +232,7 @@ sealed class DesktopWindow : Form
         windowMenu.BackColor=Color.White;windowMenu.ForeColor=ForeColor;windowMenu.Font=Font;
         windowMenu.Items.Add(loginSettings);top.ContextMenuStrip=windowMenu;badge.ContextMenuStrip=windowMenu;
         windowSize=Button("↗",()=>{ToggleWindowSize();return Task.CompletedTask;});windowSize.Name="task-window-size";windowSize.AccessibleName="放大任务窗口";
-        pinWindow=Button("",()=>{TopMost=!TopMost;pinWindow!.Invalidate();return Task.CompletedTask;});pinWindow.AccessibleName="切换置顶";
+        pinWindow=Button("",()=>{TopMost=!TopMost;pinWindow!.Invalidate();return Task.CompletedTask;});pinWindow.Name="task-window-pin";pinWindow.AccessibleName="切换置顶";
         pinWindow.Paint+=(_,e)=>{
             e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             using var shape=new System.Drawing.Drawing2D.GraphicsPath();
@@ -241,6 +276,7 @@ sealed class DesktopWindow : Form
         var stopping=Pause(true);long version=manualInputVersion;
         var result=await stopping;
         if(result["ok"]?.GetValue<bool>()!=true||!expanded||closing||version!=manualInputVersion)return false;
+        view?.Focus();
         automaticTakeover=true;lastManualInput=Environment.TickCount64;return true;
     }
     ToolStripMenuItem MenuItem(string text,Func<Task> action)
