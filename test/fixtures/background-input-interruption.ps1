@@ -226,6 +226,7 @@ function Test-DesktopLocked { return $false }
 function Get-Dispatch { return 'background' }
 function Get-FocusPolicy { return 'never' }
 function Get-PayloadValue { param($Name) return $script:payload.$Name }
+function Set-ObservationSession { }
 function Resolve-TargetWindow { return [pscustomobject]@{ Hwnd = [IntPtr]1 } }
 function Find-TextInputHwnd { return [IntPtr]1 }
 function Invoke-PasteClipboardOperation {
