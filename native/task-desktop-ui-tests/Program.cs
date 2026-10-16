@@ -104,6 +104,7 @@ static class ManualInputChecks
             var canvas=(Panel)Get(form,"canvas")!;
             ((System.ComponentModel.ISupportInitialize)view).BeginInit();canvas.Controls.Add(view);
             ((System.ComponentModel.ISupportInitialize)view).EndInit();view.CreateControl();
+            ((System.Windows.Forms.Timer)Get(view,"inputWindowTimer")!).Stop();
             using var probe=new InputProbe(view.Handle);
             Set(form,"view",view);Set(form,"expanded",true);Set(form,"connected",true);Set(form,"workerAuthenticated",true);
             var ready=new TaskCompletionSource<bool>();ready.SetResult(true);Set(form,"workerReady",ready);
@@ -174,6 +175,49 @@ static class ManualInputChecks
             Require(Requests().Length==requestCount+1&&probe.Delivered.Count==0,"Failed stop confirmation must discard queued input");
             Require(!(bool)Get(view,"AllowUserInput")!,"Failed stop must leave user input gated");
 
+            // Do not manually call IMessageFilter here: real SendMessage bypasses
+            // that pump. Bind the shipped native-child subclass and observe the
+            // production replay flag at the parent HWND without consuming input.
+            Call(view,"BindInputWindows");
+            using(var parentReplay=new ReplayProbe(view.Handle,()=>(bool)Get(view,"replayingInput")!)){
+                foreach(bool parent in new[]{true,false})foreach(bool posted in new[]{false,true}){
+                    Reset();parentReplay.Delivered.Clear();requestCount=Requests().Length;
+                    IntPtr target=parent?view.Handle:probe.Handle;
+                    foreach(var (id,value) in new[]{(0x201,1),(0x202,0)}){
+                        if(posted)Require(InputProbe.Post(target,id,new IntPtr(value),IntPtr.Zero),"Self-owned PostMessage must succeed");
+                        else InputProbe.Send(target,id,new IntPtr(value),IntPtr.Zero);
+                    }
+                    PumpUntil(()=>((List<Message>)Get(view,"queuedInput")!).Count==2,"Parent/native-child input did not enter the production acquisition queue");
+                    PumpUntil(()=>Requests().Length==requestCount+1,"Window-message Pause was not written to the memory worker");
+                    Require(Pending().Count==1&&Requests().Length==requestCount+1&&Requests()[^1]["command"]!.ToString()=="pause","Each real window-message path must request exactly one stop ACK");
+                    Require(probe.Delivered.Count==0&&parentReplay.Delivered.Count==0,"Parent/native child SendMessage/PostMessage must deliver nothing before ACK");
+                    Acknowledge(true);
+                    var delivered=parent?parentReplay.Delivered:probe.Delivered;
+                    Require(delivered.SequenceEqual(new[]{(0x201,1),(0x202,0)}),"Parent/native child SendMessage/PostMessage must replay once in original order after ACK");
+                }
+            }
+
+            using(var foreign=new ForeignInputProbe(view.Handle)){
+                PumpUntil(()=>foreign.Ready.Task.IsCompleted,"Self-owned native child thread did not start");
+                var child=foreign.Ready.Task.GetAwaiter().GetResult();Call(view,"BindInputWindows");
+                int uiThread=Environment.CurrentManagedThreadId,acquireThread=0;
+                var acquire=(Func<Task<bool>>)Get(view,"AcquireUserInput")!;
+                Set(view,"AcquireUserInput",(Func<Task<bool>>)(()=>{acquireThread=Environment.CurrentManagedThreadId;return acquire();}));
+                try{
+                    foreach(bool posted in new[]{false,true}){
+                        Reset();child.Delivered.Clear();acquireThread=0;
+                        foreach(var (id,value) in new[]{(0x201,1),(0x202,0)}){
+                            if(posted)Require(InputProbe.Post(child.Handle,id,new IntPtr(value),IntPtr.Zero),"Cross-thread self PostMessage must succeed");
+                            else InputProbe.Send(child.Handle,id,new IntPtr(value),IntPtr.Zero);
+                        }
+                        PumpUntil(()=>((List<Message>)Get(view,"queuedInput")!).Count==2,"Foreign native child's messages did not marshal to owner UI");
+                        Require(acquireThread==uiThread&&Pending().Count==1&&child.Delivered.Count==0,"Cross-thread input must acquire on the owner UI and await its stop ACK");
+                        Acknowledge(true);
+                        Require(child.Delivered.SequenceEqual(new[]{(0x201,1),(0x202,0)})&&child.DeliveryThread!=uiThread,"Cross-thread replay must return to the original child thread in original order");
+                    }
+                }finally{Set(view,"AcquireUserInput",acquire);}
+            }
+
             foreach(var (down,up,key) in new[]{(0x100,0x101,67),(0x201,0x202,1)}){
                 Reset();Feed(down,key);Acknowledge(true);
                 Require((bool)viewType.GetProperty("HasHeldUserInput")!.GetValue(view)!,"A held key or mouse button must be tracked");
@@ -233,7 +277,7 @@ static class ManualInputChecks
             Require(probe.Delivered.SequenceEqual(new[]{(0x201,1),(0x202,0)})&&(bool)Get(form,"paused")!&&(bool)Get(form,"takeover")!,"Only the newer Pause ACK may replay the original mouse gesture");
             workerWriter.AfterWrite=null;Set(form,"workerIdentity",null);Set(form,"childSession",uint.MaxValue);Set(form,"liveSnapshot",new HashSet<uint>());
             Require((int)client.Connected==0,"COM must remain disconnected after every input/idle test");
-            Console.WriteLine("manual input PASS: hover, ordered ACK-gated replay/rejection, compact takeover/login gating, held key/mouse/both XBUTTONs, idle Resume/new Pause ACK race; production RdpView; self-owned messages and memory worker only; COM never connected");
+            Console.WriteLine("manual input PASS: hover, parent/native-child SendMessage/PostMessage ACK-gated replay, cross-thread child/owner UI marshalling, rejection, compact takeover/login gating, held key/mouse/both XBUTTONs, idle Resume/new Pause ACK race; production RdpView; self-owned messages and memory worker only; COM never connected");
         }finally{
             Set(form,"writer",null);Set(form,"view",null);Set(form,"connected",false);Set(form,"workerAuthenticated",false);
             Set(form,"workerReady",originalReady);Set(form,"liveRefresh",originalLiveRefresh);Set(form,"automaticTakeover",false);Set(form,"takeover",false);Set(form,"workerIdentity",null);
@@ -244,13 +288,50 @@ static class ManualInputChecks
 sealed class InputProbe:NativeWindow,IDisposable
 {
     internal readonly List<(int,int)> Delivered=new();
+    internal int DeliveryThread;
     internal InputProbe(IntPtr parent){CreateHandle(new CreateParams(){Caption="WinPilot self-message test",Parent=parent,Style=0x40000000,Width=10,Height=10});}
     [DllImport("user32.dll",EntryPoint="SendMessageW")]internal static extern IntPtr Send(IntPtr hwnd,int message,IntPtr wParam,IntPtr lParam);
+    [DllImport("user32.dll",EntryPoint="PostMessageW")]internal static extern bool Post(IntPtr hwnd,int message,IntPtr wParam,IntPtr lParam);
     protected override void WndProc(ref Message message){
-        if(message.Msg is 0x100 or 0x101 or 0x201 or 0x202 or 0x20b or 0x20c){Delivered.Add((message.Msg,message.WParam.ToInt32()));return;}
+        if(message.Msg is 0x100 or 0x101 or 0x201 or 0x202 or 0x20b or 0x20c){DeliveryThread=Environment.CurrentManagedThreadId;Delivered.Add((message.Msg,message.WParam.ToInt32()));return;}
         base.WndProc(ref message);
     }
     public void Dispose()=>DestroyHandle();
+}
+
+sealed class ForeignInputProbe:IDisposable
+{
+    internal readonly TaskCompletionSource<InputProbe> Ready=new(TaskCreationOptions.RunContinuationsAsynchronously);
+    readonly Thread thread;
+    uint nativeThread;
+    [DllImport("kernel32.dll")]static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll",EntryPoint="PostThreadMessageW")]static extern bool PostThread(uint thread,int message,IntPtr wParam,IntPtr lParam);
+    internal ForeignInputProbe(IntPtr parent){
+        thread=new Thread(()=>{
+            try{nativeThread=GetCurrentThreadId();using var child=new InputProbe(parent);Ready.SetResult(child);Application.Run();}
+            catch(Exception error){Ready.TrySetException(error);}
+        }){IsBackground=true};thread.SetApartmentState(ApartmentState.STA);thread.Start();
+    }
+    public void Dispose(){
+        if(nativeThread!=0)PostThread(nativeThread,0x12,IntPtr.Zero,IntPtr.Zero);
+        long deadline=Environment.TickCount64+2000;
+        // Native child destruction can notify its parent; keep that owner's
+        // message pump alive instead of blocking it in Thread.Join.
+        while(thread.IsAlive&&Environment.TickCount64<deadline){Application.DoEvents();Thread.Sleep(2);}
+        if(thread.IsAlive)throw new Exception("Self-owned native child thread did not stop");
+    }
+}
+
+sealed class ReplayProbe:NativeWindow,IDisposable
+{
+    internal readonly List<(int,int)> Delivered=new();
+    readonly Func<bool> replaying;
+    internal ReplayProbe(IntPtr window,Func<bool> isReplaying){replaying=isReplaying;AssignHandle(window);}
+    protected override void WndProc(ref Message message){
+        if(message.Msg is 0x201 or 0x202&&replaying())Delivered.Add((message.Msg,message.WParam.ToInt32()));
+        base.WndProc(ref message);
+    }
+    public void Dispose()=>ReleaseHandle();
 }
 
 sealed class ProbeWorkerWriter:StreamWriter
