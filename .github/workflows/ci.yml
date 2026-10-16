@@ -30,5 +30,16 @@ jobs:
           node-version: '24'
           package-manager-cache: false
 
+      - name: Build native components
+        run: |
+          npm run build:wgc
+          npm run build:desktop
+
+      - name: Test isolated desktop boundaries
+        run: |
+          npm run test:desktop
+          dotnet run --project native/task-desktop-tests/task-desktop-tests.csproj -c Release
+          dotnet run --project native/task-desktop-ui-tests/task-desktop-ui-tests.csproj -c Release -- artifacts/floating-window/layout
+
       - name: Test
         run: npm test

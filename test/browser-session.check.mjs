@@ -247,6 +247,10 @@ try {
   assert.notEqual(newRole, changed)
   await browserAction('browser_click', { ...args, element: get(s, 'Remove'), confirmation: 'approved' })
   await assert.rejects(click(newRole), /stale|rejected/i)
+  // A failed CDP mutation has an uncertain outcome and invalidates the tab's
+  // observation. Check that unrelated old refs are refused, then observe anew.
+  await assert.rejects(click(get(s, 'Refresh')), /Stale|rejected/i)
+  s = await state()
   await assert.rejects(browserAction('browser_click', { ...args, tab_id: other, element: message }), /wrong-tab/)
   await assert.rejects(browserAction('browser_state', { ...args, tab_id: 'not-a-tab' }), /not found/)
   await assert.rejects(click('invented-token'), /Stale/)

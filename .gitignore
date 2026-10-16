@@ -5,3 +5,9 @@ native/**/bin/
 native/**/obj/
 artifacts/
 lib/wgc/*.pdb
+lib/task-desktop/*.pdb
+lib/task-desktop/*.exe
+lib/task-desktop/*.dll
+lib/task-desktop/*.deps.json
+lib/task-desktop/*.runtimeconfig.json
+lib/wgc/*.exe

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../task-desktop/ProcessIdentity.cs" Link="ProcessIdentity.cs" />
+    <Compile Include="../task-desktop/ExplorerStartupMarker.cs" Link="ExplorerStartupMarker.cs" />
+    <Compile Include="../task-desktop/PipeIdentity.cs" Link="PipeIdentity.cs" />
+    <Compile Include="../task-desktop/ChildSessionQuery.cs" Link="ChildSessionQuery.cs" />
+    <Compile Include="../task-desktop/HelperProtocol.cs" Link="HelperProtocol.cs" />
+    <Compile Include="../task-desktop/WindowsLoginStore.cs" Link="WindowsLoginStore.cs" />
+    <Compile Include="../task-desktop/RdpCredentials.cs" Link="RdpCredentials.cs" />
+    <Compile Include="../task-desktop/LoginSettingsDialog.cs" Link="LoginSettingsDialog.cs" />
+    <Compile Include="../task-desktop/DesktopReadiness.cs" Link="DesktopReadiness.cs" />
+  </ItemGroup>
+</Project>

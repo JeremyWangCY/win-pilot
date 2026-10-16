@@ -397,7 +397,8 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
     `the card must render exactly one control per declared field (got ${controls.length}, expected ${FIELDS.length})`)
   assert.ok(controls.every((node) => node.type === 'select' || node.props.type === 'checkbox'),
     'users must only choose checkboxes or options, never enter numbers')
-  assert.equal(controls.length, 3, 'the panel must keep only three everyday preferences')
+  assert.equal(controls.filter(control=>control.type==='input').length,3)
+  assert.equal(controls.filter(control=>control.type==='select').length,1)
   // Every control is labelled, so the form is usable and screen-reader readable.
   for (const control of controls) {
     assert.ok(typeof control.props['aria-label'] === 'string' && control.props['aria-label'].length > 0,
@@ -408,6 +409,19 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   const save = find(tree, (node) => node.type === 'button' && node.props.className === 'wp-save')
   assert.ok(save, 'the card must render a save control')
   assert.equal(save.props.disabled, true, 'save stays disabled while nothing is staged')
+}
+
+// A staged edit enables save and writes the checkbox value on click.
+{
+  const scope=scopeDouble()
+  const Card=registeredCard({configForms:configFormsDouble(['win-pilot'],scope)})
+  let tree=pluginReact.mount(Card,{scope,locale:'en'})
+  const select=find(tree,node=>node.type==='select')
+  assert.equal(select.props.value,'current')
+  select.props.onChange({target:{value:'task'}})
+  tree=pluginReact.tree
+  await find(tree,node=>node.type==='button'&&node.props.className==='wp-save').props.onClick()
+  assert.deepEqual(scope.writes,[['desktopEnvironment','task']])
 }
 
 // A staged edit enables save and writes the checkbox value on click.

@@ -36,6 +36,8 @@ const fakeRuntime = {
     calls.push({ action, payload })
     return { ok: true, action, payload }
   },
+  taskDesktop: async command => { calls.push({ desktop:command }); return {ok:true,preview_only:command==='preview'} },
+  waitForTaskDesktopClose: async () => {},
   close: () => {},
 }
 
@@ -51,6 +53,23 @@ function capture() {
     stdout: () => stdout,
     stderr: () => stderr,
   }
+}
+
+{
+  const out = capture()
+  const code = await runCli(['desktop', '--preview', '--json'], out.io)
+  assert.equal(code, 0)
+  assert.deepEqual(calls.at(-1), {desktop:'preview'})
+  assert.equal(JSON.parse(out.stdout()).preview_only,true)
+}
+
+{
+  const out = capture()
+  assert.equal(await runCli(['desktop','--login','--json'],out.io),0)
+  assert.deepEqual(calls.at(-1),{desktop:'login'})
+  const before=calls.length
+  assert.equal(await runCli(['desktop','--preview','--login'],capture().io),2)
+  assert.equal(calls.length,before,'conflicting login/preview must not reach the native boundary')
 }
 
 {

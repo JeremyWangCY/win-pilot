@@ -66,6 +66,7 @@ public static class WinPilotInputMonitor
   private static bool started, stopped, active, requiresObservation, dispatched;
   private static long generation;
   private static string failure;
+  private static string cancellationPath;
 
   static WinPilotInputMonitor()
   {
@@ -74,6 +75,13 @@ public static class WinPilotInputMonitor
   }
 
   public static bool HasDispatched { get { lock (State) { return dispatched; } } }
+  public static void ConfigureCancellation(string path) { lock (State) { cancellationPath = path; if (!active) dispatched = false; } }
+  public static void ClearCancellation() { lock (State) { cancellationPath = null; } }
+  private static void CheckCancellation()
+  {
+    if (!string.IsNullOrEmpty(cancellationPath) && File.Exists(cancellationPath))
+      throw new InvalidOperationException("operation_cancelled: stop cancelled the active action");
+  }
 
   public static void EnsureStarted()
   {
@@ -101,7 +109,7 @@ public static class WinPilotInputMonitor
 
   public static void BeginAction()
   {
-    lock (State) { dispatched = false; }
+    lock (State) { dispatched = false; CheckCancellation(); }
     EnsureStarted();
     lock (State)
     {
@@ -117,6 +125,7 @@ public static class WinPilotInputMonitor
   {
     lock (State)
     {
+      CheckCancellation();
       if (!active) return;
       CheckHealth();
       if (requiresObservation)
@@ -154,7 +163,15 @@ public static class WinPilotInputMonitor
     // Observation/housekeeping waits must keep their duration after cancellation.
     if (!guarded) { Thread.Sleep(milliseconds); return; }
     Check();
-    Interrupted.WaitOne(milliseconds);
+    // The signal file is written by the host while the stdin dispatcher is busy.
+    // Poll during holds so cancellation enters finally instead of requiring a kill.
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    while (watch.ElapsedMilliseconds < milliseconds)
+    {
+      Check();
+      int remaining = milliseconds - (int)watch.ElapsedMilliseconds;
+      if (remaining > 0) Interrupted.WaitOne(Math.Min(25, remaining));
+    }
     Check();
   }
 
@@ -374,6 +391,28 @@ public static class DshWin32
   [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
   [DllImport("user32.dll", SetLastError = true)] private static extern bool CloseDesktop(IntPtr desktop);
   [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool GetUserObjectInformation(IntPtr handle, int index, StringBuilder value, int length, out int needed);
+  [DllImport("user32.dll")] private static extern IntPtr GetProcessWindowStation();
+  [DllImport("user32.dll")] private static extern IntPtr GetThreadDesktop(uint thread);
+  private static string UserObjectName(IntPtr handle) {
+    if(handle == IntPtr.Zero) return "";
+    StringBuilder value = new StringBuilder(256); int needed;
+    return GetUserObjectInformation(handle, 2, value, value.Capacity * 2, out needed) ? value.ToString() : "";
+  }
+  public static object[] ReadInputDesktopStatus() {
+    string station = UserObjectName(GetProcessWindowStation());
+    string thread = UserObjectName(GetThreadDesktop(GetCurrentThreadId()));
+    IntPtr input = OpenInputDesktop(0, false, 1);
+    int error = input == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
+    string name = "";
+    try {
+      if(input != IntPtr.Zero) {
+        StringBuilder value = new StringBuilder(256); int needed;
+        if(GetUserObjectInformation(input, 2, value, value.Capacity * 2, out needed)) name = value.ToString();
+        else error = Marshal.GetLastWin32Error();
+      }
+      return new object[] { error == 0 && string.Equals(name, "Default", StringComparison.OrdinalIgnoreCase), station, thread, name, error };
+    } finally { if(input != IntPtr.Zero) CloseDesktop(input); }
+  }
   public static bool IsDesktopLocked()
   {
     IntPtr desktop = OpenInputDesktop(0, false, 1);
@@ -390,8 +429,10 @@ public static class DshWin32
   // Track only Win-Pilot's held input, so interruption cleanup never sends
   // arbitrary releases for keys/buttons pressed by the user.
   private static readonly Dictionary<string, INPUT> heldInputs = new Dictionary<string, INPUT>();
+  private static readonly object heldInputsGate = new object();
   private static void TrackInput(INPUT i)
   {
+    lock (heldInputsGate) {
     if (i.type == 1)
     {
       string key = "k:" + i.u.ki.wVk + ":" + i.u.ki.wScan;
@@ -407,6 +448,7 @@ public static class DshWin32
         if ((i.u.mi.dwFlags & ups[j]) != 0) heldInputs.Remove(key);
         else if ((i.u.mi.dwFlags & downs[j]) != 0) { i.u.mi.dwFlags = ups[j]; heldInputs[key] = i; }
       }
+    }
     }
   }
   private static uint SendGuarded(uint n, INPUT[] inputs, int size)
@@ -424,7 +466,7 @@ public static class DshWin32
     foreach (INPUT i in inputs)
     {
       string key = i.type == 1 ? "k:" + i.u.ki.wVk + ":" + i.u.ki.wScan : null;
-      if (key != null && heldInputs.ContainsKey(key)) owned.Add(i);
+      lock (heldInputsGate) { if (key != null && heldInputs.ContainsKey(key)) owned.Add(i); }
     }
     if (owned.Count == 0) return 0;
     uint sent = SendInput((uint)owned.Count, owned.ToArray(), size);
@@ -433,10 +475,12 @@ public static class DshWin32
   }
   public static void ReleaseOwnedInput()
   {
-    INPUT[] releases = new List<INPUT>(heldInputs.Values).ToArray();
+    INPUT[] releases;
+    lock (heldInputsGate) { releases = new List<INPUT>(heldInputs.Values).ToArray(); }
     if (releases.Length == 0) return;
     uint sent = SendInput((uint)releases.Length, releases, Marshal.SizeOf(typeof(INPUT)));
     for (int j = 0; j < sent; j++) TrackInput(releases[j]);
+    if (sent != releases.Length) throw new InvalidOperationException("input_cleanup_failed: owned input release was not fully delivered");
   }
   private static void MoveOwned(int x, int y)
   {
@@ -669,6 +713,8 @@ public static class DshWin32
   static DshWin32()
   {
     InitDpiAwareness();
+    // Graceful EOF/deadline exits release our own SendInput holds only.
+    AppDomain.CurrentDomain.ProcessExit += delegate { try { ReleaseOwnedInput(); } catch { } };
   }
 
   public static void InitDpiAwareness()
@@ -1225,6 +1271,27 @@ function Get-Dispatch {
   return ([string]$d).ToLowerInvariant()
 }
 
+function Get-ControlSessionId { return [string](Get-PayloadValue 'control_session_id') }
+
+function Get-SessionObservationKey {
+  param([string]$Key)
+  $prefix = (Get-ControlSessionId) + [char]0
+  if ($Key.StartsWith($prefix, [StringComparison]::Ordinal)) { return $Key }
+  return $prefix + $Key
+}
+
+function Set-ObservationSession {
+  $sessionId = Get-ControlSessionId
+  if ([string]$script:observationSessionId -cne $sessionId) {
+    $script:observation = $null
+    $script:lastScreenshot = $null
+    $script:cachedTreeHwnd = [IntPtr]::Zero
+    $script:cachedElements = $null
+    $script:cachedIdentities = $null
+    $script:observationSessionId = $sessionId
+  }
+}
+
 function Get-FocusPolicy {
   # What to do when a background action moves the foreground window.
   #   yield   (default) report it and stop; never compete for focus
@@ -1254,6 +1321,50 @@ if ($null -eq $script:windowBackgroundCapabilities) { $script:windowBackgroundCa
 if ($null -eq $script:verifiedPublisherCache) { $script:verifiedPublisherCache = @{} }
 if ($null -eq $script:accessibilityHistory) { $script:accessibilityHistory = @{} }
 if ($null -eq $script:accessibilityRevision) { $script:accessibilityRevision = [int64]0 }
+if ($null -eq $script:elementIndexHistory) { $script:elementIndexHistory = @{} }
+
+function Get-WindowObservationFingerprint {
+  param([IntPtr]$Hwnd)
+  if (-not ('WinPilotObservationNative' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class WinPilotObservationNative {
+ [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
+ [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+}
+'@
+  }
+  $processId = [uint32]0
+  $thread = [WinPilotObservationNative]::GetWindowThreadProcessId($Hwnd, [ref]$processId)
+  $started = [int64]0
+  if ($processId -gt 0) {
+    $process = [System.Diagnostics.Process]::GetProcessById([int]$processId)
+    try { $started = $process.StartTime.ToUniversalTime().Ticks } finally { $process.Dispose() }
+  }
+  $dpi = [WinPilotObservationNative]::GetDpiForWindow($Hwnd)
+  if ($thread -eq 0 -or $dpi -eq 0) { throw 'stale_snapshot: target window identity or DPI is unavailable' }
+  return ('{0}:{1}:{2}:{3}' -f $processId, $started, $thread, $dpi)
+}
+
+function Get-StableElementIndex {
+  param([string]$WindowKey, [string]$ElementId)
+  $WindowKey = Get-SessionObservationKey $WindowKey
+  if (-not $script:elementIndexHistory.ContainsKey($WindowKey)) {
+    $script:elementIndexHistory[$WindowKey] = @{ next = 1; indexes = @{} }
+    if ($script:elementIndexHistory.Count -gt 32) {
+      foreach ($oldKey in @($script:elementIndexHistory.Keys)) {
+        if ($oldKey -cne $WindowKey) { $script:elementIndexHistory.Remove($oldKey); break }
+      }
+    }
+  }
+  $history = $script:elementIndexHistory[$WindowKey]
+  if (-not $history.indexes.ContainsKey($ElementId)) {
+    $history.indexes[$ElementId] = [int]$history.next
+    $history.next++
+  }
+  return [int]$history.indexes[$ElementId]
+}
 
 function Get-ProcessNameFast {
   param([uint32]$ProcessId, [hashtable]$Cache)
@@ -1684,6 +1795,7 @@ function Get-AccessibilitySummary {
   return [ordered]@{
     element_id = [string]$Item.element_id
     index = [int]$Item.index
+    actionable = $Item.actionable
     role = [string]$Item.role
     name = [string]$Item.name
     value = [string]$Item.value
@@ -1698,15 +1810,18 @@ function Get-AccessibilitySummary {
 }
 
 function Get-AccessibilityDelta {
-  param([string]$Key, $Tree)
+  param([string]$Key, $Tree, [bool]$ShownToModel = $true, [bool]$DisableDiffing = $false)
+  $Key = Get-SessionObservationKey $Key
   $script:accessibilityRevision = [int64]$script:accessibilityRevision + 1
   $revision = [int64]$script:accessibilityRevision
   $previous = $script:accessibilityHistory[$Key]
   $current = @{}
+  $fullItems = @{}
   foreach ($item in $Tree) {
     $id = [string]$item.element_id
     if (-not $id) { continue }
     $current[$id] = Get-AccessibilitySummary $item
+    $fullItems[$id] = $item
   }
 
   $added = New-Object System.Collections.Generic.List[object]
@@ -1720,15 +1835,15 @@ function Get-AccessibilityDelta {
       $now = $current[$id]
       $before = $previous.items[$id]
       if ($null -eq $before) {
-        $added.Add([ordered]@{ element_id = $id; index = $now.index; role = $now.role; name = $now.name })
+        $added.Add($fullItems[$id])
         continue
       }
       $fields = New-Object System.Collections.Generic.List[string]
-      foreach ($field in @('role','name','value','automation_id','enabled','offscreen','invokable','selected','native_window_handle','rect')) {
+      foreach ($field in @('index','actionable','role','name','value','automation_id','enabled','offscreen','invokable','selected','native_window_handle','rect')) {
         if ([string]$now[$field] -cne [string]$before[$field]) { $fields.Add($field) }
       }
       if ($fields.Count -gt 0) {
-        $changed.Add([ordered]@{ element_id = $id; index = $now.index; fields = $fields.ToArray() })
+        $changed.Add([ordered]@{ element_id = $id; index = $now.index; fields = $fields.ToArray(); element = $fullItems[$id] })
       } else {
         $unchanged++
       }
@@ -1736,16 +1851,16 @@ function Get-AccessibilityDelta {
     foreach ($id in $previous.items.Keys) {
       if (-not $current.ContainsKey($id)) {
         $before = $previous.items[$id]
-        $removed.Add([ordered]@{ element_id = $id; role = $before.role; name = $before.name })
+        $removed.Add([ordered]@{ element_id = $id; index = $before.index; role = $before.role; name = $before.name })
       }
     }
   }
 
-  $script:accessibilityHistory[$Key] = @{
+  if ($ShownToModel) { $script:accessibilityHistory[$Key] = @{
     revision = $revision
     items = $current
     updated = [DateTime]::UtcNow
-  }
+  } }
   if ($script:accessibilityHistory.Count -gt 32) {
     foreach ($oldKey in @($script:accessibilityHistory.Keys)) {
       if ($oldKey -cne $Key) { $script:accessibilityHistory.Remove($oldKey) }
@@ -1754,6 +1869,8 @@ function Get-AccessibilityDelta {
   }
 
   return [ordered]@{
+    format = if (-not $ShownToModel) { 'hidden' } elseif ($DisableDiffing -or $reset) { 'full' } elseif ($added.Count -eq 0 -and $removed.Count -eq 0 -and $changed.Count -eq 0) { 'no_change' } else { 'delta' }
+    tree_shown_to_model = $ShownToModel
     revision = $revision
     base_revision = if ($reset) { $null } else { [int64]$previous.revision }
     reset = $reset
@@ -1764,11 +1881,36 @@ function Get-AccessibilityDelta {
   }
 }
 
+function Format-AccessibilityTree {
+  param($Tree, $Delta)
+  if ($Delta.format -eq 'hidden') { return '' }
+  if ($Delta.format -eq 'no_change') { return 'No accessibility changes.' }
+  $lines = New-Object System.Collections.Generic.List[string]
+  if ($Delta.format -eq 'full') {
+    foreach ($item in $Tree) { $lines.Add((Format-AccessibilityItem $item)) }
+  } else {
+    foreach ($item in $Delta.removed) { $lines.Add('- ' + (Format-AccessibilityItem $item)) }
+    foreach ($item in $Delta.added) { $lines.Add('+ ' + (Format-AccessibilityItem $item)) }
+    foreach ($change in $Delta.changed) { $lines.Add('~ ' + (Format-AccessibilityItem $change.element)) }
+  }
+  return ($lines -join "`n")
+}
+
+function Format-AccessibilityItem {
+  param($Item)
+  $line = "[$($Item.index)] $($Item.role): $($Item.name)"
+  if ($Item.value) { $line += " = $($Item.value)" }
+  if ($Item.Contains('actionable') -and -not $Item.actionable) { $line += ' [ambiguous identity; not actionable]' }
+  return $line
+}
+
 function Get-AccessibilityTree {
   param([IntPtr]$Hwnd, [int]$MaxElements = $script:MAX_ELEMENTS, $WinRect = $null, [int]$MaxDepth = 0)
   $script:cachedTreeHwnd = $Hwnd
-  $script:cachedElements = New-Object System.Collections.Generic.List[System.Windows.Automation.AutomationElement]
-  $script:cachedIdentities = New-Object System.Collections.Generic.List[string]
+  $script:cachedElements = @{}
+  $script:cachedIdentities = @{}
+  $windowIndexKey = ('{0}:{1}' -f $Hwnd.ToInt64(), (Get-WindowObservationFingerprint $Hwnd))
+  $seenIds = @{}
   $windowCapabilityMap = @{}
   if ($null -eq $WinRect -and $Hwnd -ne [IntPtr]::Zero) {
     try { $WinRect = [DshWin32]::GetRect($Hwnd) } catch { }
@@ -1800,9 +1942,7 @@ function Get-AccessibilityTree {
   foreach ($el in $children) {
     if ($count -ge $MaxElements) { break }
     $count++
-    $script:cachedElements.Add($el)
     $elementIdentity = Get-ElementIdentity $el
-    $script:cachedIdentities.Add($elementIdentity)
     $stableId = Get-StableElementId $el
     $cur = $el.Current
     $rect = $cur.BoundingRectangle
@@ -1814,6 +1954,21 @@ function Get-AccessibilityTree {
       try { $value = $vp.Current.Value } catch { }
     }
     if (($name -eq '') -and ($autoId -eq '') -and ($value -eq '') -and ($rect.Width -le 0 -or $rect.Height -le 0)) { continue }
+    $index = Get-StableElementIndex -WindowKey $windowIndexKey -ElementId $stableId
+    $ambiguous = $seenIds.ContainsKey($stableId)
+    if ($ambiguous) {
+      # Duplicate provider IDs/fingerprints cannot identify an action target.
+      # Never silently overwrite the first entry or relocate an old index.
+      $prior = $seenIds[$stableId]
+      $prior.actionable = $false
+      $script:cachedElements.Remove([int]$prior.index)
+      $script:cachedIdentities.Remove([int]$prior.index)
+      $stableId += ':ambiguous:' + $count
+      $index = Get-StableElementIndex -WindowKey $windowIndexKey -ElementId $stableId
+    } else {
+      $script:cachedElements[$index] = $el
+      $script:cachedIdentities[$index] = $elementIdentity
+    }
     $invoke = $false
     $ip = $null
     if ($el.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$ip)) { $invoke = $true }
@@ -1842,7 +1997,8 @@ function Get-AccessibilityTree {
     $relX = if ($null -ne $WinRect) { Safe-Int ($rect.X - $WinRect.Left) } else { Safe-Int $rect.X }
     $relY = if ($null -ne $WinRect) { Safe-Int ($rect.Y - $WinRect.Top) } else { Safe-Int $rect.Y }
     $item = [ordered]@{
-      index = $count
+      index = $index
+      actionable = -not $ambiguous
       element_id = $stableId
       role = $cur.ControlType.ProgrammaticName
       name = if ($name) { $name } else { '' }
@@ -1857,6 +2013,7 @@ function Get-AccessibilityTree {
       screen_rect = @{ x = (Safe-Int $rect.X); y = (Safe-Int $rect.Y); width = (Safe-Int $rect.Width); height = (Safe-Int $rect.Height) }
     }
     $out.Add($item)
+    if (-not $ambiguous) { $seenIds[$stableId] = $item }
   }
   $windowKey = [string]$Hwnd.ToInt64()
   $script:windowBackgroundCapabilities[$windowKey] = $windowCapabilityMap
@@ -1873,11 +2030,11 @@ function Get-AccessibilityTree {
 function Find-ElementByIndex {
   param([IntPtr]$Hwnd, [int]$Index)
   Assert-Observation -Hwnd $Hwnd -Required
-  if ($script:cachedTreeHwnd -eq $Hwnd -and $null -ne $script:cachedElements -and $Index -ge 1 -and $Index -le $script:cachedElements.Count) {
-    $cached = $script:cachedElements[$Index - 1]
+  if ($script:cachedTreeHwnd -eq $Hwnd -and $null -ne $script:cachedElements -and $script:cachedElements.ContainsKey($Index)) {
+    $cached = $script:cachedElements[$Index]
     try {
       $null = $cached.Current.ProcessId
-      if ((Get-ElementIdentity $cached) -cne $script:cachedIdentities[$Index - 1]) {
+      if ((Get-ElementIdentity $cached) -cne $script:cachedIdentities[$Index]) {
         throw 'stale_snapshot: element identity or geometry changed; refresh get_app_state'
       }
       return $cached
@@ -1903,12 +2060,15 @@ function Assert-Observation {
     if ($Required) { throw 'snapshot_required: pass snapshot_id from the latest get_app_state' }
     return
   }
-  if (-not $script:observation -or $id -cne $script:observation.id -or
+  if (-not $script:observation -or [string]$script:observation.control_session_id -cne (Get-ControlSessionId) -or $id -cne $script:observation.id -or
       $Hwnd -ne $script:observation.hwnd -or
       ([DateTime]::UtcNow - $script:observation.created).TotalSeconds -gt 60) {
     throw 'stale_snapshot: snapshot expired, consumed, or belongs to another window; refresh get_app_state'
   }
   $r = [DshWin32]::GetDwmRect($Hwnd)
+  if ($script:observation.fingerprint -and (Get-WindowObservationFingerprint $Hwnd) -cne $script:observation.fingerprint) {
+    throw 'stale_snapshot: window identity or DPI changed; refresh get_app_state'
+  }
   $previous = $script:observation.rect
   if ($r.Left -ne $previous.Left -or $r.Top -ne $previous.Top -or
       $r.Right -ne $previous.Right -or $r.Bottom -ne $previous.Bottom) {
@@ -1919,15 +2079,22 @@ function Assert-Observation {
 function Assert-ScreenshotBinding {
   param([IntPtr]$Hwnd)
   $id = Get-PayloadValue 'screenshot_id'
-  if (-not $id) { return }
   $shot = $script:lastScreenshot
-  if (-not $shot -or $id -cne $shot.id -or ([DateTime]::UtcNow - $shot.created).TotalSeconds -gt 60) {
+  if (-not $id) {
+    if ($Hwnd -eq [IntPtr]::Zero -or -not $shot -or $shot.hwnd -ne $Hwnd) { return }
+    $id = $shot.id
+  }
+  if (-not $shot -or [string]$shot.control_session_id -cne (Get-ControlSessionId) -or $id -cne $shot.id -or ([DateTime]::UtcNow - $shot.created).TotalSeconds -gt 60) {
     throw 'stale_screenshot: screenshot_id expired, consumed, or was not produced by this host'
   }
   if ($Hwnd -ne [IntPtr]::Zero -and $shot.hwnd -ne [IntPtr]::Zero -and $Hwnd -ne $shot.hwnd) {
     throw 'stale_screenshot: screenshot_id belongs to another window'
   }
   if ($Hwnd -ne [IntPtr]::Zero -and $shot.hwnd -eq $Hwnd -and $shot.rect) {
+    if ($shot.fingerprint -and (Get-WindowObservationFingerprint $Hwnd) -cne $shot.fingerprint) {
+      throw 'stale_screenshot: window identity or DPI changed; refresh screenshot/state'
+    }
+    if ($shot.trusted -eq $false) { throw 'stale_screenshot: screenshot did not contain a trusted frame' }
     $r = [DshWin32]::GetDwmRect($Hwnd)
     if ($r.Left -ne $shot.rect.Left -or $r.Top -ne $shot.rect.Top -or $r.Right -ne $shot.rect.Right -or $r.Bottom -ne $shot.rect.Bottom) {
       throw 'stale_screenshot: target window moved or resized; refresh screenshot/state'
@@ -1978,9 +2145,9 @@ function Get-FocusedElementText {
     $index = 0
     if ($null -ne $script:cachedElements) {
       $focusedId = [string]($focused.GetRuntimeId() -join '.')
-      for ($i = 0; $i -lt $script:cachedElements.Count; $i++) {
+      foreach ($i in $script:cachedElements.Keys) {
         if ([string]($script:cachedElements[$i].GetRuntimeId() -join '.') -ceq $focusedId) {
-          $index = $i + 1
+          $index = [int]$i
           break
         }
       }
@@ -2813,7 +2980,10 @@ function Reset-WgcCaptureServer {
 }
 
 function Get-WgcCaptureServer {
-  $exe = Join-Path (Join-Path $env:TEMP 'win-pilot-wgc') 'win-pilot-wgc.exe'
+  # The child worker runs the packaged helper directly. Prefer its matching
+  # bridge instead of an older temp copy left by another plugin/runtime.
+  $packaged = Join-Path (Join-Path $PSScriptRoot 'wgc') 'win-pilot-wgc.exe'
+  $exe = if (Test-Path -LiteralPath $packaged -PathType Leaf) { $packaged } else { Join-Path (Join-Path $env:TEMP 'win-pilot-wgc') 'win-pilot-wgc.exe' }
   if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { return $null }
   if ($script:wgcServer) {
     try { if (-not $script:wgcServer.HasExited) { return $script:wgcServer } } catch { }
@@ -2874,9 +3044,10 @@ function Invoke-WgcCapture {
 }
 
 function Do-AppState {
-  param([string]$App, [int]$WindowIndex, [bool]$WithScreenshot, [bool]$WithText, [string]$Dispatch, [bool]$DisableDiffing = $false)
+  param([string]$App, [int]$WindowIndex, [bool]$WithScreenshot, [bool]$WithText, [string]$Dispatch, [bool]$DisableDiffing = $false, [bool]$TreeShownToModel = $true)
   $script:observation = $null
   $win = Resolve-TargetWindow -App $App -Index $WindowIndex
+  $fingerprint = Get-WindowObservationFingerprint $win.Hwnd
   # Observation never needs the foreground: WGC and PrintWindow both capture an
   # occluded window, and the UIA tree is read without activation. Forcing the
   # target forward here stole the user's focus for a pure read.
@@ -2995,6 +3166,9 @@ function Do-AppState {
   $accessibilityStatus = 'not_requested'
   $accessibilityRevision = $null
   $accessibilityDelta = $null
+  $accessibilityFormat = 'not_requested'
+  $accessibilityTree = ''
+  $accessibilityBaseRevision = $null
   $script:cachedTreeHwnd = [IntPtr]::Zero
   $script:cachedElements = $null
   $script:cachedIdentities = $null
@@ -3064,12 +3238,14 @@ function Do-AppState {
     if ($tree.Count -eq 0) { $accessibilityStatus = 'unavailable' }
     elseif ($tree.Count -le 2) { $accessibilityStatus = 'partial' }
     else { $accessibilityStatus = 'available' }
-    $deltaKey = ('{0}:{1}' -f [string]$win.Hwnd.ToInt64(), [string]$win.Pid)
-    # A caller asking for a complete tree still advances the revision, so the
-    # next diffing observation compares against this one rather than the stale
-    # predecessor. `delta` is nulled only in the returned payload.
-    $accessibilityDelta = Get-AccessibilityDelta -Key $deltaKey -Tree $tree
+    $deltaKey = Get-SessionObservationKey ('{0}:{1}' -f [string]$win.Hwnd.ToInt64(), $fingerprint)
+    # Only a tree delivered to the model becomes the next incremental baseline.
+    # Readiness probes and internal preconditions must not hide pending changes.
+    $accessibilityDelta = Get-AccessibilityDelta -Key $deltaKey -Tree $tree -ShownToModel $TreeShownToModel -DisableDiffing $DisableDiffing
     $accessibilityRevision = $accessibilityDelta.revision
+    $accessibilityBaseRevision = $accessibilityDelta.base_revision
+    $accessibilityFormat = $accessibilityDelta.format
+    $accessibilityTree = Format-AccessibilityTree -Tree $tree -Delta $accessibilityDelta
     if ($DisableDiffing) { $accessibilityDelta = $null }
     $docText = if ($isCommonDialog) {
       [string](($tree | ForEach-Object { @($_.name, $_.value) } | Where-Object { $_ }) -join "`n")
@@ -3078,14 +3254,24 @@ function Do-AppState {
     $selectedText = if ($isCommonDialog) { '' } else { Get-SelectedText $win.Hwnd }
     $selectedElements = @($tree | Where-Object { $_.selected } | ForEach-Object { "[$($_.index)] $($_.role): $($_.name)" })
   }
-  $script:observation = @{ id = [guid]::NewGuid().ToString('N'); hwnd = $win.Hwnd; rect = $win.Rect; created = [DateTime]::UtcNow }
+  if ((Get-WindowObservationFingerprint $win.Hwnd) -cne $fingerprint) {
+    if ($deltaKey) { $script:accessibilityHistory.Remove($deltaKey) }
+    throw 'stale_snapshot: window identity or DPI changed during observation; refresh get_app_state'
+  }
+  $liveRect = [DshWin32]::GetDwmRect($win.Hwnd)
+  if ($liveRect.Left -ne $win.Rect.Left -or $liveRect.Top -ne $win.Rect.Top -or
+      $liveRect.Right -ne $win.Rect.Right -or $liveRect.Bottom -ne $win.Rect.Bottom) {
+    if ($deltaKey) { $script:accessibilityHistory.Remove($deltaKey) }
+    throw 'stale_snapshot: window moved or resized during observation; refresh get_app_state'
+  }
+  $script:observation = @{ id = [guid]::NewGuid().ToString('N'); control_session_id = (Get-ControlSessionId); hwnd = $win.Hwnd; rect = $win.Rect; fingerprint = $fingerprint; created = [DateTime]::UtcNow; tree_shown_to_model = ($WithText -and $TreeShownToModel) }
   $script:lastScreenshot = $null
   if ($shot) {
     $shot.id = $script:observation.id
     $shot.coordinate_space = 'window'
     $shot.viewport = @{ coordinate_space = 'window'; x = 0; y = 0; width = $w; height = $h; screen_x = $win.Rect.Left; screen_y = $win.Rect.Top; scale = 1 }
     $shot.trusted = (-not $shot.error)
-    if ($shot.path) { $script:lastScreenshot = @{ id = $shot.id; hwnd = $win.Hwnd; rect = $win.Rect; created = $script:observation.created } }
+    if ($shot.path) { $script:lastScreenshot = @{ id = $shot.id; control_session_id = (Get-ControlSessionId); hwnd = $win.Hwnd; rect = $win.Rect; fingerprint = $fingerprint; width = $shot.width; height = $shot.height; trusted = $shot.trusted; created = $script:observation.created } }
   }
   return @{
     snapshot_id = $script:observation.id
@@ -3098,6 +3284,10 @@ function Do-AppState {
     accessibility_status = $accessibilityStatus
     accessibility_revision = $accessibilityRevision
     accessibility_delta = $accessibilityDelta
+    accessibility_format = $accessibilityFormat
+    accessibility_tree = $accessibilityTree
+    accessibility_base_revision = $accessibilityBaseRevision
+    tree_shown_to_model = ($WithText -and $TreeShownToModel)
     document_text = if ($docText) { $docText } else { '' }
     focused_element = if ($focusedElement) { $focusedElement } else { '' }
     selected_text = if ($selectedText) { $selectedText } else { '' }
@@ -3333,6 +3523,174 @@ function Invoke-BackgroundRangeScroll {
   }
 }
 
+function New-HtmlClipboardFormat {
+  param([string]$Fragment)
+  # CF_HTML offsets count UTF-8 bytes, not UTF-16 characters (including CJK/emoji).
+  $prefix = '<html><body><!--StartFragment-->'
+  $suffix = '<!--EndFragment--></body></html>'
+  $template = "Version:1.0`r`nStartHTML:{0:D10}`r`nEndHTML:{1:D10}`r`nStartFragment:{2:D10}`r`nEndFragment:{3:D10}`r`n"
+  $headerSize = [System.Text.Encoding]::UTF8.GetByteCount(($template -f 0,0,0,0))
+  $startFragment = $headerSize + [System.Text.Encoding]::UTF8.GetByteCount($prefix)
+  $endFragment = $startFragment + [System.Text.Encoding]::UTF8.GetByteCount($Fragment)
+  $endHtml = $endFragment + [System.Text.Encoding]::UTF8.GetByteCount($suffix)
+  return (($template -f $headerSize,$endHtml,$startFragment,$endFragment) + $prefix + $Fragment + $suffix)
+}
+
+function Convert-MarkdownInline {
+  param([string]$Text)
+  $escaped = [System.Net.WebUtility]::HtmlEncode($Text)
+  # Protect code spans before interpreting the deliberately limited inline syntax.
+  $codes = New-Object System.Collections.Generic.List[string]
+  $escaped = [regex]::Replace($escaped, '`([^`]+)`', [System.Text.RegularExpressions.MatchEvaluator]{
+    param($m) $codes.Add('<code>' + $m.Groups[1].Value + '</code>'); return ('&#1;{0}&#2;' -f ($codes.Count - 1))
+  })
+  $escaped = [regex]::Replace($escaped, '\[([^\]]+)\]\((https?://[^\s)]+|mailto:[^\s)]+)\)', '<a href="$2">$1</a>')
+  $escaped = [regex]::Replace($escaped, '\*\*([^*]+)\*\*', '<strong>$1</strong>')
+  $escaped = [regex]::Replace($escaped, '(?<!\*)\*([^*]+)\*(?!\*)', '<em>$1</em>')
+  return [regex]::Replace($escaped, '&#1;(\d+)&#2;', [System.Text.RegularExpressions.MatchEvaluator]{ param($m) return $codes[[int]$m.Groups[1].Value] })
+}
+
+function Convert-MarkdownFragment {
+  param([string]$Text)
+  # Headings, paragraphs, lists, quotations, fenced code and inline emphasis/code/links.
+  # Raw HTML is escaped. This is a small documented subset, not a CommonMark parser.
+  $lines = New-Object System.Collections.Generic.List[string]
+  $list = ''; $fence = $false; $code = New-Object System.Collections.Generic.List[string]
+  foreach ($line in ($Text -split "`r?`n")) {
+    if ($line -match '^\s*```') {
+      if ($list) { $lines.Add("</$list>"); $list = '' }
+      if ($fence) { $lines.Add('<pre><code>' + [System.Net.WebUtility]::HtmlEncode(($code -join "`n")) + '</code></pre>'); $code.Clear() }
+      $fence = -not $fence
+      continue
+    }
+    if ($fence) { $code.Add($line); continue }
+    $kind = if ($line -match '^\s*[-+*]\s+(.+)$') { 'ul' } elseif ($line -match '^\s*\d+[.)]\s+(.+)$') { 'ol' } else { '' }
+    if ($list -and $list -ne $kind) { $lines.Add("</$list>"); $list = '' }
+    if ($kind) {
+      $itemText = $Matches[1]
+      if (-not $list) { $list = $kind; $lines.Add("<$list>") }
+      $lines.Add('<li>' + (Convert-MarkdownInline $itemText) + '</li>')
+    } elseif ($line -match '^(#{1,6})\s+(.+)$') {
+      $level = $Matches[1].Length
+      $lines.Add("<h$level>" + (Convert-MarkdownInline $Matches[2]) + "</h$level>")
+    } elseif ($line -match '^>\s?(.*)$') {
+      $lines.Add('<blockquote>' + (Convert-MarkdownInline $Matches[1]) + '</blockquote>')
+    } elseif (-not [string]::IsNullOrWhiteSpace($line)) {
+      $lines.Add('<p>' + (Convert-MarkdownInline $line) + '</p>')
+    }
+  }
+  if ($list) { $lines.Add("</$list>") }
+  if ($fence) { $lines.Add('<pre><code>' + [System.Net.WebUtility]::HtmlEncode(($code -join "`n")) + '</code></pre>') }
+  return ($lines -join "`n")
+}
+
+function New-PasteClipboardContent {
+  param([string]$Text, [string]$Format = 'text')
+  $Format = $Format.ToLowerInvariant()
+  if ($Format -eq 'markdown') { $Format = 'md' }
+  if ($Format -notin @('text','html','md')) { throw 'invalid_paste_format: expected text, html or md' }
+  $fragment = if ($Format -eq 'html') { $Text } elseif ($Format -eq 'md') { Convert-MarkdownFragment $Text } else { $null }
+  $plain = if ($null -ne $fragment) {
+    $stripped = [regex]::Replace($fragment, '(?is)<(script|style)\b[^>]*>.*?</\1>', '')
+    $stripped = [regex]::Replace($stripped, '(?i)<br\s*/?>|</(?:p|h[1-6]|li|blockquote|pre)>', "`n")
+    [System.Net.WebUtility]::HtmlDecode(([regex]::Replace($stripped, '<[^>]*>', ''))).TrimEnd()
+  } else { $Text }
+  return @{ format = $Format; text = $plain; html = if ($null -ne $fragment) { New-HtmlClipboardFormat $fragment } else { $null } }
+}
+
+function Copy-PasteClipboardDataObject {
+  param($Source)
+  $copy = New-Object System.Windows.Forms.DataObject
+  if ($Source) {
+    foreach ($format in $Source.GetFormats($false)) {
+      $value = $Source.GetData($format, $false)
+      if ($null -eq $value) { throw "clipboard_unavailable: unable to preserve format $format" }
+      if ($value -is [System.IO.MemoryStream]) { $value = New-Object System.IO.MemoryStream(,$value.ToArray()) }
+      elseif ($value -is [System.Drawing.Image]) { $value = $value.Clone() }
+      $copy.SetData($format, $false, $value)
+    }
+  }
+  return ,$copy
+}
+
+function Invoke-PasteClipboardOperation {
+  param([string]$Operation, $Argument)
+  if (-not ('WinPilotClipboardNative' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class WinPilotClipboardNative {
+ [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
+}
+'@
+  }
+  $body = {
+    param($Operation, $Argument)
+    $ErrorActionPreference = 'Stop'
+    Add-Type -AssemblyName System.Windows.Forms
+    $marker = 'WinPilot.Paste.Owner'
+    switch ($Operation) {
+      'capture' {
+        $sequence = [WinPilotClipboardNative]::GetClipboardSequenceNumber()
+        $source = [System.Windows.Forms.Clipboard]::GetDataObject()
+        $copy = Copy-PasteClipboardDataObject $source
+        if ($sequence -ne [WinPilotClipboardNative]::GetClipboardSequenceNumber()) { throw 'clipboard_changed: clipboard changed while preserving its formats' }
+        return @{ data = $copy; sequence = $sequence }
+      }
+      'write' {
+        # A copy between capture and write belongs to the user; leave it intact.
+        if ($Argument.previous.sequence -ne [WinPilotClipboardNative]::GetClipboardSequenceNumber()) { throw 'clipboard_changed: user clipboard changed before paste' }
+        $data = New-Object System.Windows.Forms.DataObject
+        $data.SetData([System.Windows.Forms.DataFormats]::UnicodeText, $false, [string]$Argument.content.text)
+        if ($null -ne $Argument.content.html) {
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($Argument.content.html + [char]0)
+          $data.SetData([System.Windows.Forms.DataFormats]::Html, $false, (New-Object System.IO.MemoryStream(,$bytes)))
+        }
+        $token = [guid]::NewGuid().ToString('N')
+        $data.SetData($marker, $false, $token)
+        [System.Windows.Forms.Clipboard]::SetDataObject($data, $true)
+        return @{ token = $token; sequence = [WinPilotClipboardNative]::GetClipboardSequenceNumber() }
+      }
+      'restore' {
+        if ($Argument.owner.sequence -ne [WinPilotClipboardNative]::GetClipboardSequenceNumber()) { return $false }
+        $current = [System.Windows.Forms.Clipboard]::GetDataObject()
+        if (-not $current -or [string]$current.GetData($marker, $false) -cne $Argument.owner.token) { return $false }
+        if ($Argument.owner.sequence -ne [WinPilotClipboardNative]::GetClipboardSequenceNumber()) { return $false }
+        [System.Windows.Forms.Clipboard]::SetDataObject($Argument.previous.data, $true)
+        return $true
+      }
+    }
+  }
+  if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -eq [System.Threading.ApartmentState]::STA) { return (& $body $Operation $Argument) }
+  $rs = $null; $ps = $null
+  try {
+    $rs = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+    $rs.ApartmentState = 'STA'; $rs.ThreadOptions = 'ReuseThread'; $rs.Open()
+    $ps = [System.Management.Automation.PowerShell]::Create(); $ps.Runspace = $rs
+    $copyDefinition = 'function Copy-PasteClipboardDataObject {' + (Get-Command Copy-PasteClipboardDataObject).Definition + '}'
+    $nativeScript = 'param($Operation,$Argument)' + "`n" + $copyDefinition + "`n& {" + $body.ToString() + "`n" + '} $Operation $Argument'
+    $null = $ps.AddScript($nativeScript).AddArgument($Operation).AddArgument($Argument)
+    $output = $ps.Invoke()
+    if ($ps.HadErrors) { throw $ps.Streams.Error[0] }
+    return $output[0]
+  } finally { if ($ps) { $ps.Dispose() }; if ($rs) { $rs.Dispose() } }
+}
+
+function Invoke-PasteClipboardTransaction {
+  param($Content, [scriptblock]$Send, $Result, [scriptblock]$Provider = { param($operation,$argument) Invoke-PasteClipboardOperation $operation $argument })
+  $previous = & $Provider 'capture' $null
+  $owner = $null
+  $Result.clipboard_restored = $false
+  try {
+    $owner = & $Provider 'write' @{ previous = $previous; content = $Content }
+    & $Send
+  } finally {
+    if ($owner) {
+      try { $Result.clipboard_restored = [bool](& $Provider 'restore' @{ previous = $previous; owner = $owner }) }
+      catch { $Result.clipboard_restore_error = $_.Exception.Message }
+    }
+  }
+}
+
 function Get-ClipboardTextSafe {
   if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -eq [System.Threading.ApartmentState]::STA) {
     for ($i = 0; $i -lt 10; $i++) {
@@ -3473,6 +3831,9 @@ function Invoke-MouseButtonAction {
     $sy = [int]$cur.Y
   }
 
+  if ($IsDown -or (Get-PayloadValue 'screenshot_id')) {
+    Assert-ScreenshotBinding -Hwnd $(if ($win) { $win.Hwnd } else { [IntPtr]::Zero })
+  }
   Notify-Cursor -X $sx -Y $sy -Label ($Action + ' ' + $button)
 
   if ($dispatch -eq 'background') {
@@ -3552,6 +3913,7 @@ function Invoke-MouseButtonAction {
 function Invoke-ActionRequest {
   param([string]$Action, $Payload)
   $script:payload = $Payload
+  Set-ObservationSession
   $result = @{ ok = $true; action = $Action; message = '' }
   $script:autoChosenHwnd = $null
   $prevUserFg = [DshWin32]::GetForegroundWindow()
@@ -3578,6 +3940,10 @@ function Invoke-ActionRequest {
   }
 
   try {
+    if (('WinPilotInputMonitor' -as [type]) -and [WinPilotInputMonitor].GetMethod('ConfigureCancellation')) {
+      [WinPilotInputMonitor]::ConfigureCancellation([string](Get-PayloadValue 'cancellation_path'))
+      if ($Action -ne 'stop') { [WinPilotInputMonitor]::Check() }
+    }
     if ($guardedInput) {
       [WinPilotInputMonitor]::BeginAction()
       $guardStarted = $true
@@ -3587,6 +3953,16 @@ function Invoke-ActionRequest {
       catch { $result.input_monitor_available = $false }
     }
     switch ($Action) {
+    'stop' {
+      try { Release-OwnedBackgroundButtons }
+      finally { [DshWin32]::ReleaseOwnedInput() }
+      $script:accessibilityHistory = @{}
+      $script:elementIndexHistory = @{}
+      $result.stopped = $true
+      $result.verified = $true
+      $result.method = 'release_owned_input'
+      $result.message = 'Stopped; released only Win-Pilot owned input and invalidated observations'
+    }
     'list_apps' {
       $wins = @(Get-CandidateWindows -App '')
       $byPid = @{}
@@ -3639,7 +4015,9 @@ function Invoke-ActionRequest {
       # instead of a delta against the previous observation.
       $disableDiffing = Get-PayloadValue 'disable_diffing'
       if ($null -eq $disableDiffing) { $disableDiffing = $false }
-      $st = Do-AppState -App $app -WindowIndex $idx -WithScreenshot ([bool]$shot) -WithText ([bool]$withText) -Dispatch (Get-Dispatch) -DisableDiffing ([bool]$disableDiffing)
+      $treeShown = Get-PayloadValue 'tree_shown_to_model'
+      if ($null -eq $treeShown) { $treeShown = $true }
+      $st = Do-AppState -App $app -WindowIndex $idx -WithScreenshot ([bool]$shot) -WithText ([bool]$withText) -Dispatch (Get-Dispatch) -DisableDiffing ([bool]$disableDiffing) -TreeShownToModel ([bool]$treeShown)
       $result.window = $st.window
       $result.snapshot_id = $st.snapshot_id
       $result.screenshot_id = $st.screenshot_id
@@ -3650,18 +4028,16 @@ function Invoke-ActionRequest {
       $result.accessibility_status = $st.accessibility_status
       $result.accessibility_revision = $st.accessibility_revision
       $result.accessibility_delta = $st.accessibility_delta
+      $result.accessibility_format = $st.accessibility_format
+      $result.accessibility_base_revision = $st.accessibility_base_revision
+      $result.tree_shown_to_model = $st.tree_shown_to_model
       $result.document_text = $st.document_text
       $result.note = $st.note
       $result.accessibility = if ([bool]$withText) {
         # Match the native Computer Use presentation: a compact, copyable tree
         # for model reasoning while retaining the richer `elements` array for
         # DSH callers that need structured fields.
-        $treeLines = @($st.elements | ForEach-Object {
-          $line = "[$($_.index)] $($_.role): $($_.name)"
-          if ($_.value) { $line += " = $($_.value)" }
-          $line
-        })
-        @{ status = $st.accessibility_status; revision = $st.accessibility_revision; delta = $st.accessibility_delta; tree = ($treeLines -join "`n"); document_text = $st.document_text; focused_element = $st.focused_element; selected_text = $st.selected_text; selected_elements = $st.selected_elements }
+        @{ status = $st.accessibility_status; format = $st.accessibility_format; tree_shown_to_model = $st.tree_shown_to_model; base_revision = $st.accessibility_base_revision; revision = $st.accessibility_revision; delta = $st.accessibility_delta; tree = $st.accessibility_tree; document_text = $st.document_text; focused_element = $st.focused_element; selected_text = $st.selected_text; selected_elements = $st.selected_elements }
       } else { $null }
       $result.dispatch = (Get-Dispatch)
       $result.message = "State captured for '$app' ($($st.element_count) elements)"
@@ -4253,6 +4629,9 @@ function Invoke-ActionRequest {
       $text = Get-PayloadValue 'text'
       if ($null -eq $text) { throw 'paste requires text' }
       $text = [string]$text
+      $format = [string](Get-PayloadValue 'format')
+      if (-not $format) { $format = 'text' }
+      $content = New-PasteClipboardContent -Text $text -Format $format
       $dispatch = Get-Dispatch
       $win = $null
       if ($app -or (Get-PayloadValue 'hwnd')) {
@@ -4264,16 +4643,9 @@ function Invoke-ActionRequest {
       } elseif ($null -eq $win) {
         throw 'target_required: background paste requires app or hwnd; global SendInput requires dispatch=foreground'
       }
-      $previous = $null
-      $hadPrevious = $false
-      try {
-        $previous = Get-ClipboardTextSafe
-        $hadPrevious = $true
-      } catch { $hadPrevious = $false }
-      $result.clipboard_restored = $false
-      try {
+      [WinPilotInputMonitor]::Check()
+      Invoke-PasteClipboardTransaction -Content $content -Result $result -Send {
         [WinPilotInputMonitor]::Check()
-        Set-ClipboardTextSafe -Text $text
         $h = Find-TextInputHwnd $win.Hwnd
         if ($h -eq [IntPtr]::Zero) { $h = $win.Hwnd }
         if ($dispatch -eq 'foreground') {
@@ -4281,21 +4653,12 @@ function Invoke-ActionRequest {
         } else {
           Send-BackgroundKey -Hwnd $h -Key 'v' -Modifiers 'ctrl'
         }
-      } finally {
-        if ($hadPrevious) {
-          try {
-            # Do not overwrite clipboard content the user copied during input.
-            if ((Get-ClipboardTextSafe) -ceq $text) {
-              Set-ClipboardTextSafe -Text $previous
-              $result.clipboard_restored = $true
-            }
-          } catch { }
-        }
       }
       $result.length = $text.Length
+      $result.format = $content.format
       $result.method = if ($dispatch -eq 'foreground') { 'sendinput_paste' } else { 'wm_key_paste' }
       $result.message = "Pasted $($text.Length) char(s) via Ctrl+V"
-      if ($result.clipboard_restored) { $result.message += '; previous clipboard text restored' }
+      if ($result.clipboard_restored) { $result.message += '; previous clipboard formats restored' }
     }
 
     'list_displays' {
@@ -4324,6 +4687,11 @@ function Invoke-ActionRequest {
       }
       $result.display_count = $screens.Length
       $result.displays = $displays
+      $desktopStatus = [DshWin32]::ReadInputDesktopStatus()
+      $result.input_desktop_ready = [bool]$desktopStatus[0]
+      if ([bool](Get-PayloadValue 'diagnostic_desktop')) {
+        $result.desktop_status = @{ ready = [bool]$desktopStatus[0]; window_station = [string]$desktopStatus[1]; thread_desktop = [string]$desktopStatus[2]; input_desktop = [string]$desktopStatus[3]; windows_error = [int]$desktopStatus[4] }
+      }
       $result.message = "Found $($screens.Length) display(s)"
     }
 
@@ -4976,7 +5344,7 @@ function Invoke-ActionRequest {
        $result.rect = @{ x = $ix; y = $iy; width = $iw; height = $ih }
        $result.display = $disp
        $result.viewport = @{ coordinate_space = 'screen'; display = $disp; x = $ix; y = $iy; width = $iw; height = $ih; scale = 1 }
-       $script:lastScreenshot = @{ id = $result.screenshot_id; hwnd = [IntPtr]::Zero; rect = $null; created = [DateTime]::UtcNow }
+       $script:lastScreenshot = @{ id = $result.screenshot_id; control_session_id = (Get-ControlSessionId); hwnd = [IntPtr]::Zero; rect = $null; created = [DateTime]::UtcNow }
        $result.message = "Screenshot of display $disp captured ($iw x $ih) at screen ($ix, $iy)"
     }
 
@@ -5263,7 +5631,7 @@ function Invoke-ActionRequest {
       throw "unknown action: $Action"
     }
   }
-  if ($guardStarted) { [WinPilotInputMonitor]::Check() }
+  if ($guardStarted -or (('WinPilotInputMonitor' -as [type]) -and [WinPilotInputMonitor].GetMethod('ConfigureCancellation'))) { [WinPilotInputMonitor]::Check() }
   if ($null -ne $observationTicket) {
     $result.input_monitor_available = $true
     $result.needs_observation = -not [WinPilotInputMonitor]::AcceptObservation($observationTicket)
@@ -5272,7 +5640,7 @@ function Invoke-ActionRequest {
 catch {
   $result.ok = $false
   $result.message = "$($_.Exception.Message)"
-  if ($result.message -match '(user_input_interrupted|observation_required|input_monitor_unavailable):') {
+  if ($result.message -match '(user_input_interrupted|observation_required|input_monitor_unavailable|operation_cancelled):') {
     $result.error_code = $Matches[1]
     $result.action_sent = [WinPilotInputMonitor]::HasDispatched
     $result.needs_observation = $true
@@ -5280,21 +5648,24 @@ catch {
   }
 }
 finally {
+  if (('WinPilotInputMonitor' -as [type]) -and [WinPilotInputMonitor].GetMethod('ClearCancellation')) { [WinPilotInputMonitor]::ClearCancellation() }
   if ($guardedInput) {
     try {
       if (-not $result.ok) {
         try { Release-OwnedBackgroundButtons } catch { $result.cleanup_error = $_.Exception.Message }
-        [DshWin32]::ReleaseOwnedInput()
+        try { [DshWin32]::ReleaseOwnedInput() } catch { $result.cleanup_error = $_.Exception.Message }
       }
     } finally { [WinPilotInputMonitor]::EndAction() }
   }
   # A state-derived input is single-use, including a failed/uncertain attempt.
   # A helper restart also discards the cache: never remap an old index by rescanning.
-  if ($Action -notin @('get_window_state', 'get_window', 'list_apps', 'list_windows', 'list_displays', 'screenshot', 'zoom', 'cursor_position', 'read_clipboard', 'wait')) {
+  if ($Action -notin @('get_window_state', 'get_window', 'list_apps', 'list_windows', 'list_displays', 'screenshot', 'zoom', 'cursor_position', 'read_clipboard', 'wait') -or
+      ($Action -eq 'get_window_state' -and -not $result.ok)) {
     $script:observation = $null
     $script:lastScreenshot = $null
     $script:cachedElements = $null
     $script:cachedIdentities = $null
+    if ($Action -eq 'get_window_state') { $script:accessibilityHistory = @{} }
   }
   # Focus policy. A background action can still move the foreground (some apps
   # activate themselves on UIA Invoke, and a non-packaged launch takes focus).
@@ -5350,13 +5721,13 @@ finally {
     $result.needs_observation = -not [bool]$result.verified
   } elseif (-not $result.ok) {
     $result.outcome = 'unknown'
-    if ($result.error_code -in @('user_input_interrupted', 'observation_required', 'input_monitor_unavailable')) {
+    if ($result.error_code -in @('user_input_interrupted', 'observation_required', 'input_monitor_unavailable', 'operation_cancelled')) {
       if (-not $result.action_sent) { $result.outcome = 'not_executed' }
     } elseif ($result.error_code -eq 'wait_condition_timeout') {
       # This is an observed, bounded read-only condition failure, not an
       # ambiguous transport or input outcome. Preserve its retry-safe meaning.
       $result.outcome = 'not_executed'
-    } elseif ($result.message -match '^(snapshot_required|stale_snapshot|stale_screenshot|target_required|target_mismatch|ambiguous_window|app_not_found|window_not_found|element_not_found|background_unavailable|target_read_only|foreground_activation_unconfirmed):') {
+    } elseif ($result.message -match '^(snapshot_required|stale_snapshot|stale_screenshot|target_required|target_mismatch|ambiguous_window|app_not_found|window_not_found|element_not_found|background_unavailable|target_read_only|foreground_activation_unconfirmed|invalid_paste_format|clipboard_unavailable|clipboard_changed):') {
       $result.error_code = $Matches[1]
       $result.outcome = 'not_executed'
     }
@@ -5382,7 +5753,7 @@ if ($Server) {
   # was proven to never run the idle check (judge: helper alive at 330s), so
   # idle lifecycle is owned by the node side instead. Exit on
   # EOF (stdin closed by node) or process kill.
-  while ($true) {
+  try { while ($true) {
     $line = $null
     try { $line = [WinPilotDeadline]::ReadUtf8Line() } catch { break }
     if ($null -eq $line) { break }   # stdin closed -> exit cleanly
@@ -5402,6 +5773,10 @@ if ($Server) {
     # here we only drop stray pipeline output (last object is the real reply)
     if ($reply -is [System.Array] -and $reply.Count -gt 0) { $reply = $reply[$reply.Count - 1] }
     Write-DaemonReply -Id $reqId -Reply $reply
+  } } finally {
+    try { Release-OwnedBackgroundButtons } catch { }
+    try { [DshWin32]::ReleaseOwnedInput() } catch { }
+    try { [WinPilotInputMonitor]::Stop() } catch { }
   }
   [Console]::Out.Flush()
   exit 0
