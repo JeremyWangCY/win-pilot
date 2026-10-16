@@ -162,7 +162,6 @@ sealed class DesktopWindow : Form
     readonly string pipeName, configPath, helperPath;
     readonly Panel canvas=new(){Dock=DockStyle.Fill,BackColor=Color.FromArgb(247,248,250)};
     readonly Label notice=new(){Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleCenter,ForeColor=Color.FromArgb(102,112,133),Font=new Font("Microsoft YaHei UI",13)};
-    readonly Label status=new(){AutoSize=false,AutoEllipsis=true,Dock=DockStyle.Bottom,Height=23,ForeColor=Color.FromArgb(107,114,128),Padding=new Padding(9,3,0,0)};
     readonly Label badge=new(){AutoSize=false,Dock=DockStyle.Fill,ForeColor=Color.FromArgb(26,127,90),Padding=new Padding(9,6,0,0)};
     readonly CancellationTokenSource lifetime=new();
     readonly CancellationTokenSource startupCancellation=new();
@@ -253,7 +252,7 @@ sealed class DesktopWindow : Form
         }
         Paint+=(_,e)=>{using var border=new Pen(Color.FromArgb(229,231,235));e.Graphics.DrawRectangle(border,0,0,Width-1,Height-1);};
         Deactivate+=(_,_)=>view?.ReleaseUserInputTracking();
-        notice.Font=new Font(Font.FontFamily,10);status.Font=new Font(Font.FontFamily,8);
+        notice.Font=new Font(Font.FontFamily,10);
         notice.Text=previewOnly?"任务画面":"等待连接…";
         Shown+=(_,_)=>{ UpdateState(); if(Program.Stdio)_=Task.Run(ReadCommands); };
         timer.Tick+=(_,_)=>Poll();timer.Start();
@@ -294,7 +293,6 @@ sealed class DesktopWindow : Form
     {
         badge.Text=state switch{"ready"=>paused?"● 已暂停":"● 运行就绪","login_settings"=>"● 首次登录设置","awaiting_windows_login"=>"● 请登录 Windows","connecting"=>"● 正在连接","takeover"=>"● 人工接管","needs_preparation"=>"● 需要准备","error"=>"● 连接失败",_=>"● 待连接"};
         if(previewOnly)badge.Text="○ 窗口预览";
-        status.Text=previewOnly?"窗口预览 · 未连接 Windows 会话 · 未启动操控工具":takeover&&!workerReady.Task.IsCompletedSuccessfully?loginCompleted.Task.IsCompletedSuccessfully?"人工接管中；任务工具尚未就绪，可重试或结束。":"请直接在此窗口完成 Windows 登录；登录后会自动连接任务工具。":connected&&!workerAuthenticated&&!loginCompleted.Task.IsCompletedSuccessfully?"正在登录 Windows；若出现登录提示，点击「我来接管」在此窗口完成。":lastError.Length>0?lastError:connected?"独立会话 "+childSession+"  ·  主桌面保持独立  ·  暂停后可接管":"本机独立任务桌面 · 实验性";
         loginSettings.Enabled=!previewOnly&&!opening;
         if(view!=null)view.AllowUserInput=expanded&&(takeover||(connected&&!loginCompleted.Task.IsCompletedSuccessfully&&!workerAuthenticated));
         Program.Emit(new{ @event="state",state=Snapshot()});
