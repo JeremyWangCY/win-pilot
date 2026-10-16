@@ -399,7 +399,7 @@ sealed class DesktopWindow : Form
             if(childMode is not bool configuredChild||!configuredChild)throw new InvalidOperationException("RDP 控件没有启用子会话连接，已拒绝普通远程连接。");
             RdpCredentials.ConfigureChildSession(view.Client,windowsLoginRequested);
             if(credential!=null){RdpCredentials.ApplyLogin(view.Client,credential);credential.Dispose();}
-            dynamic advanced=client.AdvancedSettings9; advanced.SmartSizing=true;advanced.EnableCredSspSupport=true;advanced.RedirectClipboard=false;advanced.RedirectDrives=false;advanced.allowBackgroundInput=1;
+            dynamic advanced=client.AdvancedSettings9; advanced.SmartSizing=true;advanced.EnableCredSspSupport=true;advanced.RedirectClipboard=false;advanced.RedirectDrives=false;advanced.allowBackgroundInput=0;
             // Let Windows finish the child logon normally. The authenticated
             // worker starts separately through RunEx after logon, not as a shell.
             client.SecuredSettings2.KeyboardHookMode=1;
