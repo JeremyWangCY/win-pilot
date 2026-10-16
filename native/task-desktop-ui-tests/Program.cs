@@ -47,6 +47,9 @@ class LayoutTest
                 if(finishedArgs.Cancel)throw new Exception("Confirmed cleanup cannot close its window");
                 closing.SetValue(form,false);complete.SetValue(form,false);
                 if(form.ClientSize.Width>480||form.ClientSize.Height>380)throw new Exception("Default preview is not compact");
+                var pin=form.Controls.Find("task-window-pin",true).OfType<Button>().Single();pin.PerformClick();
+                if(form.TopMost)throw new Exception("Pin button did not disable topmost");pin.PerformClick();
+                if(!form.TopMost)throw new Exception("Pin button did not restore topmost");
                 var compact=form.Size;Capture("compact");
                 var expand=form.Controls.Find("task-window-size",true).OfType<Button>().Single();expand.PerformClick();
                 form.Location=new(-15000,-15000);if(form.Width<=compact.Width)throw new Exception("Expand did not enlarge preview");Capture("expanded");
