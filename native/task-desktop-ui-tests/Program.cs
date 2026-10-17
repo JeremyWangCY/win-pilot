@@ -268,6 +268,9 @@ static class ManualInputChecks
             Set(form,"childSession",77u);Set(form,"liveSnapshot",new HashSet<uint>(){77u});
             workerWriter.AfterWrite=line=>{if(JsonNode.Parse(line)?["command"]?.ToString()=="resume")Set(form,"connected",false);};
             Set(form,"lastManualInput",Environment.TickCount64-11000);requestCount=Requests().Length;Call(form,"Poll");
+            // SendWorker can yield in WriteLineAsync after registering pending.
+            // Wait for the actual wire write, just as for the newer Pause below.
+            PumpUntil(()=>Requests().Length>requestCount,"Idle Resume was not written to the memory worker");
             Require(Requests().Length==requestCount+1&&Requests()[^1]["command"]!.ToString()=="resume","Idle must dispatch exactly one memory-worker Resume");
             Require(!(bool)Get(view,"AllowUserInput")!,"Resume must gate user input before its ACK");
             if(forceSlowTest){PumpFor(600);RequireBackgroundTimersFrozen(form);}
