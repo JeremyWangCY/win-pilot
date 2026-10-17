@@ -136,15 +136,22 @@ assert.ok(
 // window with a non-empty accessibility tree.
 let stateRes = null
 let fixturePid = 0
+let fixtureObservation = null
 try {
   const fixturePath = path.join(__dirname, 'fixtures', 'native-window.ps1')
   const launched = await tool.execute({ action: 'launch_app', name: `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${fixturePath}"` })
   fixturePid = Number.isSafeInteger(launched.pid) ? launched.pid : 0
-  for (let attempt = 0; attempt < 20; attempt++) {
+  assert.ok(fixturePid > 0, `owned fixture launch must return a PID: ${JSON.stringify(launched)}`)
+  // PowerShell loads WinForms and compiles the fixture before exposing a HWND.
+  // Bound readiness by time rather than one second of fast polling on cold CI.
+  const fixtureDeadline = Date.now() + 15000
+  while (Date.now() < fixtureDeadline) {
     const windows = await tool.execute({ action: 'list_windows', app: String(fixturePid) })
+    fixtureObservation = windows
     const fixture = windows.windows?.find((window) => window.title === 'Win-Pilot native test fixture')
     if (fixture) {
       const candidate = await tool.execute({ action: 'get_window_state', app: String(fixturePid), hwnd: fixture.hwnd, screenshot: true, include_text: true, dispatch: 'foreground' })
+      fixtureObservation = candidate
       if (candidate.ok && candidate.elements?.length > 0 && candidate.screenshot?.path) {
         stateRes = candidate
         break
@@ -157,7 +164,7 @@ try {
     try { execFileSync('taskkill', ['/PID', String(fixturePid), '/T', '/F'], { windowsHide: true, timeout: 10000, stdio: 'ignore' }) } catch { /* fixture already exited */ }
   }
 }
-assert.ok(stateRes, 'get_window_state must yield a non-empty element tree with a captured screenshot for the owned native fixture')
+assert.ok(stateRes, `get_window_state must yield a non-empty element tree with a captured screenshot for the owned native fixture: ${JSON.stringify(fixtureObservation)}`)
 assert.ok(stateRes.screenshot, 'get_window_state must return a screenshot object')
 assert.ok(typeof stateRes.screenshot.path === 'string' && stateRes.screenshot.path.length > 0,
   `screenshot must have a path: ${JSON.stringify(stateRes.screenshot)}`)
