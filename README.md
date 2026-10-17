@@ -4,7 +4,7 @@ English | [中文](./README.zh.md)
 
 ![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Windows-0078D4) ![Node](https://img.shields.io/badge/node-%3E%3D22.12-339933)
 
-Win-Pilot is an Agent Plugin for Windows Computer Use. It gives Windows agents one consistent `computer` tool for desktop applications and isolated Chromium sessions, with the same actions, recovery rules, and results across plugin, MCP, CLI, skill, and native-host integrations.
+Win-Pilot provides Windows computer use with DeepSeek Harness as its primary integration. Its `computer` tool operates in the current desktop or an optional separate Windows task session, with a compact visible window for pause and manual takeover. Plugin, MCP, CLI and native integrations share the same runtime.
 
 ## Features
 
@@ -18,6 +18,7 @@ Win-Pilot is an Agent Plugin for Windows Computer Use. It gives Windows agents o
 | Universal fallbacks | Local stdio MCP for tool-aware agents; JSON CLI plus skill for shell-capable agents |
 | Schema portability | Tool schema is validated for OpenAI- and Gemini-family consumers |
 | DSH provider lifecycle | Requires DSH 0.2.0-rc.2+ for Config forms; claims the exclusive `computerUse` provider slot |
+| Optional task desktop | Windows child session with a compact 432×300 frameless window and automatic manual takeover |
 
 ## Requirements
 
@@ -25,6 +26,7 @@ Win-Pilot is an Agent Plugin for Windows Computer Use. It gives Windows agents o
 - Node.js 22.12 or newer
 - Windows PowerShell 5.1
 - Optional .NET 8 runtime for WGC capture
+- .NET 8 Windows Desktop Runtime for the optional task desktop
 - An Agent Plugin host, stdio MCP client, or shell-capable agent
 
 ## Quick Start
@@ -80,11 +82,11 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected: version `0.1.11`, platform `win32`, and every required doctor check marked `ok`.
+Expected for this release: version `0.2.0`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
 
 ### Settings
 
-In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or the plugin detail page. The current host projects the plugin's `Config` and applies changes immediately through live boolean references.
+In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or the plugin detail page. The host projects the plugin's `Config`. Display preferences apply immediately; the desktop environment applies to new tasks.
 
 | Preference | Default | Effect |
 |---|---|---|
@@ -92,7 +94,15 @@ In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or 
 | `statusPill` | `true` | Show the running status pill |
 | `browserHeadlessDefault` | `false` | Run browsers without a visible window |
 
-These are the only user settings. Numeric limits and input policy use internal defaults; old settings cannot change them. Required Windows/Meta system keys stay enabled internally. Confirmed Codex behavior guides background input, lock checks, user-interruption cancellation, focus yielding, and window text reads. CLI/MCP installs without a harness use the built-in defaults.
+`desktopEnvironment` defaults to `current`; `task` selects the separate task window. Save the setting and start a new task. Existing tasks keep their original desktop so observed targets cannot silently change. With the option off, model schemas, runtime skills and diagnostics do not advertise the task-desktop option. With it on, native actions, observations, clipboard and recovery stay in that task desktop; failure never redirects work to the main desktop. Browser actions require a browser launched by the same task.
+
+The light, frameless window defaults to 432×300. Its toolbar contains expand/restore, pin and close. In the expanded view, click, drag or type to take over: AI input stops before your first gesture is delivered. After 10 seconds without manual input, control returns to the AI; a held button or key prevents that return. The compact view is read-only. Right-click the toolbar for local sign-in settings. Complete Windows feature setup and local sign-in once; optionally remember credentials using the current Windows user's DPAPI and Credential Manager. Passwords stay in the local dialog. This mode requires .NET 8 Windows Desktop Runtime and working Windows child-session support. A Windows user change, credential change or system policy may require setup again; it is not a virtual machine.
+
+After updating an already-loaded plugin, restart DeepSeek Harness before saving new settings. See [task desktop](./docs/task-desktop.md) for behavior and verification limits.
+
+Use `win-pilot desktop --preview` to view the native window without creating a session or running computer actions. `win-pilot desktop` is the normal connection entry and respects the connection hold. Source builds use `npm run build:desktop`; checks without Windows sessions use `npm run test:desktop`. These additions have not been published to npm or GitHub.
+
+Numeric limits and input policy use internal defaults; old settings cannot change them. Required Windows/Meta system keys stay enabled internally. Confirmed Codex behavior guides background input, lock checks, user-interruption cancellation, focus yielding, and window text reads. CLI/MCP installs without a harness use the built-in defaults.
 
 ### Updating
 
@@ -110,6 +120,12 @@ DSH profiles must be restarted separately. Re-run `win-pilot install` when you w
 When a sandbox reaps children after every command, configure `win-pilot mcp` in the host's persistent plugin or MCP supervisor. Do not detach a process from an ephemeral command. Shell-only agents can use one-shot `win-pilot request` calls.
 
 ## Usage
+
+Version 0.2.0 adds session-scoped `stop` / `resume`, queued and active request cancellation, and atomic per-user control ownership. Observation remains available after stopping. Desktop accessibility uses stable sparse indexes and model-visible `full` / `delta` / `no_change` trees; hidden observations do not advance that baseline. Rich `paste` accepts `format: text | html | md` and restores supported original clipboard formats unless the user changes the clipboard meanwhile. Markdown conversion covers a limited subset.
+
+Browser additions are `browser_frames`, `browser_filechooser`, `browser_claim_tab`, and `browser_finalize`. Same-origin child frames use `frame_id` and semantic references; cross-origin/OOPIF frames are explicitly rejected. Claims bind to the current control session: keep `claim_id` for mutations, then finalize to release without activating the tab. Arm a chooser before opening it, read its event, and pass the single-use `filechooser_id` plus explicit absolute paths to `browser_upload` within 60 seconds. The provider uses explicit loopback CDP and does not include a user-browser extension.
+
+Native cancellation checks run between OS calls. A blocked UIA/system call may require bounded process termination and return an unknown outcome; inspect before further input. Clipboard restoration has no OS-level compare-and-swap guarantee.
 
 MCP and plugin hosts expose `computer`. Shell-only hosts use the identical JSON interface:
 
@@ -165,6 +181,9 @@ Compatibility-build diagnostics currently use `%TEMP%\win-pilot-diag.log`.
 ```powershell
 git clone https://github.com/JeremyWangCY/win-pilot.git
 cd win-pilot
+npm run build:wgc
+npm run build:desktop
+npm run test:desktop
 npm test
 npm pack --dry-run
 ```

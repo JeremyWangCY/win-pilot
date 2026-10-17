@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict'
-import { createBrowserProvider } from '../lib/browser-provider.js'
+import { browserCapabilities, createBrowserProvider } from '../lib/browser-provider.js'
 import { createWinPilotRuntime } from '../lib/runtime.js'
 
 const calls = []
+assert.equal(createBrowserProvider().capabilities.cross_origin_frames, false)
+assert.equal(createBrowserProvider().capabilities.oopif, false)
+assert.equal(createBrowserProvider().capabilities.user_browser_extension, false)
+assert.equal(browserCapabilities.filechooser, 'explicit_arm_required')
+assert.ok(Object.isFrozen(browserCapabilities))
 const provider = createBrowserProvider({
   name: 'test-browser-provider',
   execute: async (action, args, signal) => {
@@ -18,6 +23,7 @@ const provider = createBrowserProvider({
 })
 
 const runtime = createWinPilotRuntime({ browserProvider: provider })
+assert.deepEqual(provider.capabilities, {}, 'custom providers must not inherit CDP capabilities')
 try {
   const defaultRuntime = createWinPilotRuntime()
   try {

@@ -126,6 +126,28 @@ public static class DshWin32
   [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
   [DllImport("user32.dll", SetLastError = true)] private static extern bool CloseDesktop(IntPtr desktop);
   [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool GetUserObjectInformation(IntPtr handle, int index, StringBuilder value, int length, out int needed);
+  [DllImport("user32.dll")] private static extern IntPtr GetProcessWindowStation();
+  [DllImport("user32.dll")] private static extern IntPtr GetThreadDesktop(uint thread);
+  private static string UserObjectName(IntPtr handle) {
+    if(handle == IntPtr.Zero) return "";
+    StringBuilder value = new StringBuilder(256); int needed;
+    return GetUserObjectInformation(handle, 2, value, value.Capacity * 2, out needed) ? value.ToString() : "";
+  }
+  public static object[] ReadInputDesktopStatus() {
+    string station = UserObjectName(GetProcessWindowStation());
+    string thread = UserObjectName(GetThreadDesktop(GetCurrentThreadId()));
+    IntPtr input = OpenInputDesktop(0, false, 1);
+    int error = input == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
+    string name = "";
+    try {
+      if(input != IntPtr.Zero) {
+        StringBuilder value = new StringBuilder(256); int needed;
+        if(GetUserObjectInformation(input, 2, value, value.Capacity * 2, out needed)) name = value.ToString();
+        else error = Marshal.GetLastWin32Error();
+      }
+      return new object[] { error == 0 && string.Equals(name, "Default", StringComparison.OrdinalIgnoreCase), station, thread, name, error };
+    } finally { if(input != IntPtr.Zero) CloseDesktop(input); }
+  }
   public static bool IsDesktopLocked()
   {
     IntPtr desktop = OpenInputDesktop(0, false, 1);
@@ -142,8 +164,10 @@ public static class DshWin32
   // Track only Win-Pilot's held input, so interruption cleanup never sends
   // arbitrary releases for keys/buttons pressed by the user.
   private static readonly Dictionary<string, INPUT> heldInputs = new Dictionary<string, INPUT>();
+  private static readonly object heldInputsGate = new object();
   private static void TrackInput(INPUT i)
   {
+    lock (heldInputsGate) {
     if (i.type == 1)
     {
       string key = "k:" + i.u.ki.wVk + ":" + i.u.ki.wScan;
@@ -159,6 +183,7 @@ public static class DshWin32
         if ((i.u.mi.dwFlags & ups[j]) != 0) heldInputs.Remove(key);
         else if ((i.u.mi.dwFlags & downs[j]) != 0) { i.u.mi.dwFlags = ups[j]; heldInputs[key] = i; }
       }
+    }
     }
   }
   private static uint SendGuarded(uint n, INPUT[] inputs, int size)
@@ -176,7 +201,7 @@ public static class DshWin32
     foreach (INPUT i in inputs)
     {
       string key = i.type == 1 ? "k:" + i.u.ki.wVk + ":" + i.u.ki.wScan : null;
-      if (key != null && heldInputs.ContainsKey(key)) owned.Add(i);
+      lock (heldInputsGate) { if (key != null && heldInputs.ContainsKey(key)) owned.Add(i); }
     }
     if (owned.Count == 0) return 0;
     uint sent = SendInput((uint)owned.Count, owned.ToArray(), size);
@@ -185,10 +210,12 @@ public static class DshWin32
   }
   public static void ReleaseOwnedInput()
   {
-    INPUT[] releases = new List<INPUT>(heldInputs.Values).ToArray();
+    INPUT[] releases;
+    lock (heldInputsGate) { releases = new List<INPUT>(heldInputs.Values).ToArray(); }
     if (releases.Length == 0) return;
     uint sent = SendInput((uint)releases.Length, releases, Marshal.SizeOf(typeof(INPUT)));
     for (int j = 0; j < sent; j++) TrackInput(releases[j]);
+    if (sent != releases.Length) throw new InvalidOperationException("input_cleanup_failed: owned input release was not fully delivered");
   }
   private static void MoveOwned(int x, int y)
   {
@@ -421,6 +448,8 @@ public static class DshWin32
   static DshWin32()
   {
     InitDpiAwareness();
+    // Graceful EOF/deadline exits release our own SendInput holds only.
+    AppDomain.CurrentDomain.ProcessExit += delegate { try { ReleaseOwnedInput(); } catch { } };
   }
 
   public static void InitDpiAwareness()

@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -18,6 +19,7 @@ public static class WinPilotInputMonitor
   private static bool started, stopped, active, requiresObservation, dispatched;
   private static long generation;
   private static string failure;
+  private static string cancellationPath;
 
   static WinPilotInputMonitor()
   {
@@ -26,6 +28,13 @@ public static class WinPilotInputMonitor
   }
 
   public static bool HasDispatched { get { lock (State) { return dispatched; } } }
+  public static void ConfigureCancellation(string path) { lock (State) { cancellationPath = path; if (!active) dispatched = false; } }
+  public static void ClearCancellation() { lock (State) { cancellationPath = null; } }
+  private static void CheckCancellation()
+  {
+    if (!string.IsNullOrEmpty(cancellationPath) && File.Exists(cancellationPath))
+      throw new InvalidOperationException("operation_cancelled: stop cancelled the active action");
+  }
 
   public static void EnsureStarted()
   {
@@ -53,7 +62,7 @@ public static class WinPilotInputMonitor
 
   public static void BeginAction()
   {
-    lock (State) { dispatched = false; }
+    lock (State) { dispatched = false; CheckCancellation(); }
     EnsureStarted();
     lock (State)
     {
@@ -69,6 +78,7 @@ public static class WinPilotInputMonitor
   {
     lock (State)
     {
+      CheckCancellation();
       if (!active) return;
       CheckHealth();
       if (requiresObservation)
@@ -106,7 +116,15 @@ public static class WinPilotInputMonitor
     // Observation/housekeeping waits must keep their duration after cancellation.
     if (!guarded) { Thread.Sleep(milliseconds); return; }
     Check();
-    Interrupted.WaitOne(milliseconds);
+    // The signal file is written by the host while the stdin dispatcher is busy.
+    // Poll during holds so cancellation enters finally instead of requiring a kill.
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    while (watch.ElapsedMilliseconds < milliseconds)
+    {
+      Check();
+      int remaining = milliseconds - (int)watch.ElapsedMilliseconds;
+      if (remaining > 0) Interrupted.WaitOne(Math.Min(25, remaining));
+    }
     Check();
   }
 

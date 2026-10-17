@@ -1,5 +1,48 @@
 import assert from 'node:assert/strict'
-import { defineComputerTool, stopDaemon } from '../lib/index.js'
+import cp from 'node:child_process'
+import { EventEmitter } from 'node:events'
+import { syncBuiltinESMExports } from 'node:module'
+
+// Exercise the real tool/JSONL dispatcher against an explicit native boundary
+// double. This test must never change the user's clipboard or send mouse/key
+// input to the current foreground window. Native clipboard transaction behavior
+// is covered separately by clipboard-format.check.mjs with a DataObject fixture.
+const originalSpawn = cp.spawn
+const dispatched = []
+let clipboard = ''
+cp.spawn = (_exe, argv) => {
+  assert.ok(argv.includes('-Server'), 'features must use the native JSONL boundary')
+  const child = new EventEmitter()
+  child.unref = () => {}
+  child.kill = () => { queueMicrotask(() => child.emit('close', 0)); return true }
+  for (const name of ['stdin', 'stdout', 'stderr']) {
+    child[name] = new EventEmitter()
+    for (const method of ['unref', 'resume', 'setEncoding']) child[name][method] = () => {}
+  }
+  child.stdin.write = data => {
+    const request = JSON.parse(data)
+    dispatched.push(request)
+    const { action } = request
+    let result
+    if (action === 'write_clipboard') {
+      clipboard = request.text
+      result = { ok: true, action, length: clipboard.length }
+    } else if (action === 'read_clipboard') result = { ok: true, action, text: clipboard }
+    else if (action === 'list_displays') result = { ok: true, action, display_count: 1,
+      displays: [{ index: 1, id: 'fixture-display', primary: true,
+        bounds: { x: 0, y: 0, width: 1024, height: 768 },
+        working_area: { x: 0, y: 0, width: 1024, height: 728 } }] }
+    else if (action === 'mouse_down' || action === 'mouse_up') result = { ok: true, action, button: request.button }
+    else if (action === 'hold_key') result = { ok: true, action, key: request.key, duration_ms: request.duration_ms }
+    else throw new Error(`Unexpected native action in feature fixture: ${action}`)
+    queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify({ ...result, id: request.id })}\n`))
+    return true
+  }
+  return child
+}
+syncBuiltinESMExports()
+const { defineComputerTool, stopDaemon } = await import('../lib/index.js')
+try {
 
 // 1. defineComputerTool schema assertions
 const tool = defineComputerTool((def) => def)
@@ -39,7 +82,7 @@ assert.equal(
   'Hold duration in milliseconds for hold_key (default 500, max 10000).'
 )
 
-// 2. read_clipboard and write_clipboard execute and round-trip text
+// 2. Clipboard requests execute and round-trip through the JSONL fixture.
 const testPayload = `dsh-test-clipboard-payload-${Date.now()}-${Math.random().toString(36).slice(2)}`
 const writeRes = await tool.execute({
   action: 'write_clipboard',
@@ -72,7 +115,7 @@ const readEmptyRes = await tool.execute({
 assert.equal(readEmptyRes.ok, true, 'read_clipboard after empty write should succeed')
 assert.equal(readEmptyRes.text, '', 'read_clipboard should return empty string')
 
-// 3. list_displays returns at least 1 display with bounds
+// 3. Display response shape through the native boundary fixture.
 const displaysRes = await tool.execute({
   action: 'list_displays',
 })
@@ -143,7 +186,24 @@ assert.equal(holdKeyRes.action, 'hold_key')
 assert.equal(holdKeyRes.key, 'Shift')
 assert.equal(holdKeyRes.duration_ms, 60)
 
-// Clean up daemon before exit
-stopDaemon()
-
-console.log('features check PASSED')
+assert.deepEqual(dispatched.map(request => request.action), [
+  'write_clipboard', 'read_clipboard', 'write_clipboard', 'read_clipboard',
+  'list_displays', 'mouse_down', 'mouse_up', 'hold_key',
+], 'tool must dispatch each native request exactly once')
+for (const action of ['mouse_down', 'mouse_up']) {
+  const request = dispatched.find(request => request.action === action)
+  assert.equal(request.dispatch, 'background')
+  assert.equal(request.x, 50)
+  assert.equal(request.y, 50)
+  assert.equal(request.button, 'left')
+}
+const held = dispatched.find(request => request.action === 'hold_key')
+assert.equal(held.key, 'Shift')
+assert.equal(held.duration_ms, 60)
+assert.equal(held.dispatch, 'background')
+console.log('features check PASSED (real tool/JSONL pipeline; native boundary mocked, no OS clipboard/input)')
+} finally {
+  stopDaemon()
+  cp.spawn = originalSpawn
+  syncBuiltinESMExports()
+}

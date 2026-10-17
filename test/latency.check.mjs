@@ -34,8 +34,8 @@ assert.ok(indexSrc.includes('function daemonRequest'), 'index.js must define dae
 assert.ok(indexSrc.includes('daemon circuit-breaker open'), 'index.js must implement the circuit breaker')
 assert.match(
   indexSrc,
-  /const invokeNative = async \(nativeArgs\) => \{[\s\S]*?await daemonRequest\(action, nativeArgs, signal\)[\s\S]*?catch \(err\) \{ return runAction\(action, nativeArgs, signal\) \}/,
-  'execute must keep the one-shot runAction fallback for pre-dispatch daemon errors'
+  /async function dispatchNative\(action, args, signal\) \{[\s\S]*?return taskDesktop\(\)\.execute\(action, args, signal\)[\s\S]*?try \{ return await daemonRequest\(action, args, signal\) \}[\s\S]*?catch \{ return runAction\(action, args, signal\) \}/,
+  'native routing must isolate task execution before the current-desktop daemon fallback'
 )
 // judge fix 2: single-flight spawn guard
 assert.ok(indexSrc.includes('if (acquireInFlight) return acquireInFlight'), 'acquireDaemon must share one in-flight spawn promise (single-flight)')
@@ -47,7 +47,7 @@ const timeoutBlock = indexSrc.slice(indexSrc.indexOf("finish(resolve, unknownOut
 assert.ok(timeoutBlock.includes('noteDaemonFailure()'), 'timeouts must feed the failure-count circuit-breaker path')
 assert.ok(!timeoutBlock.includes('runAction'), 'timeout path must not invoke the one-shot fallback')
 // judge fix 4: id/action spread LAST so args.id cannot clobber correlation
-assert.ok(indexSrc.includes('{ ...(args || {}), id, action }'), 'request payload must spread id/action LAST')
+assert.ok(indexSrc.includes('{ ...(args || {}), cancellation_path:cancellationPath, id, action }'), 'request payload must spread id/action LAST')
 // judge fix 5: dying child's trailing stdout must not pollute the respawned buffer
 assert.ok(/if \(daemon\.child !== child\) return\s*daemon\.buf \+= chunk/.test(indexSrc), 'daemon stdout feed must ignore data from a non-current child')
 // judge fix 1b: idle lifecycle moved to node — 300s kill timer re-armed per success

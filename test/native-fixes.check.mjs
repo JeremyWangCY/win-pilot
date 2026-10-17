@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -155,7 +155,7 @@ assert.match(
 )
 assert.match(
   helperContent,
-  /foreground_activation_unconfirmed\):'[\s\S]*?\$result\.outcome = 'not_executed'/,
+  /foreground_activation_unconfirmed[^']*\):'[\s\S]*?\$result\.outcome = 'not_executed'/,
   'unconfirmed foreground activation must be reported as not_executed, not an ambiguous input result'
 )
 assert.match(
@@ -247,12 +247,12 @@ assert.match(
 // and Find-ElementByIndex checks $script:cachedElements before falling back to full-tree scan
 assert.match(
   helperContent,
-  /function\s+Get-AccessibilityTree[\s\S]*?\$script:cachedElements\s*=\s*New-Object System\.Collections\.Generic\.List\[System\.Windows\.Automation\.AutomationElement\]/,
+  /function\s+Get-AccessibilityTree[\s\S]*?\$script:cachedElements\s*=\s*@\{\}/,
   'Get-AccessibilityTree must initialize $script:cachedElements'
 )
 assert.match(
   helperContent,
-  /function\s+Get-AccessibilityTree[\s\S]*?\$script:cachedElements\.Add\(\$el\)/,
+  /function\s+Get-AccessibilityTree[\s\S]*?\$script:cachedElements\[\$index\]\s*=\s*\$el/i,
   'Get-AccessibilityTree must populate $script:cachedElements during tree traversal'
 )
 assert.match(
@@ -262,7 +262,7 @@ assert.match(
 )
 assert.match(
   helperContent,
-  /function\s+Find-ElementByIndex[\s\S]*?\$cached\s*=\s*\$script:cachedElements\[\$Index\s*-\s*1\][\s\S]*?\$cached\.Current\.ProcessId/,
+  /function\s+Find-ElementByIndex[\s\S]*?\$cached\s*=\s*\$script:cachedElements\[\$Index\][\s\S]*?\$cached\.Current\.ProcessId/,
   'Find-ElementByIndex must perform liveness check on cached element before returning'
 )
 
@@ -353,7 +353,8 @@ assert.match(
 )
 
 // 7. Verification of PowerShell syntax via PowerShell parser
-const parseCmd = `powershell -NoProfile -Command "
+const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+const parseScript = `
   $errs = @()
   $tokens = $null
   [void][System.Management.Automation.Language.Parser]::ParseFile('${helperPath.replace(/'/g, "''")}', [ref]$tokens, [ref]$errs)
@@ -361,11 +362,13 @@ const parseCmd = `powershell -NoProfile -Command "
   [void][System.Management.Automation.Language.Parser]::ParseFile('${overlayPath.replace(/'/g, "''")}', [ref]$tokens, [ref]$errs)
   if ($errs.Count -gt 0) { exit 2 }
   exit 0
-"`
-execSync(parseCmd, { stdio: 'inherit', windowsHide: true })
+`
+execFileSync(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', parseScript], { stdio: 'inherit', windowsHide: true })
 
 // 8. Verification of C# compilation and bracket search behavior via PowerShell
-const testScript = `powershell -NoProfile -Command "
+const testScript = `
+  [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+  $OutputEncoding = [Console]::OutputEncoding
   # Test bracketed search logic
   $title = '[Preview] test.txt'
   $app = '[Preview] test.txt'
@@ -373,7 +376,7 @@ const testScript = `powershell -NoProfile -Command "
   if (-not $match) { exit 10 }
 
   # Test helper list_apps action executes cleanly
-  $out = & '${helperPath.replace(/'/g, "''")}' -Action list_apps
+  $out = & '${powershell.replace(/'/g, "''")}' -NoProfile -ExecutionPolicy Bypass -File '${helperPath.replace(/'/g, "''")}' -Action list_apps
   $json = $out | ConvertFrom-Json
   if (-not $json.ok) { exit 11 }
 
@@ -397,11 +400,13 @@ const testScript = `powershell -NoProfile -Command "
     $isValid = ($rawPid -and [int]::TryParse($rawPid.Trim(), [ref]$pidNow) -and ($pidNow -gt 0))
     if (-not $isValid -or $pidNow -ne 65432) { exit 21 }
   } finally {
-    Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+    $fixtureResolved = [System.IO.Path]::GetFullPath($tempDir)
+    if (-not $fixtureResolved.StartsWith([System.IO.Path]::GetTempPath(), [System.StringComparison]::OrdinalIgnoreCase) -or [System.IO.Path]::GetFileName($fixtureResolved) -notlike 'win-pilot-test-*') { throw 'Unexpected fixture cleanup target' }
+    Remove-Item -LiteralPath $fixtureResolved -Recurse -Force -ErrorAction SilentlyContinue
   }
 
   exit 0
-"`
-execSync(testScript, { stdio: 'inherit', windowsHide: true })
+`
+execFileSync(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', testScript], { stdio: 'inherit', windowsHide: true })
 
 console.log('native-fixes check PASSED')

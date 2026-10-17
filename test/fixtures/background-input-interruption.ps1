@@ -171,7 +171,7 @@ $tokens = $null; $parseErrors = $null
 $dispatchSource = [IO.File]::ReadAllText($dispatchPath, [Text.Encoding]::UTF8)
 $ast = [System.Management.Automation.Language.Parser]::ParseInput($dispatchSource, [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors) { throw ($parseErrors -join '; ') }
-$functions = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in @('Invoke-BackgroundRangeScroll', 'Send-OwnedBackgroundButton', 'Release-OwnedBackgroundButtons', 'Invoke-ActionRequest', 'Test-ProcessDescendant') }, $true)
+$functions = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in @('Invoke-BackgroundRangeScroll', 'Send-OwnedBackgroundButton', 'Release-OwnedBackgroundButtons', 'Invoke-ActionRequest', 'Test-ProcessDescendant', 'New-PasteClipboardContent', 'New-HtmlClipboardFormat', 'Convert-MarkdownFragment', 'Convert-MarkdownInline', 'Invoke-PasteClipboardTransaction') }, $true)
 foreach ($function in $functions) { Invoke-Expression $function.Extent.Text }
 Invoke-Expression ([regex]::Match($dispatchSource, '(?s)\$script:InputActions = @\(.*?\)').Value)
 $script:heldBackgroundButtons = @{}
@@ -226,13 +226,24 @@ function Test-DesktopLocked { return $false }
 function Get-Dispatch { return 'background' }
 function Get-FocusPolicy { return 'never' }
 function Get-PayloadValue { param($Name) return $script:payload.$Name }
+function Set-ObservationSession { }
 function Resolve-TargetWindow { return [pscustomobject]@{ Hwnd = [IntPtr]1 } }
 function Find-TextInputHwnd { return [IntPtr]1 }
-function Get-ClipboardTextSafe { return $script:clipboard }
-function Set-ClipboardTextSafe { param($Text) $script:clipboard = $Text }
+function Invoke-PasteClipboardOperation {
+  param($Operation, $Argument)
+  switch ($Operation) {
+    capture { return @{ data = $script:clipboard } }
+    write { $script:clipboard = $Argument.content.text; $script:clipboardOwner = 'ours'; return @{ token = 'ours' } }
+    restore {
+      if ($script:clipboardOwner -ne $Argument.owner.token) { return $false }
+      $script:clipboard = $Argument.previous.data
+      return $true
+    }
+  }
+}
 function Send-BackgroundKey {
   [WinPilotInputMonitor]::MarkDispatched()
-  if ($script:userCopies) { $script:clipboard = 'new user copy' }
+  if ($script:userCopies) { $script:clipboard = 'new user copy'; $script:clipboardOwner = $null }
   throw 'user_input_interrupted: fixture cancellation during paste'
 }
 foreach ($action in @('paste', 'launch_app')) {

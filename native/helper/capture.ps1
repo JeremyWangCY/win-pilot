@@ -42,7 +42,10 @@ function Reset-WgcCaptureServer {
 }
 
 function Get-WgcCaptureServer {
-  $exe = Join-Path (Join-Path $env:TEMP 'win-pilot-wgc') 'win-pilot-wgc.exe'
+  # The child worker runs the packaged helper directly. Prefer its matching
+  # bridge instead of an older temp copy left by another plugin/runtime.
+  $packaged = Join-Path (Join-Path $PSScriptRoot 'wgc') 'win-pilot-wgc.exe'
+  $exe = if (Test-Path -LiteralPath $packaged -PathType Leaf) { $packaged } else { Join-Path (Join-Path $env:TEMP 'win-pilot-wgc') 'win-pilot-wgc.exe' }
   if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { return $null }
   if ($script:wgcServer) {
     try { if (-not $script:wgcServer.HasExited) { return $script:wgcServer } } catch { }
@@ -103,9 +106,10 @@ function Invoke-WgcCapture {
 }
 
 function Do-AppState {
-  param([string]$App, [int]$WindowIndex, [bool]$WithScreenshot, [bool]$WithText, [string]$Dispatch, [bool]$DisableDiffing = $false)
+  param([string]$App, [int]$WindowIndex, [bool]$WithScreenshot, [bool]$WithText, [string]$Dispatch, [bool]$DisableDiffing = $false, [bool]$TreeShownToModel = $true)
   $script:observation = $null
   $win = Resolve-TargetWindow -App $App -Index $WindowIndex
+  $fingerprint = Get-WindowObservationFingerprint $win.Hwnd
   # Observation never needs the foreground: WGC and PrintWindow both capture an
   # occluded window, and the UIA tree is read without activation. Forcing the
   # target forward here stole the user's focus for a pure read.
@@ -224,6 +228,9 @@ function Do-AppState {
   $accessibilityStatus = 'not_requested'
   $accessibilityRevision = $null
   $accessibilityDelta = $null
+  $accessibilityFormat = 'not_requested'
+  $accessibilityTree = ''
+  $accessibilityBaseRevision = $null
   $script:cachedTreeHwnd = [IntPtr]::Zero
   $script:cachedElements = $null
   $script:cachedIdentities = $null
@@ -293,12 +300,14 @@ function Do-AppState {
     if ($tree.Count -eq 0) { $accessibilityStatus = 'unavailable' }
     elseif ($tree.Count -le 2) { $accessibilityStatus = 'partial' }
     else { $accessibilityStatus = 'available' }
-    $deltaKey = ('{0}:{1}' -f [string]$win.Hwnd.ToInt64(), [string]$win.Pid)
-    # A caller asking for a complete tree still advances the revision, so the
-    # next diffing observation compares against this one rather than the stale
-    # predecessor. `delta` is nulled only in the returned payload.
-    $accessibilityDelta = Get-AccessibilityDelta -Key $deltaKey -Tree $tree
+    $deltaKey = Get-SessionObservationKey ('{0}:{1}' -f [string]$win.Hwnd.ToInt64(), $fingerprint)
+    # Only a tree delivered to the model becomes the next incremental baseline.
+    # Readiness probes and internal preconditions must not hide pending changes.
+    $accessibilityDelta = Get-AccessibilityDelta -Key $deltaKey -Tree $tree -ShownToModel $TreeShownToModel -DisableDiffing $DisableDiffing
     $accessibilityRevision = $accessibilityDelta.revision
+    $accessibilityBaseRevision = $accessibilityDelta.base_revision
+    $accessibilityFormat = $accessibilityDelta.format
+    $accessibilityTree = Format-AccessibilityTree -Tree $tree -Delta $accessibilityDelta
     if ($DisableDiffing) { $accessibilityDelta = $null }
     $docText = if ($isCommonDialog) {
       [string](($tree | ForEach-Object { @($_.name, $_.value) } | Where-Object { $_ }) -join "`n")
@@ -307,14 +316,24 @@ function Do-AppState {
     $selectedText = if ($isCommonDialog) { '' } else { Get-SelectedText $win.Hwnd }
     $selectedElements = @($tree | Where-Object { $_.selected } | ForEach-Object { "[$($_.index)] $($_.role): $($_.name)" })
   }
-  $script:observation = @{ id = [guid]::NewGuid().ToString('N'); hwnd = $win.Hwnd; rect = $win.Rect; created = [DateTime]::UtcNow }
+  if ((Get-WindowObservationFingerprint $win.Hwnd) -cne $fingerprint) {
+    if ($deltaKey) { $script:accessibilityHistory.Remove($deltaKey) }
+    throw 'stale_snapshot: window identity or DPI changed during observation; refresh get_app_state'
+  }
+  $liveRect = [DshWin32]::GetDwmRect($win.Hwnd)
+  if ($liveRect.Left -ne $win.Rect.Left -or $liveRect.Top -ne $win.Rect.Top -or
+      $liveRect.Right -ne $win.Rect.Right -or $liveRect.Bottom -ne $win.Rect.Bottom) {
+    if ($deltaKey) { $script:accessibilityHistory.Remove($deltaKey) }
+    throw 'stale_snapshot: window moved or resized during observation; refresh get_app_state'
+  }
+  $script:observation = @{ id = [guid]::NewGuid().ToString('N'); control_session_id = (Get-ControlSessionId); hwnd = $win.Hwnd; rect = $win.Rect; fingerprint = $fingerprint; created = [DateTime]::UtcNow; tree_shown_to_model = ($WithText -and $TreeShownToModel) }
   $script:lastScreenshot = $null
   if ($shot) {
     $shot.id = $script:observation.id
     $shot.coordinate_space = 'window'
     $shot.viewport = @{ coordinate_space = 'window'; x = 0; y = 0; width = $w; height = $h; screen_x = $win.Rect.Left; screen_y = $win.Rect.Top; scale = 1 }
     $shot.trusted = (-not $shot.error)
-    if ($shot.path) { $script:lastScreenshot = @{ id = $shot.id; hwnd = $win.Hwnd; rect = $win.Rect; created = $script:observation.created } }
+    if ($shot.path) { $script:lastScreenshot = @{ id = $shot.id; control_session_id = (Get-ControlSessionId); hwnd = $win.Hwnd; rect = $win.Rect; fingerprint = $fingerprint; width = $shot.width; height = $shot.height; trusted = $shot.trusted; created = $script:observation.created } }
   }
   return @{
     snapshot_id = $script:observation.id
@@ -327,6 +346,10 @@ function Do-AppState {
     accessibility_status = $accessibilityStatus
     accessibility_revision = $accessibilityRevision
     accessibility_delta = $accessibilityDelta
+    accessibility_format = $accessibilityFormat
+    accessibility_tree = $accessibilityTree
+    accessibility_base_revision = $accessibilityBaseRevision
+    tree_shown_to_model = ($WithText -and $TreeShownToModel)
     document_text = if ($docText) { $docText } else { '' }
     focused_element = if ($focusedElement) { $focusedElement } else { '' }
     selected_text = if ($selectedText) { $selectedText } else { '' }
