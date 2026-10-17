@@ -95,6 +95,7 @@ static class ManualInputChecks
         // worker ACK. The ActiveX control is never connected to any server.
         var viewType=desktopType.Assembly.GetType("WinPilotTaskDesktop.RdpView",true)!;
         using var view=(AxHost)Activator.CreateInstance(viewType)!;
+        Set(view,"InputIsDown",(Func<int,bool>)(_=>true));
         using var output=new MemoryStream();
         using var workerWriter=new ProbeWorkerWriter(output){AutoFlush=true};
         var originalReady=Get(form,"workerReady");
@@ -233,6 +234,18 @@ static class ManualInputChecks
                 Require(!(bool)viewType.GetProperty("HasHeldUserInput")!.GetValue(view)!,"Matching release must clear held input");
                 Set(form,"lastManualInput",Environment.TickCount64-11000);Call(form,"Poll");
                 Require(!(bool)Get(form,"automaticTakeover")!,"Released input must permit the idle resume branch (actual Resume refuses unconnected COM)");
+            }
+
+            // Capture/IME windows can consume the release outside the RDP tree.
+            // Keep genuinely held input, but reconcile a missed release against
+            // the OS instead of leaving automatic takeover stuck forever.
+            foreach(var (down,key,physicalKey) in new[]{(0x100,67,67),(0x201,1,1),(0x20b,1<<16,5),(0x20b,2<<16,6)}){
+                Reset();Feed(down,key);Acknowledge(true);
+                Set(view,"InputIsDown",(Func<int,bool>)(value=>value==physicalKey));
+                Require((bool)viewType.GetProperty("HasHeldUserInput")!.GetValue(view)!,"Physical held input must still block idle resume");
+                Set(view,"InputIsDown",(Func<int,bool>)(_=>false));
+                Require(!(bool)viewType.GetProperty("HasHeldUserInput")!.GetValue(view)!,"A missed release must not leave stale held input blocking idle resume");
+                Set(view,"InputIsDown",(Func<int,bool>)(_=>true));
             }
 
             foreach(int firstRelease in new[]{1,2}){
