@@ -17,8 +17,9 @@ import {
 } from '../lib/settings.js'
 
 assert.match(SETTINGS_NAMESPACE, /^[a-z][a-z0-9-]*$/)
-assert.deepEqual(KEYS, ['overlay', 'statusPill', 'browserHeadlessDefault'])
-assert.deepEqual(FIELDS, KEYS.map((key) => ({ key, type: 'boolean' })))
+assert.deepEqual(KEYS, ['overlay', 'statusPill', 'browserHeadlessDefault', 'desktopEnvironment'])
+assert.deepEqual(FIELDS, [...KEYS.slice(0,3).map((key) => ({ key, type: 'boolean' })), {key:'desktopEnvironment',type:'enum',values:['current','task']}])
+assert.equal(DEFAULTS.desktopEnvironment,'current')
 assert.equal(DEFAULTS.overlay, true)
 assert.equal(DEFAULTS.statusPill, true)
 assert.equal(DEFAULTS.browserHeadlessDefault, false)
@@ -46,6 +47,11 @@ applyConfigSnapshot({ overlay: { get: () => current }, statusPill: 'false', brow
 assert.deepEqual(getSettings(), DEFAULTS, 'only boolean preferences may affect production settings')
 current = false
 assert.equal(getSettings().overlay, false)
+let environment='task'
+applyConfigSnapshot({desktopEnvironment:{get:()=>environment}})
+assert.equal(getSettings().desktopEnvironment,'task')
+environment='invalid'
+assert.equal(getSettings().desktopEnvironment,'current')
 applyConfigSnapshot(null)
 assert.deepEqual(getSettings(), DEFAULTS)
 
@@ -72,6 +78,8 @@ if (Schema) {
     assert.equal(result.value.browserHeadlessDefault.get(), false)
     assert.ok(Config['~standard'].validate({ statusPill: 'false' }).issues)
     assert.ok(Config['~standard'].validate({ browserHeadlessDefault: 0 }).issues)
+    assert.equal(Config['~standard'].validate({desktopEnvironment:'task'}).value.desktopEnvironment.get(),'task')
+    assert.ok(Config['~standard'].validate({desktopEnvironment:'invalid'}).issues)
   }
 } else {
   assert.equal(installWinPilotSettings(), 'unavailable')
@@ -89,6 +97,6 @@ assert.equal(isolated.status, 0, isolated.stderr || isolated.stdout)
 
 const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
 assert.deepEqual([...source.matchAll(/\{ key: '([A-Za-z0-9_]+)'/g)].map((match) => match[1]), KEYS)
-assert.doesNotMatch(source, /settingsScope|type: 'number'|createElement\('select'|settings\.plugins\.tab|settings\.plugin\.item/)
+assert.doesNotMatch(source, /settingsScope|type: 'number'|settings\.plugins\.tab|settings\.plugin\.item/)
 resetSettingsForTest()
 console.log('settings check PASSED')

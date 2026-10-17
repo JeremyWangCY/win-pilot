@@ -118,21 +118,30 @@ static class Program
             if (!Native.IsWindow(new IntPtr(hwndValue))) throw new ArgumentException("WGC target window no longer exists");
             RefreshSize();
 
+            // WGC's SystemRelativeTime is compositor QPC time. A cached pool
+            // can fill while the server waits on stdin: its newest queued frame
+            // may still predate the action that triggered this observation.
+            var requestedAt = TimeSpan.FromSeconds(Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency);
+
             Direct3D11CaptureFrame? frame = null;
             Direct3D11CaptureFrame? queued;
             while ((queued = pool.TryGetNextFrame()) is not null)
             {
-                frame?.Dispose();
-                frame = queued;
+                queued.Dispose();
             }
 
             var timer = Stopwatch.StartNew();
             while (frame is null && timer.ElapsedMilliseconds < 2500)
             {
                 frame = pool.TryGetNextFrame();
+                if (frame is not null && frame.SystemRelativeTime < requestedAt)
+                {
+                    frame.Dispose();
+                    frame = null;
+                }
                 if (frame is null) Thread.Sleep(8);
             }
-            if (frame is null) throw new TimeoutException("WGC frame timeout");
+            if (frame is null) throw new TimeoutException("WGC fresh frame timeout");
 
             using (frame)
             using (var bitmap = await SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface))

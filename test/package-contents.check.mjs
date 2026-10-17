@@ -16,6 +16,11 @@ const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.me
 
 assert.equal(packageJson.bin?.['win-pilot'], 'bin/win-pilot.js', 'published manifest must expose the win-pilot CLI bin mapping')
 assert.ok(paths.has('lib/wgc/win-pilot-wgc.exe'), 'runtime WGC executable must be packaged')
+for (const name of ['win-pilot-task-desktop.exe','win-pilot-task-desktop.dll','win-pilot-task-desktop.deps.json','win-pilot-task-desktop.runtimeconfig.json']) {
+  assert.ok(paths.has(`lib/task-desktop/${name}`), `task desktop component must be packaged: ${name}`)
+}
+assert.ok(!paths.has('lib/task-desktop/safety-hold.json'), 'verified delivery must not ship the temporary investigation hold')
+assert.ok(!paths.has('lib/task-desktop/win-pilot-task-desktop.pdb'), 'task desktop debug symbols must not be packaged')
 assert.ok(paths.has('bin/win-pilot.js'), 'standalone win-pilot CLI must be packaged')
 assert.ok(paths.has('lib/mcp-server.js'), 'MCP stdio server must be packaged')
 assert.ok(paths.has('skills/win-pilot/SKILL.md'), 'agent-neutral skill must be packaged')

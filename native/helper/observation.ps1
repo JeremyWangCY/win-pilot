@@ -12,6 +12,27 @@ function Get-Dispatch {
   return ([string]$d).ToLowerInvariant()
 }
 
+function Get-ControlSessionId { return [string](Get-PayloadValue 'control_session_id') }
+
+function Get-SessionObservationKey {
+  param([string]$Key)
+  $prefix = (Get-ControlSessionId) + [char]0
+  if ($Key.StartsWith($prefix, [StringComparison]::Ordinal)) { return $Key }
+  return $prefix + $Key
+}
+
+function Set-ObservationSession {
+  $sessionId = Get-ControlSessionId
+  if ([string]$script:observationSessionId -cne $sessionId) {
+    $script:observation = $null
+    $script:lastScreenshot = $null
+    $script:cachedTreeHwnd = [IntPtr]::Zero
+    $script:cachedElements = $null
+    $script:cachedIdentities = $null
+    $script:observationSessionId = $sessionId
+  }
+}
+
 function Get-FocusPolicy {
   # What to do when a background action moves the foreground window.
   #   yield   (default) report it and stop; never compete for focus
@@ -41,6 +62,50 @@ if ($null -eq $script:windowBackgroundCapabilities) { $script:windowBackgroundCa
 if ($null -eq $script:verifiedPublisherCache) { $script:verifiedPublisherCache = @{} }
 if ($null -eq $script:accessibilityHistory) { $script:accessibilityHistory = @{} }
 if ($null -eq $script:accessibilityRevision) { $script:accessibilityRevision = [int64]0 }
+if ($null -eq $script:elementIndexHistory) { $script:elementIndexHistory = @{} }
+
+function Get-WindowObservationFingerprint {
+  param([IntPtr]$Hwnd)
+  if (-not ('WinPilotObservationNative' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class WinPilotObservationNative {
+ [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
+ [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+}
+'@
+  }
+  $processId = [uint32]0
+  $thread = [WinPilotObservationNative]::GetWindowThreadProcessId($Hwnd, [ref]$processId)
+  $started = [int64]0
+  if ($processId -gt 0) {
+    $process = [System.Diagnostics.Process]::GetProcessById([int]$processId)
+    try { $started = $process.StartTime.ToUniversalTime().Ticks } finally { $process.Dispose() }
+  }
+  $dpi = [WinPilotObservationNative]::GetDpiForWindow($Hwnd)
+  if ($thread -eq 0 -or $dpi -eq 0) { throw 'stale_snapshot: target window identity or DPI is unavailable' }
+  return ('{0}:{1}:{2}:{3}' -f $processId, $started, $thread, $dpi)
+}
+
+function Get-StableElementIndex {
+  param([string]$WindowKey, [string]$ElementId)
+  $WindowKey = Get-SessionObservationKey $WindowKey
+  if (-not $script:elementIndexHistory.ContainsKey($WindowKey)) {
+    $script:elementIndexHistory[$WindowKey] = @{ next = 1; indexes = @{} }
+    if ($script:elementIndexHistory.Count -gt 32) {
+      foreach ($oldKey in @($script:elementIndexHistory.Keys)) {
+        if ($oldKey -cne $WindowKey) { $script:elementIndexHistory.Remove($oldKey); break }
+      }
+    }
+  }
+  $history = $script:elementIndexHistory[$WindowKey]
+  if (-not $history.indexes.ContainsKey($ElementId)) {
+    $history.indexes[$ElementId] = [int]$history.next
+    $history.next++
+  }
+  return [int]$history.indexes[$ElementId]
+}
 
 function Get-ProcessNameFast {
   param([uint32]$ProcessId, [hashtable]$Cache)
@@ -471,6 +536,7 @@ function Get-AccessibilitySummary {
   return [ordered]@{
     element_id = [string]$Item.element_id
     index = [int]$Item.index
+    actionable = $Item.actionable
     role = [string]$Item.role
     name = [string]$Item.name
     value = [string]$Item.value
@@ -485,15 +551,18 @@ function Get-AccessibilitySummary {
 }
 
 function Get-AccessibilityDelta {
-  param([string]$Key, $Tree)
+  param([string]$Key, $Tree, [bool]$ShownToModel = $true, [bool]$DisableDiffing = $false)
+  $Key = Get-SessionObservationKey $Key
   $script:accessibilityRevision = [int64]$script:accessibilityRevision + 1
   $revision = [int64]$script:accessibilityRevision
   $previous = $script:accessibilityHistory[$Key]
   $current = @{}
+  $fullItems = @{}
   foreach ($item in $Tree) {
     $id = [string]$item.element_id
     if (-not $id) { continue }
     $current[$id] = Get-AccessibilitySummary $item
+    $fullItems[$id] = $item
   }
 
   $added = New-Object System.Collections.Generic.List[object]
@@ -507,15 +576,15 @@ function Get-AccessibilityDelta {
       $now = $current[$id]
       $before = $previous.items[$id]
       if ($null -eq $before) {
-        $added.Add([ordered]@{ element_id = $id; index = $now.index; role = $now.role; name = $now.name })
+        $added.Add($fullItems[$id])
         continue
       }
       $fields = New-Object System.Collections.Generic.List[string]
-      foreach ($field in @('role','name','value','automation_id','enabled','offscreen','invokable','selected','native_window_handle','rect')) {
+      foreach ($field in @('index','actionable','role','name','value','automation_id','enabled','offscreen','invokable','selected','native_window_handle','rect')) {
         if ([string]$now[$field] -cne [string]$before[$field]) { $fields.Add($field) }
       }
       if ($fields.Count -gt 0) {
-        $changed.Add([ordered]@{ element_id = $id; index = $now.index; fields = $fields.ToArray() })
+        $changed.Add([ordered]@{ element_id = $id; index = $now.index; fields = $fields.ToArray(); element = $fullItems[$id] })
       } else {
         $unchanged++
       }
@@ -523,16 +592,16 @@ function Get-AccessibilityDelta {
     foreach ($id in $previous.items.Keys) {
       if (-not $current.ContainsKey($id)) {
         $before = $previous.items[$id]
-        $removed.Add([ordered]@{ element_id = $id; role = $before.role; name = $before.name })
+        $removed.Add([ordered]@{ element_id = $id; index = $before.index; role = $before.role; name = $before.name })
       }
     }
   }
 
-  $script:accessibilityHistory[$Key] = @{
+  if ($ShownToModel) { $script:accessibilityHistory[$Key] = @{
     revision = $revision
     items = $current
     updated = [DateTime]::UtcNow
-  }
+  } }
   if ($script:accessibilityHistory.Count -gt 32) {
     foreach ($oldKey in @($script:accessibilityHistory.Keys)) {
       if ($oldKey -cne $Key) { $script:accessibilityHistory.Remove($oldKey) }
@@ -541,6 +610,8 @@ function Get-AccessibilityDelta {
   }
 
   return [ordered]@{
+    format = if (-not $ShownToModel) { 'hidden' } elseif ($DisableDiffing -or $reset) { 'full' } elseif ($added.Count -eq 0 -and $removed.Count -eq 0 -and $changed.Count -eq 0) { 'no_change' } else { 'delta' }
+    tree_shown_to_model = $ShownToModel
     revision = $revision
     base_revision = if ($reset) { $null } else { [int64]$previous.revision }
     reset = $reset
@@ -551,11 +622,36 @@ function Get-AccessibilityDelta {
   }
 }
 
+function Format-AccessibilityTree {
+  param($Tree, $Delta)
+  if ($Delta.format -eq 'hidden') { return '' }
+  if ($Delta.format -eq 'no_change') { return 'No accessibility changes.' }
+  $lines = New-Object System.Collections.Generic.List[string]
+  if ($Delta.format -eq 'full') {
+    foreach ($item in $Tree) { $lines.Add((Format-AccessibilityItem $item)) }
+  } else {
+    foreach ($item in $Delta.removed) { $lines.Add('- ' + (Format-AccessibilityItem $item)) }
+    foreach ($item in $Delta.added) { $lines.Add('+ ' + (Format-AccessibilityItem $item)) }
+    foreach ($change in $Delta.changed) { $lines.Add('~ ' + (Format-AccessibilityItem $change.element)) }
+  }
+  return ($lines -join "`n")
+}
+
+function Format-AccessibilityItem {
+  param($Item)
+  $line = "[$($Item.index)] $($Item.role): $($Item.name)"
+  if ($Item.value) { $line += " = $($Item.value)" }
+  if ($Item.Contains('actionable') -and -not $Item.actionable) { $line += ' [ambiguous identity; not actionable]' }
+  return $line
+}
+
 function Get-AccessibilityTree {
   param([IntPtr]$Hwnd, [int]$MaxElements = $script:MAX_ELEMENTS, $WinRect = $null, [int]$MaxDepth = 0)
   $script:cachedTreeHwnd = $Hwnd
-  $script:cachedElements = New-Object System.Collections.Generic.List[System.Windows.Automation.AutomationElement]
-  $script:cachedIdentities = New-Object System.Collections.Generic.List[string]
+  $script:cachedElements = @{}
+  $script:cachedIdentities = @{}
+  $windowIndexKey = ('{0}:{1}' -f $Hwnd.ToInt64(), (Get-WindowObservationFingerprint $Hwnd))
+  $seenIds = @{}
   $windowCapabilityMap = @{}
   if ($null -eq $WinRect -and $Hwnd -ne [IntPtr]::Zero) {
     try { $WinRect = [DshWin32]::GetRect($Hwnd) } catch { }
@@ -587,9 +683,7 @@ function Get-AccessibilityTree {
   foreach ($el in $children) {
     if ($count -ge $MaxElements) { break }
     $count++
-    $script:cachedElements.Add($el)
     $elementIdentity = Get-ElementIdentity $el
-    $script:cachedIdentities.Add($elementIdentity)
     $stableId = Get-StableElementId $el
     $cur = $el.Current
     $rect = $cur.BoundingRectangle
@@ -601,6 +695,21 @@ function Get-AccessibilityTree {
       try { $value = $vp.Current.Value } catch { }
     }
     if (($name -eq '') -and ($autoId -eq '') -and ($value -eq '') -and ($rect.Width -le 0 -or $rect.Height -le 0)) { continue }
+    $index = Get-StableElementIndex -WindowKey $windowIndexKey -ElementId $stableId
+    $ambiguous = $seenIds.ContainsKey($stableId)
+    if ($ambiguous) {
+      # Duplicate provider IDs/fingerprints cannot identify an action target.
+      # Never silently overwrite the first entry or relocate an old index.
+      $prior = $seenIds[$stableId]
+      $prior.actionable = $false
+      $script:cachedElements.Remove([int]$prior.index)
+      $script:cachedIdentities.Remove([int]$prior.index)
+      $stableId += ':ambiguous:' + $count
+      $index = Get-StableElementIndex -WindowKey $windowIndexKey -ElementId $stableId
+    } else {
+      $script:cachedElements[$index] = $el
+      $script:cachedIdentities[$index] = $elementIdentity
+    }
     $invoke = $false
     $ip = $null
     if ($el.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$ip)) { $invoke = $true }
@@ -629,7 +738,8 @@ function Get-AccessibilityTree {
     $relX = if ($null -ne $WinRect) { Safe-Int ($rect.X - $WinRect.Left) } else { Safe-Int $rect.X }
     $relY = if ($null -ne $WinRect) { Safe-Int ($rect.Y - $WinRect.Top) } else { Safe-Int $rect.Y }
     $item = [ordered]@{
-      index = $count
+      index = $index
+      actionable = -not $ambiguous
       element_id = $stableId
       role = $cur.ControlType.ProgrammaticName
       name = if ($name) { $name } else { '' }
@@ -644,6 +754,7 @@ function Get-AccessibilityTree {
       screen_rect = @{ x = (Safe-Int $rect.X); y = (Safe-Int $rect.Y); width = (Safe-Int $rect.Width); height = (Safe-Int $rect.Height) }
     }
     $out.Add($item)
+    if (-not $ambiguous) { $seenIds[$stableId] = $item }
   }
   $windowKey = [string]$Hwnd.ToInt64()
   $script:windowBackgroundCapabilities[$windowKey] = $windowCapabilityMap
@@ -660,11 +771,11 @@ function Get-AccessibilityTree {
 function Find-ElementByIndex {
   param([IntPtr]$Hwnd, [int]$Index)
   Assert-Observation -Hwnd $Hwnd -Required
-  if ($script:cachedTreeHwnd -eq $Hwnd -and $null -ne $script:cachedElements -and $Index -ge 1 -and $Index -le $script:cachedElements.Count) {
-    $cached = $script:cachedElements[$Index - 1]
+  if ($script:cachedTreeHwnd -eq $Hwnd -and $null -ne $script:cachedElements -and $script:cachedElements.ContainsKey($Index)) {
+    $cached = $script:cachedElements[$Index]
     try {
       $null = $cached.Current.ProcessId
-      if ((Get-ElementIdentity $cached) -cne $script:cachedIdentities[$Index - 1]) {
+      if ((Get-ElementIdentity $cached) -cne $script:cachedIdentities[$Index]) {
         throw 'stale_snapshot: element identity or geometry changed; refresh get_app_state'
       }
       return $cached
@@ -690,12 +801,15 @@ function Assert-Observation {
     if ($Required) { throw 'snapshot_required: pass snapshot_id from the latest get_app_state' }
     return
   }
-  if (-not $script:observation -or $id -cne $script:observation.id -or
+  if (-not $script:observation -or [string]$script:observation.control_session_id -cne (Get-ControlSessionId) -or $id -cne $script:observation.id -or
       $Hwnd -ne $script:observation.hwnd -or
       ([DateTime]::UtcNow - $script:observation.created).TotalSeconds -gt 60) {
     throw 'stale_snapshot: snapshot expired, consumed, or belongs to another window; refresh get_app_state'
   }
   $r = [DshWin32]::GetDwmRect($Hwnd)
+  if ($script:observation.fingerprint -and (Get-WindowObservationFingerprint $Hwnd) -cne $script:observation.fingerprint) {
+    throw 'stale_snapshot: window identity or DPI changed; refresh get_app_state'
+  }
   $previous = $script:observation.rect
   if ($r.Left -ne $previous.Left -or $r.Top -ne $previous.Top -or
       $r.Right -ne $previous.Right -or $r.Bottom -ne $previous.Bottom) {
@@ -706,15 +820,22 @@ function Assert-Observation {
 function Assert-ScreenshotBinding {
   param([IntPtr]$Hwnd)
   $id = Get-PayloadValue 'screenshot_id'
-  if (-not $id) { return }
   $shot = $script:lastScreenshot
-  if (-not $shot -or $id -cne $shot.id -or ([DateTime]::UtcNow - $shot.created).TotalSeconds -gt 60) {
+  if (-not $id) {
+    if ($Hwnd -eq [IntPtr]::Zero -or -not $shot -or $shot.hwnd -ne $Hwnd) { return }
+    $id = $shot.id
+  }
+  if (-not $shot -or [string]$shot.control_session_id -cne (Get-ControlSessionId) -or $id -cne $shot.id -or ([DateTime]::UtcNow - $shot.created).TotalSeconds -gt 60) {
     throw 'stale_screenshot: screenshot_id expired, consumed, or was not produced by this host'
   }
   if ($Hwnd -ne [IntPtr]::Zero -and $shot.hwnd -ne [IntPtr]::Zero -and $Hwnd -ne $shot.hwnd) {
     throw 'stale_screenshot: screenshot_id belongs to another window'
   }
   if ($Hwnd -ne [IntPtr]::Zero -and $shot.hwnd -eq $Hwnd -and $shot.rect) {
+    if ($shot.fingerprint -and (Get-WindowObservationFingerprint $Hwnd) -cne $shot.fingerprint) {
+      throw 'stale_screenshot: window identity or DPI changed; refresh screenshot/state'
+    }
+    if ($shot.trusted -eq $false) { throw 'stale_screenshot: screenshot did not contain a trusted frame' }
     $r = [DshWin32]::GetDwmRect($Hwnd)
     if ($r.Left -ne $shot.rect.Left -or $r.Top -ne $shot.rect.Top -or $r.Right -ne $shot.rect.Right -or $r.Bottom -ne $shot.rect.Bottom) {
       throw 'stale_screenshot: target window moved or resized; refresh screenshot/state'
@@ -765,9 +886,9 @@ function Get-FocusedElementText {
     $index = 0
     if ($null -ne $script:cachedElements) {
       $focusedId = [string]($focused.GetRuntimeId() -join '.')
-      for ($i = 0; $i -lt $script:cachedElements.Count; $i++) {
+      foreach ($i in $script:cachedElements.Keys) {
         if ([string]($script:cachedElements[$i].GetRuntimeId() -join '.') -ceq $focusedId) {
-          $index = $i + 1
+          $index = [int]$i
           break
         }
       }

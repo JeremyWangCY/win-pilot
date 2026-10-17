@@ -7,6 +7,14 @@ import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { syncBuiltinESMExports } from 'node:module'
 import { EventEmitter } from 'node:events'
+import { controlCoordinator } from '../lib/control-session.js'
+
+// These tests inject failures at the native transport boundary, including
+// concurrent pending JSONL requests and fake clocks. Isolate that boundary from
+// the outer coordinator; actual OS locking, queueing, and session cancellation
+// are tested in control-session.check.mjs. No real helper input is dispatched.
+const originalControlRun = controlCoordinator.run
+controlCoordinator.run = async (_id, _request, signal, operation) => operation(signal)
 
 const originals = { spawn: cp.spawn, copy: fs.copyFileSync, set: globalThis.setTimeout, clear: globalThis.clearTimeout }
 let children, timers, behavior
@@ -39,7 +47,13 @@ async function check(name, fn) {
   const mod = await import(`../lib/index.js?reliability=${serial++}`)
   try { await fn(mod); console.log('PASS', name) }
   catch (err) { failures++; console.error('FAIL', name, err.message) }
-  finally { mod.stopDaemon() }
+  finally {
+    mod.stopDaemon()
+    for (const child of children) for (const write of child.writes) {
+      const marker = JSON.parse(write).cancellation_path
+      if (marker) { try { fs.unlinkSync(marker) } catch { /* owned signal already removed */ } }
+    }
+  }
 }
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
 async function settled(p) {
@@ -50,6 +64,11 @@ async function settled(p) {
   return result
 }
 const unknown = r => { assert.equal(r.ok, false); assert.match(r.message, /outcome unknown/i) }
+function expireCancellationGrace() {
+  const grace = [...timers].find(t => t.ms === 750)
+  assert.ok(grace, 'dispatched cancellation must allow bounded native cleanup grace')
+  grace.fn()
+}
 try {
   for (const route of ['runAction', 'execute']) await check(`${route}: pre-aborted never spawns`, async m => {
     const signal = AbortSignal.abort()
@@ -62,7 +81,7 @@ try {
     await flush()
     const child = children[0]
     if (event === 'timeout') [...timers].find(t => t.ms === 30000).fn()
-    if (event === 'abort') controller.abort()
+    if (event === 'abort') { controller.abort(); expireCancellationGrace() }
     if (event === 'stdin-error') {
       child.stdin.emit('error', new Error('EPIPE'))
       const grace = [...timers].find(t => t.ms === 250)
@@ -87,6 +106,29 @@ try {
     assert.deepEqual(await p, { ok: true, action: 'click' })
     assert.equal(timers.size, 0)
   })
+  for (const route of ['one-shot', 'daemon']) await check(`${route}: cooperative cancellation preserves cleanup reply`, async m => {
+    const controller = new AbortController()
+    const p = route === 'one-shot' ? m.runAction('click', {}, controller.signal)
+      : m.defineComputerTool(d => d).execute({ action: 'click' }, { signal: controller.signal })
+    await flush()
+    const child = children[0]
+    const request = JSON.parse(child.writes[0])
+    controller.abort()
+    assert.ok([...timers].some(t => t.ms === 750), 'abort must retain a bounded native cleanup opportunity')
+    assert.ok(fs.existsSync(request.cancellation_path), 'native cleanup must receive its owned cancellation signal')
+    const reply = { ok: false, action: 'click', error_code: 'operation_cancelled', outcome: 'unknown', retry_safe: false,
+      ...(route === 'daemon' ? { id: request.id } : {}) }
+    child.stdout.emit('data', route === 'daemon' ? `${JSON.stringify(reply)}\n` : Buffer.from(JSON.stringify(reply)))
+    if (route === 'one-shot') child.emit('close', 0)
+    const result = await settled(p)
+    assert.equal(result.error_code, 'operation_cancelled')
+    assert.equal(result.outcome, 'unknown')
+    assert.ok(![...timers].some(t => t.ms === 750), 'completed cleanup must clear forced-termination deadline')
+    assert.equal(child.kills, 0, 'cooperative native cleanup must not force-kill the helper')
+    assert.equal(children.length, 1, 'cancelled mutation must never replay')
+    assert.equal(child.writes.length, 1, 'cancelled mutation must not request a follow-up action')
+    assert.ok(!fs.existsSync(request.cancellation_path), 'completed cleanup removes only its own signal')
+  })
   for (const event of ['close', 'error', 'stdin-error', 'write-throw', 'timeout', 'abort', 'stop']) await check(`daemon ${event}: no replay`, async m => {
     const controller = new AbortController()
     behavior = event
@@ -97,7 +139,7 @@ try {
     if (event === 'error') child.emit('error', new Error('lost process'))
     if (event === 'stdin-error') child.stdin.emit('error', new Error('EPIPE'))
     if (event === 'timeout') [...timers].find(t => t.ms === 20000).fn()
-    if (event === 'abort') controller.abort()
+    if (event === 'abort') { controller.abort(); expireCancellationGrace() }
     if (event === 'stop') m.stopDaemon()
     unknown(await settled(p))
     assert.equal(children.length, 1, 'must not spawn fallback after dispatch')
@@ -282,12 +324,15 @@ try {
 } finally {
   cp.spawn = originals.spawn; fs.copyFileSync = originals.copy
   globalThis.setTimeout = originals.set; globalThis.clearTimeout = originals.clear
+  controlCoordinator.run = originalControlRun
   syncBuiltinESMExports()
 }
 assert.equal(failures, 0, `${failures} reliability checks failed`)
 
 // Optional real OS-process fault injection. Fixtures perform no desktop input.
 if (process.argv.includes('--real')) {
+  // Preserve transport-only isolation for the real subprocess fault fixtures.
+  controlCoordinator.run = async (_id, _request, signal, operation) => operation(signal)
   const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
   for (const [route, fault] of [['one-shot', 'timeout'], ['daemon', 'timeout'], ['daemon', 'exit'], ['one-shot', 'abort']]) {
     const spawned = []
@@ -328,4 +373,5 @@ if (process.argv.includes('--real')) {
       cp.spawn = originals.spawn; syncBuiltinESMExports()
     }
   }
+  controlCoordinator.run = originalControlRun
 }

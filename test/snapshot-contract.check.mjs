@@ -25,8 +25,8 @@ function Seed {
  $script:payload=[pscustomobject]@{snapshot_id='fresh'}
  $script:observation=@{id='fresh';hwnd=[IntPtr]42;created=[DateTime]::UtcNow;rect=(New-Object FixtureRect)}
  $script:cachedTreeHwnd=[IntPtr]42
- $script:cachedElements=@($el)
- $script:cachedIdentities=@((Get-ElementIdentity $el))
+ $script:cachedElements=@{1=$el}
+ $script:cachedIdentities=@{1=(Get-ElementIdentity $el)}
 }
 function Reject([scriptblock]$call,[string]$prefix) {
  $caught=$false

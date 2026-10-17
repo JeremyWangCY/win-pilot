@@ -34,6 +34,16 @@ jobs:
             throw "Tag $env:GITHUB_REF_NAME does not match package version $packageVersion"
           }
 
+      - name: Build native components
+        run: |
+          npm run build:wgc
+          npm run build:desktop
+
+      - name: Test isolated desktop boundaries
+        run: |
+          npm run test:desktop
+          dotnet run --project native/task-desktop-tests/task-desktop-tests.csproj -c Release
+
       - name: Test
         run: npm test
 
