@@ -68,6 +68,12 @@ static class Native
     [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint process);
     [DllImport("kernel32.dll")] internal static extern bool ProcessIdToSessionId(uint process,out uint session);
     [DllImport("user32.dll")] internal static extern short VkKeyScanW(char ch);
+    [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+    internal static bool InputDown(int key){
+        if((key==1||key==2)&&GetSystemMetrics(23)!=0)key=3-key;
+        return (GetAsyncKeyState(key)&0x8000)!=0;
+    }
     [DllImport("user32.dll")] internal static extern uint MapVirtualKeyW(uint code,uint type);
     internal static void SendKeys(object client,(uint vk,bool up,bool extended)[] events)=>RdpKeyboard.Send(client,events);
     [ComImport,Guid("302D8188-0052-4807-806A-362B628F9AC5"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -90,7 +96,13 @@ sealed class RdpView : AxHost,IMessageFilter
     readonly System.Windows.Forms.Timer inputWindowTimer=new(){Interval=250};
     volatile bool replayingInput;
     readonly HashSet<long> heldInput=new();
-    public bool HasHeldUserInput=>heldInput.Count>0;
+    internal Func<int,bool> InputIsDown=Native.InputDown;
+    public bool HasHeldUserInput {get{
+        // Native capture/IME windows can consume an up outside this subtree.
+        // Reconcile only inputs already tracked here; never record global input.
+        heldInput.RemoveWhere(key=>!InputIsDown(key>0?(int)key:key switch{-1=>1,-2=>2,-3=>4,-4=>5,-5=>6,_=>0}));
+        return heldInput.Count>0;
+    }}
     public void ReleaseUserInputTracking()=>heldInput.Clear();
     bool acquiringInput;
     static bool IsInput(int message)=>(message>=0x100&&message<=0x109)||(message>=0x200&&message<=0x20e)||(message>=0x240&&message<=0x24f);
