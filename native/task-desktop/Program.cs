@@ -414,7 +414,22 @@ sealed class DesktopWindow : Form
                 if(dialog.ShowDialog(this)!=DialogResult.OK)return Program.Fail("task_desktop_login_cancelled","已取消首次登录设置，未创建 Windows 会话。");
                 credential=dialog.Login;
             }
-        }catch(Exception e){credential?.Dispose();Error(e.Message);return Program.Fail("task_desktop_login_unavailable",e.Message);}
+        }catch(Exception e){
+            credential?.Dispose();
+            // A saved login that Windows now rejects (expired or changed password)
+            // must stay recoverable: drop the unusable entry and open the same
+            // settings form the user would otherwise have to discover in a
+            // right-click menu, instead of dead-ending on a bare error.
+            string message=e.Message;
+            try{new WindowsLoginStore().Delete();message+="\n\n已清除无法使用的保存登录，请重新填写 Windows 密码。";}
+            catch(Exception clearFailure){message+="\n\n保存的登录信息也无法清除："+clearFailure.Message;return Program.Fail("task_desktop_login_unavailable",message);}
+            state="login_settings";lastError=message;UpdateState();
+            using var retryDialog=new LoginSettingsDialog();
+            if(retryDialog.ShowDialog(this)!=DialogResult.OK)return Program.Fail("task_desktop_login_unavailable",message+"\n\n已取消重新设置，未创建 Windows 会话。");
+            credential=retryDialog.Login;
+            try{if(credential!=null)await Task.Run(credential.ValidateCurrentUser);}
+            catch(Exception retryFailure){credential?.Dispose();Error(retryFailure.Message);return Program.Fail("task_desktop_login_unavailable",retryFailure.Message);}
+        }
         using var loginLifetime=credential;
         if(closing||lifetime.IsCancellationRequested||startupCancellation.IsCancellationRequested)return Program.Fail("task_desktop_closed","连接已取消，未创建 Windows 会话。");
         // Capture ownership after human setup, which can remain open for minutes.
