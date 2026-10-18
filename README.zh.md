@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./docs/images/social-preview.png" alt="Win-Pilot — 面向 DeepSeek Harness 的 Windows 电脑操控" width="820">
+</p>
+
 # win-pilot
 
 [English](./README.md) | 中文

@@ -32,6 +32,12 @@
       "List the open Windows applications without changing anything.",
       "Open an isolated browser and inspect the requested page."
     ],
-    "brandColor": "#2563EB"
+    "brandColor": "#2563EB",
+    "composerIcon": "./assets/composer-icon.png",
+    "logo": "./assets/logo.png",
+    "screenshots": [
+      "./assets/screenshots/task-desktop-expanded.png",
+      "./assets/screenshots/task-desktop-compact.png"
+    ]
   }
 }

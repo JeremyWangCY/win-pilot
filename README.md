@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./docs/images/social-preview.png" alt="Win-Pilot — Windows computer use for DeepSeek Harness" width="820">
+</p>
+
 # win-pilot
 
 English | [中文](./README.zh.md)

@@ -127,50 +127,39 @@ public static class DshStatusPill
       var radius = (float)(H - 1.0);
       using (GraphicsPath pill = RoundedRect(rect, radius))
       {
-        using (var fill = new LinearGradientBrush(rect, Color.FromArgb(224, 22, 22, 26), Color.FromArgb(198, 28, 28, 32), 90f))
+        // Harness dark surface (neutral-bluish-950) with a hairline edge. The old
+        // gradient plus a white sheen read as glossy chrome, which is a different
+        // product language from the flat, near-black harness surfaces.
+        using (var fill = new SolidBrush(Color.FromArgb(242, 21, 21, 23)))
         {
           g.FillPath(fill, pill);
         }
-        using (var edge = new Pen(Color.FromArgb(44, 255, 255, 255), 1.2f))
+        using (var edge = new Pen(Color.FromArgb(26, 255, 255, 255), 1.0f))
         {
           edge.Alignment = PenAlignment.Inset;
           g.DrawPath(edge, pill);
         }
-        var sheenRect = new RectangleF(1.2f, 1.2f, W - 2.4f, H / 2f);
-        using (var sheenPath = RoundedRect(sheenRect, radius - 1f))
-        using (var sheen = new LinearGradientBrush(sheenRect, Color.FromArgb(24, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90f))
-        {
-          g.FillPath(sheen, sheenPath);
-        }
       }
 
-      using (var font = new Font("Segoe UI Semibold", 13.5f, FontStyle.Bold, GraphicsUnit.Point))
+      using (var font = new Font("Segoe UI", 13f, FontStyle.Regular, GraphicsUnit.Point))
       {
         var fmt = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center };
         var textRect = new RectangleF(20, 0, W - 70, H);
-        using (var brush = new SolidBrush(Color.FromArgb(236, 245, 245, 247)))
+        using (var brush = new SolidBrush(Color.FromArgb(242, 249, 250, 251)))
         {
           g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
           g.DrawString("Win-Pilot \u8fd0\u884c\u4e2d", font, brush, textRect, fmt);
         }
       }
 
+      // A single soft dot marks the live session. The previous version layered a
+      // pulsing halo over a saturated green; this keeps one low-contrast tone so
+      // the pill cannot compete with the user's own windows.
       float cx = W - 30f, cy = H / 2f;
-      float alpha = (float)(0.30 + 0.70 * (0.5 + 0.5 * Math.Sin(breath)));
-      using (GraphicsPath glow = new GraphicsPath())
+      float alpha = (float)(0.45 + 0.55 * (0.5 + 0.5 * Math.Sin(breath)));
+      using (SolidBrush dot = new SolidBrush(Color.FromArgb((int)(255 * alpha), 77, 107, 254)))
       {
-        glow.AddEllipse(cx - 11, cy - 11, 22, 22);
-        using (PathGradientBrush pgb = new PathGradientBrush(glow))
-        {
-          pgb.CenterPoint = new PointF(cx, cy);
-          pgb.CenterColor = Color.FromArgb((int)(110 * alpha), 50, 215, 75);
-          pgb.SurroundColors = new Color[] { Color.FromArgb(0, 50, 215, 75) };
-          g.FillPath(pgb, glow);
-        }
-      }
-      using (SolidBrush dot = new SolidBrush(Color.FromArgb((int)(255 * alpha), 48, 209, 88)))
-      {
-        g.FillEllipse(dot, cx - 5, cy - 5, 10, 10);
+        g.FillEllipse(dot, cx - 4, cy - 4, 8, 8);
       }
     }
     return bmp;

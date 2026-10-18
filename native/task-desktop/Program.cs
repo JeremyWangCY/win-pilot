@@ -176,9 +176,9 @@ sealed class DesktopWindow : Form
     readonly int parentSession=Process.GetCurrentProcess().SessionId;
     readonly string parentUserSid=ProcessIdentity.Capture((uint)Environment.ProcessId).User;
     readonly string pipeName, configPath, helperPath;
-    readonly Panel canvas=new(){Dock=DockStyle.Fill,BackColor=Color.FromArgb(247,248,250)};
-    readonly Label notice=new(){Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleCenter,ForeColor=Color.FromArgb(102,112,133),Font=new Font("Microsoft YaHei UI",13)};
-    readonly Label badge=new(){AutoSize=false,Dock=DockStyle.Fill,ForeColor=Color.FromArgb(26,127,90),Padding=new Padding(9,6,0,0)};
+    readonly Panel canvas=new(){Dock=DockStyle.Fill,BackColor=Palette.PaperTile};
+    readonly Label notice=new(){Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleCenter,ForeColor=Palette.InkFaint,Font=new Font("Microsoft YaHei UI",13)};
+    readonly Label badge=new(){AutoSize=false,Dock=DockStyle.Fill,ForeColor=Palette.InkSoft,Padding=new Padding(9,6,0,0)};
     readonly CancellationTokenSource lifetime=new();
     readonly CancellationTokenSource startupCancellation=new();
     readonly Dictionary<string,TaskCompletionSource<JsonObject>> pending=new();
@@ -240,23 +240,19 @@ sealed class DesktopWindow : Form
         Text="Win-Pilot · 任务桌面";FormBorderStyle=FormBorderStyle.None;
         ClientSize=new(432,300);MinimumSize=new(360,240);StartPosition=FormStartPosition.Manual;TopMost=true;Padding=new Padding(1);
         var work=Screen.PrimaryScreen!.WorkingArea;Location=new(Math.Max(work.Left,work.Right-Width-16),Math.Max(work.Top,work.Bottom-Height-16));
-        BackColor=Color.White; ForeColor=Color.FromArgb(24,25,27); Font=new Font("Microsoft YaHei UI",9);
+        BackColor=Palette.Paper; ForeColor=Palette.Ink; Font=new Font("Microsoft YaHei UI",9);
         var top=new Panel(){Dock=DockStyle.Top,Height=32};
         var tools=new FlowLayoutPanel(){Dock=DockStyle.Right,Width=104,Padding=new Padding(0,3,2,2),WrapContents=false};
         loginSettings=MenuItem("登录设置…",()=>{using var dialog=new LoginSettingsDialog();dialog.ShowDialog(this);dialog.Login?.Dispose();return Task.CompletedTask;});
-        windowMenu.BackColor=Color.White;windowMenu.ForeColor=ForeColor;windowMenu.Font=Font;
+        windowMenu.BackColor=Palette.Paper;windowMenu.ForeColor=ForeColor;windowMenu.Font=Font;
         windowMenu.Items.Add(loginSettings);top.ContextMenuStrip=windowMenu;badge.ContextMenuStrip=windowMenu;
-        windowSize=Button("↗",()=>{ToggleWindowSize();return Task.CompletedTask;});windowSize.Name="task-window-size";windowSize.AccessibleName="放大任务窗口";
+        windowSize=Button("",()=>{ToggleWindowSize();return Task.CompletedTask;});windowSize.Name="task-window-size";windowSize.AccessibleName="放大任务窗口";
+        windowSize.Paint+=(_,e)=>PaintGlyph(e.Graphics,windowSize.ClientRectangle,expanded?Glyph.Restore:Glyph.Expand);
         pinWindow=Button("",()=>{TopMost=!TopMost;pinWindow!.Invalidate();return Task.CompletedTask;});pinWindow.Name="task-window-pin";pinWindow.AccessibleName="切换置顶";
-        pinWindow.Paint+=(_,e)=>{
-            e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            using var shape=new System.Drawing.Drawing2D.GraphicsPath();
-            shape.AddPolygon(new Point[]{new(10,4),new(20,4),new(20,6),new(18,6),new(18,12),new(21,15),new(9,15),new(12,12),new(12,6),new(10,6)});
-            using var pen=new Pen(ForeColor,1.2f);if(TopMost){using var fill=new SolidBrush(ForeColor);e.Graphics.FillPath(fill,shape);}else e.Graphics.DrawPath(pen,shape);
-            e.Graphics.DrawLine(pen,15,15,15,21);
-        };
-        var closeWindow=Button("×",()=>{Close();return Task.CompletedTask;});closeWindow.AccessibleName="关闭任务窗口";
-        foreach(var button in new[]{windowSize,pinWindow,closeWindow}){button.AutoSize=false;button.Size=new(30,25);button.Margin=new Padding(2,0,1,0);button.FlatAppearance.BorderSize=0;}
+        pinWindow.Paint+=(_,e)=>PaintGlyph(e.Graphics,pinWindow.ClientRectangle,Glyph.Pin,TopMost);
+        var closeWindow=Button("",()=>{Close();return Task.CompletedTask;});closeWindow.AccessibleName="关闭任务窗口";
+        closeWindow.Paint+=(_,e)=>PaintGlyph(e.Graphics,closeWindow.ClientRectangle,Glyph.Close);
+        foreach(var button in new[]{windowSize,pinWindow,closeWindow}){button.AutoSize=false;button.Size=new(30,25);button.Margin=new Padding(2,0,1,0);button.FlatAppearance.BorderSize=0;button.FlatAppearance.MouseOverBackColor=Palette.Hover;button.FlatAppearance.MouseDownBackColor=Palette.LineSoft;button.TabStop=false;}
         windowHints.SetToolTip(windowSize,"放大 / 收回 · 放大后可直接操作，空闲10秒交还 AI");windowHints.SetToolTip(pinWindow,"置顶 / 取消置顶");windowHints.SetToolTip(closeWindow,"关闭任务窗口");
         tools.Controls.AddRange([windowSize,pinWindow,closeWindow]);top.Controls.Add(badge);top.Controls.Add(tools);
         Controls.Add(canvas);Controls.Add(top);canvas.Controls.Add(notice);
@@ -266,7 +262,7 @@ sealed class DesktopWindow : Form
             surface.MouseMove+=(_,_)=>{if(dragOrigin is Point origin){var cursor=Cursor.Position;Location=new(windowOrigin.X+cursor.X-origin.X,windowOrigin.Y+cursor.Y-origin.Y);}};
             surface.MouseUp+=(_,_)=>{dragOrigin=null;surface.Capture=false;};
         }
-        Paint+=(_,e)=>{using var border=new Pen(Color.FromArgb(229,231,235));e.Graphics.DrawRectangle(border,0,0,Width-1,Height-1);};
+        Paint+=(_,e)=>{using var border=new Pen(Palette.Line);e.Graphics.DrawRectangle(border,0,0,Width-1,Height-1);};
         Deactivate+=(_,_)=>view?.ReleaseUserInputTracking();
         notice.Font=new Font(Font.FontFamily,10);
         notice.Text=previewOnly?"任务画面":"等待连接…";
@@ -282,7 +278,7 @@ sealed class DesktopWindow : Form
         var work=Screen.FromControl(this).WorkingArea;
         if(!expanded){compactBounds=Bounds;ClientSize=new(Math.Min(960,Math.Max(360,work.Width-40)),Math.Min(660,Math.Max(290,work.Height-60)));Location=new(work.Left+(work.Width-Width)/2,work.Top+(work.Height-Height)/2);}
         else {Bounds=compactBounds;Location=new(Math.Clamp(Left,work.Left,Math.Max(work.Left,work.Right-Width)),Math.Clamp(Top,work.Top,Math.Max(work.Top,work.Bottom-Height)));}
-        expanded=!expanded;windowSize.Text=expanded?"↙":"↗";windowSize.AccessibleName=expanded?"收回悬浮窗":"放大任务窗口";
+        expanded=!expanded;windowSize.AccessibleName=expanded?"收回悬浮窗":"放大任务窗口";windowSize.Invalidate();
         ConfigureManualInput();UpdateState();
     }
     void ConfigureManualInput(){if(view!=null)view.AcquireUserInput=expanded?BeginManualInput:null;}
@@ -298,10 +294,51 @@ sealed class DesktopWindow : Form
     {
         var item=new ToolStripMenuItem(text);item.Click+=async(_,_)=>{try{await action();}catch(Exception e){Error(e.Message);}};return item;
     }
+    // Toolbar glyphs are drawn rather than typed. A text arrow or multiplication
+    // sign picks up whatever the font renders, which drifts between Windows builds
+    // and looks nothing like the rest of the product; these are fixed 20x20
+    // strokes on a 1.4px grid in the same ink as the labels.
+    enum Glyph { Expand, Restore, Pin, Close }
+    static void PaintGlyph(Graphics g,Rectangle bounds,Glyph glyph,bool active=false)
+    {
+        g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.PixelOffsetMode=System.Drawing.Drawing2D.PixelOffsetMode.Half;
+        float cx=bounds.Width/2f, cy=bounds.Height/2f;
+        using var pen=new Pen(Palette.Ink,1.4f){StartCap=System.Drawing.Drawing2D.LineCap.Round,EndCap=System.Drawing.Drawing2D.LineCap.Round,LineJoin=System.Drawing.Drawing2D.LineJoin.Round};
+        switch(glyph){
+            case Glyph.Expand:
+                // Two opposing corners: the conventional "make bigger" mark.
+                g.DrawLines(pen,[new PointF(cx-5,cy+1),new PointF(cx-5,cy+5),new PointF(cx-1,cy+5)]);
+                g.DrawLines(pen,[new PointF(cx+5,cy-1),new PointF(cx+5,cy-5),new PointF(cx+1,cy-5)]);
+                g.DrawLine(pen,cx-5,cy+5,cx+5,cy-5);
+                break;
+            case Glyph.Restore:
+                g.DrawLines(pen,[new PointF(cx-5,cy-1),new PointF(cx-5,cy-5),new PointF(cx-1,cy-5)]);
+                g.DrawLines(pen,[new PointF(cx+5,cy+1),new PointF(cx+5,cy+5),new PointF(cx+1,cy+5)]);
+                g.DrawLine(pen,cx+5,cy-5,cx-5,cy+5);
+                break;
+            case Glyph.Pin:
+                using(var path=new System.Drawing.Drawing2D.GraphicsPath()){
+                    path.AddPolygon([new PointF(cx-5,cy-4),new PointF(cx+5,cy-4),new PointF(cx+5,cy-2),new PointF(cx+3,cy-2),
+                        new PointF(cx+3,cy+2),new PointF(cx+6,cy+5),new PointF(cx-6,cy+5),new PointF(cx-3,cy+2),new PointF(cx-3,cy-2),new PointF(cx-5,cy-2)]);
+                    // Pinned state uses the ink fill rather than the blue accent: a
+                    // solid blue pin reads as a coloured block at this size, while
+                    // ink keeps the toolbar monochrome and the state still obvious.
+                    if(active){using var fill=new SolidBrush(Palette.Ink);g.FillPath(fill,path);}
+                    g.DrawPath(pen,path);
+                }
+                g.DrawLine(pen,cx,cy+5,cx,cy+9);
+                break;
+            case Glyph.Close:
+                g.DrawLine(pen,cx-4,cy-4,cx+4,cy+4);
+                g.DrawLine(pen,cx+4,cy-4,cx-4,cy+4);
+                break;
+        }
+    }
     Button Button(string text,Func<Task> action)
     {
-        var b=new Button(){Text=text,AutoSize=true,Height=32,FlatStyle=FlatStyle.Flat,Margin=new Padding(4,0,4,0),BackColor=Color.White,ForeColor=Color.FromArgb(24,25,27)};
-        b.FlatAppearance.BorderSize=1;b.FlatAppearance.BorderColor=Color.FromArgb(229,231,235);b.FlatAppearance.MouseOverBackColor=Color.FromArgb(243,244,246);
+        var b=new Button(){Text=text,AutoSize=true,Height=32,FlatStyle=FlatStyle.Flat,Margin=new Padding(4,0,4,0),BackColor=Palette.Paper,ForeColor=Palette.Ink};
+        b.FlatAppearance.BorderSize=1;b.FlatAppearance.BorderColor=Palette.LineSoft;b.FlatAppearance.MouseOverBackColor=Palette.Hover;
         b.Click+=async(_,_)=>{try{await action();}catch(Exception e){Error(e.Message);}};return b;
     }
     JsonObject Snapshot()=>new(){["ok"]=true,["instance_id"]=instance,["preview_only"]=previewOnly,["state"]=state,["windows_session_id"]=childSession==uint.MaxValue?null:childSession,["parent_windows_session_id"]=parentSession,["startup_isolation_ready"]=startupMarkersReady.Task.IsCompletedSuccessfully,["worker_ready"]=workerReady.Task.IsCompletedSuccessfully&&writer!=null&&connected,["paused"]=paused,["takeover"]=takeover,["visible"]=Visible&&!IsDisposed,["connected"]=connected,["message"]=lastError,["host_pid"]=Environment.ProcessId};

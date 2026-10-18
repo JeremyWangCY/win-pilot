@@ -3,6 +3,7 @@
     <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms><ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable><AssemblyName>win-pilot-task-desktop</AssemblyName>
+    <ApplicationIcon>..\..\assets\win-pilot.ico</ApplicationIcon>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
 </Project>
