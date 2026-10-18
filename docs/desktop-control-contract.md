@@ -41,7 +41,7 @@ independently; it is not derived from another product's internals.
 
 ## Settings surface
 
-- The settings panel exposes only checkbox and dropdown preferences: no numeric
+- The settings panel exposes only toggles and one two-way choice: no numeric
   input and no mandatory permission switch.
 - Capabilities the runtime always needs stay enabled internally rather than
   being offered as a toggle that can only break the product.

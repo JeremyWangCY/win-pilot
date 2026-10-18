@@ -237,23 +237,23 @@ sealed class DesktopWindow : Form
         instance=id;previewOnly=preview; pipeName="win-pilot-task-"+id;
         configPath=Path.Combine(Path.GetTempPath(),"win-pilot", "task-desktop-"+id+".json");
         helperPath=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","win-pilot-helper.ps1"));
-        Text="Win-Pilot · 任务桌面";FormBorderStyle=FormBorderStyle.None;
+        Text=UiText.WindowTitle;FormBorderStyle=FormBorderStyle.None;
         ClientSize=new(432,300);MinimumSize=new(360,240);StartPosition=FormStartPosition.Manual;TopMost=true;Padding=new Padding(1);
         var work=Screen.PrimaryScreen!.WorkingArea;Location=new(Math.Max(work.Left,work.Right-Width-16),Math.Max(work.Top,work.Bottom-Height-16));
         BackColor=Palette.Paper; ForeColor=Palette.Ink; Font=new Font("Microsoft YaHei UI",9);
         var top=new Panel(){Dock=DockStyle.Top,Height=32};
         var tools=new FlowLayoutPanel(){Dock=DockStyle.Right,Width=104,Padding=new Padding(0,3,2,2),WrapContents=false};
-        loginSettings=MenuItem("登录设置…",()=>{using var dialog=new LoginSettingsDialog();dialog.ShowDialog(this);dialog.Login?.Dispose();return Task.CompletedTask;});
+        loginSettings=MenuItem(UiText.MenuLoginSettings,()=>{using var dialog=new LoginSettingsDialog();dialog.ShowDialog(this);dialog.Login?.Dispose();return Task.CompletedTask;});
         windowMenu.BackColor=Palette.Paper;windowMenu.ForeColor=ForeColor;windowMenu.Font=Font;
         windowMenu.Items.Add(loginSettings);top.ContextMenuStrip=windowMenu;badge.ContextMenuStrip=windowMenu;
-        windowSize=Button("",()=>{ToggleWindowSize();return Task.CompletedTask;});windowSize.Name="task-window-size";windowSize.AccessibleName="放大任务窗口";
+        windowSize=Button("",()=>{ToggleWindowSize();return Task.CompletedTask;});windowSize.Name="task-window-size";windowSize.AccessibleName=UiText.ResizeToggle;
         windowSize.Paint+=(_,e)=>PaintGlyph(e.Graphics,windowSize.ClientRectangle,expanded?Glyph.Restore:Glyph.Expand);
-        pinWindow=Button("",()=>{TopMost=!TopMost;pinWindow!.Invalidate();return Task.CompletedTask;});pinWindow.Name="task-window-pin";pinWindow.AccessibleName="切换置顶";
+        pinWindow=Button("",()=>{TopMost=!TopMost;pinWindow!.Invalidate();return Task.CompletedTask;});pinWindow.Name="task-window-pin";pinWindow.AccessibleName=UiText.PinToggle;
         pinWindow.Paint+=(_,e)=>PaintGlyph(e.Graphics,pinWindow.ClientRectangle,Glyph.Pin,TopMost);
-        var closeWindow=Button("",()=>{Close();return Task.CompletedTask;});closeWindow.AccessibleName="关闭任务窗口";
+        var closeWindow=Button("",()=>{Close();return Task.CompletedTask;});closeWindow.AccessibleName=UiText.CloseWindow;
         closeWindow.Paint+=(_,e)=>PaintGlyph(e.Graphics,closeWindow.ClientRectangle,Glyph.Close);
         foreach(var button in new[]{windowSize,pinWindow,closeWindow}){button.AutoSize=false;button.Size=new(30,25);button.Margin=new Padding(2,0,1,0);button.FlatAppearance.BorderSize=0;button.FlatAppearance.MouseOverBackColor=Palette.Hover;button.FlatAppearance.MouseDownBackColor=Palette.LineSoft;button.TabStop=false;}
-        windowHints.SetToolTip(windowSize,"放大 / 收回 · 放大后可直接操作，空闲10秒交还 AI");windowHints.SetToolTip(pinWindow,"置顶 / 取消置顶");windowHints.SetToolTip(closeWindow,"关闭任务窗口");
+        windowHints.SetToolTip(windowSize,UiText.HintResize);windowHints.SetToolTip(pinWindow,UiText.HintPin);windowHints.SetToolTip(closeWindow,UiText.HintClose);
         tools.Controls.AddRange([windowSize,pinWindow,closeWindow]);top.Controls.Add(badge);top.Controls.Add(tools);
         Controls.Add(canvas);Controls.Add(top);canvas.Controls.Add(notice);
         Point? dragOrigin=null;Point windowOrigin=default;
@@ -265,7 +265,7 @@ sealed class DesktopWindow : Form
         Paint+=(_,e)=>{using var border=new Pen(Palette.Line);e.Graphics.DrawRectangle(border,0,0,Width-1,Height-1);};
         Deactivate+=(_,_)=>view?.ReleaseUserInputTracking();
         notice.Font=new Font(Font.FontFamily,10);
-        notice.Text=previewOnly?"任务画面":"等待连接…";
+        notice.Text=previewOnly?UiText.PreviewCanvas:UiText.WaitConnecting;
         Shown+=(_,_)=>{ UpdateState(); if(Program.Stdio)_=Task.Run(ReadCommands); };
         timer.Tick+=(_,_)=>Poll();timer.Start();
         startupTimer.Tick+=(_,_)=>{RefreshLiveSessions();PrepareStartupMarkers();};
@@ -278,7 +278,7 @@ sealed class DesktopWindow : Form
         var work=Screen.FromControl(this).WorkingArea;
         if(!expanded){compactBounds=Bounds;ClientSize=new(Math.Min(960,Math.Max(360,work.Width-40)),Math.Min(660,Math.Max(290,work.Height-60)));Location=new(work.Left+(work.Width-Width)/2,work.Top+(work.Height-Height)/2);}
         else {Bounds=compactBounds;Location=new(Math.Clamp(Left,work.Left,Math.Max(work.Left,work.Right-Width)),Math.Clamp(Top,work.Top,Math.Max(work.Top,work.Bottom-Height)));}
-        expanded=!expanded;windowSize.AccessibleName=expanded?"收回悬浮窗":"放大任务窗口";windowSize.Invalidate();
+        expanded=!expanded;windowSize.AccessibleName=expanded?UiText.ResizeCollapse:UiText.ResizeToggle;windowSize.Invalidate();
         ConfigureManualInput();UpdateState();
     }
     void ConfigureManualInput(){if(view!=null)view.AcquireUserInput=expanded?BeginManualInput:null;}
@@ -344,13 +344,13 @@ sealed class DesktopWindow : Form
     JsonObject Snapshot()=>new(){["ok"]=true,["instance_id"]=instance,["preview_only"]=previewOnly,["state"]=state,["windows_session_id"]=childSession==uint.MaxValue?null:childSession,["parent_windows_session_id"]=parentSession,["startup_isolation_ready"]=startupMarkersReady.Task.IsCompletedSuccessfully,["worker_ready"]=workerReady.Task.IsCompletedSuccessfully&&writer!=null&&connected,["paused"]=paused,["takeover"]=takeover,["visible"]=Visible&&!IsDisposed,["connected"]=connected,["message"]=lastError,["host_pid"]=Environment.ProcessId};
     void UpdateState()
     {
-        badge.Text=state switch{"ready"=>paused?"● 已暂停":"● 运行就绪","login_settings"=>"● 首次登录设置","awaiting_windows_login"=>"● 请登录 Windows","connecting"=>"● 正在连接","takeover"=>"● 人工接管","needs_preparation"=>"● 需要准备","error"=>"● 连接失败",_=>"● 待连接"};
-        if(previewOnly)badge.Text="○ 窗口预览";
+        badge.Text=UiText.Badge(state,paused);
+        if(previewOnly)badge.Text=UiText.PreviewBadge;
         loginSettings.Enabled=!previewOnly&&!opening;
         if(view!=null)view.AllowUserInput=expanded&&(takeover||(connected&&!loginCompleted.Task.IsCompletedSuccessfully&&!workerAuthenticated));
         Program.Emit(new{ @event="state",state=Snapshot()});
     }
-    void Error(string message){lastError=message;state="error";paused=true;UpdateState();if(view==null)notice.Text="暂时无法连接独立桌面\n\n"+message+"\n\n不会切换到你的主桌面执行操作。";}
+    void Error(string message){lastError=message;state="error";paused=true;UpdateState();if(view==null)notice.Text=UiText.NoticeUnavailable(message);}
     void StartupEvent(string stage,uint? session=null,string? marker=null)=>Program.Emit(new{@event="startup_isolation",instance_id=instance,stage,windows_session_id=session,marker,timestamp=DateTime.UtcNow.ToString("O")});
     void PrepareStartupMarkers()
     {

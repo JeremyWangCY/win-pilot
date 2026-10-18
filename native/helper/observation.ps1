@@ -48,7 +48,7 @@ function Get-FocusPolicy {
 }
 
 function Get-OverlayEnabled {
-  # codex-style cursor indicator: ON by default (user asked to see where the AI will click).
+  # Cursor indicator: ON by default (user asked to see where the AI will click).
   # Pass overlay: false on an action to hide the indicator for that action.
   $o = Get-PayloadValue 'overlay'
   if ($null -eq $o) { return $true }

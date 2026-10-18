@@ -106,7 +106,7 @@ After updating an already-loaded plugin, restart DeepSeek Harness before saving 
 
 Use `win-pilot desktop --preview` to view the native window without creating a session or running computer actions. `win-pilot desktop` is the normal connection entry and respects the connection hold. Source builds use `npm run build:desktop`; checks without Windows sessions use `npm run test:desktop`. These additions have not been published to npm or GitHub.
 
-Numeric limits and input policy use internal defaults; old settings cannot change them. Required Windows/Meta system keys stay enabled internally. Confirmed Codex behavior guides background input, lock checks, user-interruption cancellation, focus yielding, and window text reads. CLI/MCP installs without a harness use the built-in defaults.
+Numeric limits and input policy use internal defaults; old settings cannot change them. Required Windows/Meta system keys stay enabled internally. Background input, lock checks, user-interruption cancellation, focus yielding and window text reads follow this project's own [desktop control contract](docs/desktop-control-contract.md). CLI/MCP installs without a harness use the built-in defaults.
 
 ### Updating
 

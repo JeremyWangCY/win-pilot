@@ -42,10 +42,10 @@ activation now preserves an already active target and sends no synthetic keys.
   rejected save/reset and draft retention. Config integration checks actual
   schemastery/cosmokit references; these checks do not exercise Electron Loader.
 
-The implementation follows the reference's observed interruption contract; the
-proprietary Codex source is not available. Windows can silently remove a low-level
-hook after callback timeout without providing a query for that condition. The
-monitor uses short callbacks on its own message-loop thread and refuses input
-on detected startup/thread/callback failures; it does not switch to timestamp
-polling. A synchronous UIA call or already-submitted input cannot be undone by
-cancellation; uncertain partial dispatch requires fresh observation.
+The implementation satisfies the interruption requirements in
+[desktop-control-contract.md](desktop-control-contract.md). Windows can silently
+remove a low-level hook after callback timeout without providing a query for
+that condition. The monitor uses short callbacks on its own message-loop thread
+and refuses input on detected startup/thread/callback failures; it does not
+switch to timestamp polling. A synchronous UIA call or already-submitted input
+cannot be undone by cancelling, so the UI must observe before acting again.

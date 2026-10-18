@@ -1,22 +1,35 @@
 // Local-only delivery. Preserve the previous package and profile before pnpm changes.
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import {createHash} from 'node:crypto'
 import {execFileSync} from 'node:child_process'
 import {fileURLToPath} from 'node:url'
 const root=fileURLToPath(new URL('..',import.meta.url))
-const profile='/dsh/profiles/desktop'
+
+// Paths are derived, never hardcoded: this script is committed, so a developer's
+// home directory must not leak into it. DSH_HOME and WIN_PILOT_PROFILE override
+// the defaults for non-standard layouts.
+const dshHome=process.env.DSH_HOME??path.join(os.homedir(),'.dsh')
+const profile=process.env.WIN_PILOT_PROFILE??path.join(dshHome,'profiles','desktop')
 const installed=path.join(profile,'node_modules','win-pilot')
-const pnpm='/dsh/dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin/pnpm.cjs'
+const localPlugins=process.env.WIN_PILOT_LOCAL_PLUGINS??path.join(dshHome,'local-plugins')
+const pnpm=process.env.WIN_PILOT_PNPM
+  ??path.join(dshHome,'dsh-runtimes','dsh-primary-runtime','dependencies','pnpm','bin','pnpm.cjs')
 const stamp=new Date().toISOString().replace(/[:.]/g,'-')
-const backup=path.join('/dsh/local-plugins/win-pilot','backup-'+stamp)
+const backup=path.join(localPlugins,'win-pilot','backup-'+stamp)
 const packDir=path.join(root,'artifacts','local-delivery',stamp)
+if(!fs.existsSync(profile))throw new Error(`profile not found: ${profile} (set WIN_PILOT_PROFILE)`)
+if(!fs.existsSync(pnpm))throw new Error(`pnpm not found: ${pnpm} (set WIN_PILOT_PNPM)`)
 fs.mkdirSync(backup,{recursive:true});fs.mkdirSync(packDir,{recursive:true})
 for(const name of ['package.json','pnpm-lock.yaml','cordis.patch.yml'])if(fs.existsSync(path.join(profile,name)))fs.copyFileSync(path.join(profile,name),path.join(backup,name))
 fs.cpSync(installed,path.join(backup,'win-pilot'),{recursive:true,dereference:true})
 const before=JSON.parse(fs.readFileSync(path.join(profile,'package.json'),'utf8'))
-const npmCli='/node_modules/npm/bin/npm-cli.js'
-const packed=JSON.parse(execFileSync(process.execPath,[npmCli,'pack','--json','--pack-destination',packDir],{cwd:root,encoding:'utf8',windowsHide:true}))[0]
+// `npm pack` is run through the current Node binary, so resolve npm relative to
+// that installation instead of assuming a system-wide Node directory.
+const npmCli=path.join(path.dirname(process.execPath),'node_modules','npm','bin','npm-cli.js')
+const npmRunner=fs.existsSync(npmCli)?[process.execPath,[npmCli]]:[process.env.ComSpec??'cmd.exe',['/c','npm']]
+const packed=JSON.parse(execFileSync(npmRunner[0],[...npmRunner[1],'pack','--json','--pack-destination',packDir],{cwd:root,encoding:'utf8',windowsHide:true}))[0]
 const tarball=path.join(packDir,packed.filename)
 const hash=createHash('sha256').update(fs.readFileSync(tarball)).digest('hex')
 const name=`win-pilot-${packed.version}-local-${hash.slice(0,12)}.tgz`

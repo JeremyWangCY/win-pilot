@@ -143,7 +143,7 @@ function find(tree, predicate) {
 
 // The field table the host schema accepts, read from lib/settings.js so the two
 // can never drift; the card must render exactly these controls.
-const { WIN_PILOT_EDITABLE_SETTING_KEYS: FIELDS } = await import(new URL('../lib/settings.js', import.meta.url).href)
+const { WIN_PILOT_EDITABLE_SETTING_KEYS: FIELDS, WIN_PILOT_SETTINGS_FIELDS: SCHEMA } = await import(new URL('../lib/settings.js', import.meta.url).href)
 
 /**
  * The React instance the plugin closes over. `captured.factory()` calls
@@ -391,19 +391,33 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
     locale: { getSnapshot: () => ({ active: 'en' }) },
   })
   const tree = pluginReact.mount(Card, { scope, locale: 'en' })
+  const booleans = SCHEMA.filter((field) => field.type === 'boolean')
+  const enums = SCHEMA.filter((field) => field.type === 'enum')
+  // Counts come from the schema, not from literals: adding a field must not
+  // silently pass a test that still expects the old number.
   const controls = flatten(tree).filter((node) => node.props && node.props.role === 'switch')
-  assert.equal(controls.length, 3,
-    'the card must render one switch per boolean field (got ' + controls.length + ')')
-  assert.ok(controls.every((node) => node.type === 'button'),
-    'switches are buttons with role=switch, so the card never asks for typed input')
+  assert.equal(controls.length, booleans.length,
+    'the card must render one switch per boolean field (got ' + controls.length + ', expected ' + booleans.length + ')')
   const segments = flatten(tree).filter((node) => node.props && node.props.role === 'radio')
-  assert.equal(segments.length, 2, 'the environment choice renders one segment per option')
-  assert.ok(segments.every((node) => node.type === 'button'),
-    'the environment choice is a segmented control, never a free-text field')
-  // Every control is labelled, so the form is usable and screen-reader readable.
-  for (const control of controls) {
-    assert.ok(typeof control.props['aria-label'] === 'string' && control.props['aria-label'].length > 0,
-      'every control must carry an accessible label')
+  assert.equal(segments.length, enums[0].values.length,
+    'the environment choice renders one segment per option (got ' + segments.length + ')')
+  assert.equal(flatten(tree).filter((node) => node.props && node.props.role === 'radiogroup').length, enums.length,
+    'each enum field renders exactly one radiogroup')
+  // The card must never render a free-text or number input anywhere.
+  assert.equal(flatten(tree).filter((node) => node.type === 'input').length, 0,
+    'the settings card must not render any raw input element')
+  // Every visible label points at a control that actually exists in the tree.
+  // A <label> with no htmlFor, or one naming a missing id, silently does nothing.
+  const ids = new Set(flatten(tree)
+    .filter((node) => node.props && typeof node.props.id === 'string')
+    .map((node) => node.props.id))
+  const labels = flatten(tree).filter((node) => node.type === 'label')
+  assert.equal(labels.length, SCHEMA.length, 'every field has exactly one visible label')
+  for (const label of labels) {
+    assert.ok(typeof label.props.htmlFor === 'string' && label.props.htmlFor.length > 0,
+      'every label must carry htmlFor')
+    assert.ok(ids.has(label.props.htmlFor),
+      'label htmlFor must name an existing control id: ' + label.props.htmlFor)
   }
   // Nothing is written until Save.
   assert.deepEqual(scope.writes, [], 'mounting the card must not write anything')

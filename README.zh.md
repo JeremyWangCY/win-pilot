@@ -149,7 +149,7 @@ MCP `tools/list` 返回的实时 Schema 是完整参数和默认值的权威定�
 
 查看原生窗口：`win-pilot desktop --preview`。预览不能连接会话或执行电脑动作。正常连接入口为 `win-pilot desktop`，受启动拦截约束。源码构建使用 `npm run build:desktop`，无会话测试使用 `npm run test:desktop`。这些增量尚未发布到 npm 或 GitHub。
 
-数值限制和输入策略采用内部默认值，旧设置不再改变它们；必需的 Windows/Meta 系统按键能力始终开启。后台输入、锁屏检查、用户输入中断、焦点让路和窗口文字读取依据已核对的 Codex 行为。没有宿主的 CLI/MCP 安装使用内置默认值。
+数值限制和输入策略采用内部默认值，旧设置不再改变它们；必需的 Windows/Meta 系统按键能力始终开启。后台输入、锁屏检查、用户输入中断、焦点让路和窗口文字读取遵循本项目自己的[桌面控制契约](docs/desktop-control-contract.md)。没有宿主的 CLI/MCP 安装使用内置默认值。
 
 ## 工作原理
 

@@ -1,4 +1,4 @@
-# Win-Pilot status pill: top-center frosted dark bar with a breathing green dot.
+# Win-Pilot status pill: top-center dark bar with one low-contrast accent dot.
 # Visible while the helper is acting (status.state fresh), hides shortly after
 # the last action. Click-through, never activates, per-pixel-alpha layered
 # window — same technique as the virtual cursor overlay (PS 5.1 + PS7 compatible).
@@ -114,6 +114,13 @@ public static class DshStatusPill
     return p;
   }
 
+  // The pill follows the Windows display language, so an English install does
+  // not show a Chinese label. Resolved once: the pill repaints on a timer.
+  static readonly string Label = System.Globalization.CultureInfo
+    .CurrentUICulture.TwoLetterISOLanguageName.Equals("zh", StringComparison.OrdinalIgnoreCase)
+    ? "Win-Pilot \u8fd0\u884c\u4e2d"
+    : "Win-Pilot running";
+  static string PillLabel() { return Label; }
   static Bitmap RenderBitmap(double breath)
   {
     Bitmap bmp = new Bitmap(W, H, PixelFormat.Format32bppPArgb);
@@ -148,7 +155,7 @@ public static class DshStatusPill
         using (var brush = new SolidBrush(Color.FromArgb(242, 249, 250, 251)))
         {
           g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-          g.DrawString("Win-Pilot \u8fd0\u884c\u4e2d", font, brush, textRect, fmt);
+          g.DrawString(PillLabel(), font, brush, textRect, fmt);
         }
       }
 
@@ -157,7 +164,7 @@ public static class DshStatusPill
       // the pill cannot compete with the user's own windows.
       float cx = W - 30f, cy = H / 2f;
       float alpha = (float)(0.45 + 0.55 * (0.5 + 0.5 * Math.Sin(breath)));
-      using (SolidBrush dot = new SolidBrush(Color.FromArgb((int)(255 * alpha), 77, 107, 254)))
+      using (SolidBrush dot = new SolidBrush(Color.FromArgb((int)(255 * alpha), 86, 134, 254)))
       {
         g.FillEllipse(dot, cx - 4, cy - 4, 8, 8);
       }

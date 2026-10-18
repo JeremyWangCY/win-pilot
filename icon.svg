@@ -8,7 +8,7 @@
 
       ink    neutral-bluish-1000   #0f1115
       paper  neutral-bluish-00     #ffffff
-      accent blue-500              #3b82f6   (the pointer only)
+      accent deepseek-450          #5686fe   (the pointer only)
 
     The paper square supplies the contrast, so the icon reads on both light and
     dark surfaces without a second dark-mode variant. Corner radius 58/512 is
@@ -27,5 +27,5 @@
   <circle cx="368" cy="145" r="15" fill="#0F1115"/>
 
   <!-- Pointer: the single blue accent, as in the harness accent usage. -->
-  <path d="M200 216 L200 349 L244 306 L273 366 L315 348 L286 289 L343 289 Z" fill="#3B82F6"/>
+  <path d="M200 216 L200 349 L244 306 L273 366 L315 348 L286 289 L343 289 Z" fill="#5686FE"/>
 </svg>
