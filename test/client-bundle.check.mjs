@@ -143,7 +143,22 @@ function find(tree, predicate) {
 
 // The field table the host schema accepts, read from lib/settings.js so the two
 // can never drift; the card must render exactly these controls.
-const { WIN_PILOT_EDITABLE_SETTING_KEYS: FIELDS, WIN_PILOT_SETTINGS_FIELDS: SCHEMA } = await import(new URL('../lib/settings.js', import.meta.url).href)
+const { WIN_PILOT_SETTINGS_FIELDS: SCHEMA } = await import(new URL('../lib/settings.js', import.meta.url).href)
+// The card declares its own field table; it must stay identical to the host
+// schema, or the card could offer a field the host rejects (or hide one it
+// accepts). Both sides are read from source because the table is module-private.
+{
+  const declared = [...source.matchAll(/key:\s*'([A-Za-z]+)',\s*type:\s*'([a-z]+)'/g)]
+    .map((m) => ({ key: m[1], type: m[2] }))
+  assert.deepEqual(
+    declared.map((f) => f.key),
+    SCHEMA.map((f) => f.key),
+    'the client field table must list exactly the host schema keys, in order')
+  assert.deepEqual(
+    declared.map((f) => f.type),
+    SCHEMA.map((f) => f.type),
+    'the client field table must agree with the host schema on every field type')
+}
 
 /**
  * The React instance the plugin closes over. `captured.factory()` calls

@@ -4,7 +4,11 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-const ignored = new Set(['.git', 'node_modules'])
+// Directories that are not part of the shipped source: version control, the
+// dependency tree, and the gitignored local scratch dirs (build output, review
+// reports, probe logs, judge output). Scanning those made this check fail on the
+// reviewer's own notes rather than on anything the product ships.
+const ignored = new Set(['.git', 'node_modules', 'artifacts', 'reports', 'lib/wgc'])
 const textExtensions = new Set(['.js', '.mjs', '.ps1', '.md', '.json', '.yml', '.yaml', '.html', '.cs', '.csproj'])
 const legacyPrefix = 'p' + 'c'
 const stale = new RegExp(`${legacyPrefix}[-_ ]?pilot|dsh-${legacyPrefix}-pilot|dsh-c` + 'ua|' + `${legacyPrefix}pilot`, 'i')

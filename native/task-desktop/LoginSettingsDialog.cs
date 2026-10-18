@@ -83,11 +83,11 @@ class LoginSettingsDialog : Form
                 if(remember.Checked)store.Save(login);else store.Delete();
                 Login=login;login=null;busy=false;DialogResult=DialogResult.OK;Close();
             }catch(Exception e){
-                if(!cancelled&&!IsDisposed){result.ForeColor=Color.FromArgb(0xEF,0x44,0x44);result.Text=e.Message;}
+                if(!cancelled&&!IsDisposed){result.ForeColor=Palette.Danger;result.Text=e.Message;}
             }
             finally{login?.Dispose();busy=false;if(!cancelled&&!IsDisposed){save.Enabled=true;clear.Enabled=true;account.Enabled=true;password.Enabled=true;remember.Enabled=true;password.Focus();}}
         };
-        clear.Click+=(_,_)=>{try{store.Delete();result.ForeColor=Palette.InkSoft;result.Text=UiText.ClearedLogin;password.Clear();}catch(Exception e){result.ForeColor=Color.FromArgb(0xEF,0x44,0x44);result.Text=e.Message;}};
+        clear.Click+=(_,_)=>{try{store.Delete();result.ForeColor=Palette.InkSoft;result.Text=UiText.ClearedLogin;password.Clear();}catch(Exception e){result.ForeColor=Palette.Danger;result.Text=e.Message;}};
         FormClosing+=(_,_)=>{cancelled=DialogResult!=DialogResult.OK;password.Clear();};
     }
 }
