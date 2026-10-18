@@ -139,7 +139,17 @@ let fixturePid = 0
 let fixtureObservation = null
 try {
   const fixturePath = path.join(__dirname, 'fixtures', 'native-window.ps1')
-  const launched = await tool.execute({ action: 'launch_app', name: `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${fixturePath}"` })
+  const fixtureName = `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${fixturePath}"`
+  const launchFixture = async () => {
+    const first = await tool.execute({ action: 'launch_app', name: fixtureName })
+    // Real user input between actions arms the monitor, and only a fresh
+    // observation clears it. That is the product's safety contract, so a test on
+    // a desktop where someone is typing must satisfy it instead of assuming idle.
+    if (first.ok || !['user_input_interrupted', 'observation_required'].includes(first.error_code)) return first
+    await tool.execute({ action: 'list_windows' })
+    return tool.execute({ action: 'launch_app', name: fixtureName })
+  }
+  const launched = await launchFixture()
   fixturePid = Number.isSafeInteger(launched.pid) ? launched.pid : 0
   assert.ok(fixturePid > 0, `owned fixture launch must return a PID: ${JSON.stringify(launched)}`)
   // PowerShell loads WinForms and compiles the fixture before exposing a HWND.

@@ -21,9 +21,19 @@ assert.match(
 //    as parity.check.mjs). Pattern proven in earlier review rounds:
 //    open_app -> get_app_state -> click_element -> taskkill.
 const tool = defineComputerTool((def) => def)
+// The product refuses a new action when real user input lands between actions: the
+// monitor sets a flag that only a fresh observation clears. That is the intended
+// safety contract, so a test running on a desktop where someone is typing must
+// satisfy it rather than assume a quiet machine.
+const launchNotepad = async () => {
+  const first = await tool.execute({ action: 'launch_app', name: 'notepad' })
+  if (first.ok || !['user_input_interrupted', 'observation_required'].includes(first.error_code)) return first
+  await tool.execute({ action: 'list_windows' })
+  return tool.execute({ action: 'launch_app', name: 'notepad' })
+}
 let notepadPid = 0
 try {
-  const openRes = await tool.execute({ action: 'launch_app', name: 'notepad' })
+  const openRes = await launchNotepad()
   notepadPid = Number.isSafeInteger(openRes.pid) ? openRes.pid : 0
   assert.equal(openRes.ok, true, `open_app notepad should succeed: ${JSON.stringify(openRes)}`)
   assert.ok(Number.isInteger(notepadPid) && notepadPid > 0, 'scratch notepad must be spawned for the dynamic cache test')

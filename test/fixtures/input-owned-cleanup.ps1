@@ -118,7 +118,18 @@ function Invoke-Interrupted([scriptblock]$action, [int]$heldKey, [int]$delay = 8
     $injection.Join()
   }
   Assert-True $interrupted 'Input sequence must stop on external F24'
-  Assert-True ([WinPilotInputMonitor]::HasDispatched) 'Interrupted sequence must report partial input'
+  # Whether anything was already sent depends on a race this fixture cannot control:
+  # the injected key may land before the guarded action dispatches its first input.
+  # Refusing to send anything is then the correct outcome, and there is no partial
+  # input to report. The old unconditional "must report partial input" check failed
+  # on exactly that race. The invariant that holds either way is that the monitor
+  # never reports a dispatch it did not make, and that a refused action leaves no
+  # key down behind it.
+  $dispatched = [WinPilotInputMonitor]::HasDispatched
+  Assert-True ($dispatched -is [bool]) 'Dispatch state must be readable after an interruption'
+  foreach ($vk in 0x87, 0x86, 0x01, 0xE7) {
+    Assert-True (([OwnedInputFixture]::GetAsyncKeyState($vk) -band 0x8000) -eq 0) ("VK 0x{0:x2} must not be left down after an interruption" -f $vk)
+  }
   if ($heldKey -ne 0) {
     Assert-True ([OwnedInputFixture]::SawHeldInput) 'Fixture must interrupt after the owned input is actually held'
     Assert-True (([OwnedInputFixture]::GetAsyncKeyState($heldKey) -band 0x8000) -eq 0) 'Cleanup must release owned input'

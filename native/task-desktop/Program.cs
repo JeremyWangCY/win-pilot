@@ -350,7 +350,7 @@ sealed class DesktopWindow : Form
         if(view!=null)view.AllowUserInput=expanded&&(takeover||(connected&&!loginCompleted.Task.IsCompletedSuccessfully&&!workerAuthenticated));
         Program.Emit(new{ @event="state",state=Snapshot()});
     }
-    void Error(string message){lastError=message;state="error";paused=true;UpdateState();if(view==null)notice.Text=UiText.NoticeUnavailable(message);}
+    void Error(string message){lastError=message;state="error";paused=true;UpdateState();if(view==null)notice.Text=UiText.NoticeUnavailable(UiText.Failure(message));}
     void StartupEvent(string stage,uint? session=null,string? marker=null)=>Program.Emit(new{@event="startup_isolation",instance_id=instance,stage,windows_session_id=session,marker,timestamp=DateTime.UtcNow.ToString("O")});
     void PrepareStartupMarkers()
     {
