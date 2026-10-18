@@ -101,7 +101,7 @@ class LoginSettingsDialog : Form
                 if(remember.Checked)store.Save(login);else store.Delete();
                 Login=login;login=null;busy=false;DialogResult=DialogResult.OK;Close();
             }catch(Exception e){
-                if(!cancelled&&!IsDisposed){result.ForeColor=Palette.Danger;result.Text=e.Message;}
+                if(!cancelled&&!IsDisposed){result.ForeColor=Palette.Danger;result.Text=UiText.Failure(e.Message);}
             }
             finally{login?.Dispose();busy=false;if(!cancelled&&!IsDisposed){save.Enabled=true;clear.Enabled=true;account.Enabled=true;password.Enabled=true;remember.Enabled=true;password.Focus();}}
         };

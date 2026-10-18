@@ -144,6 +144,21 @@ static class UiText
         {"任务桌面宿主用户不匹配。", "The task-desktop host user does not match."},
         {"任务桌面宿主未确认启动授权。", "The task-desktop host did not confirm startup authorisation."},
         {"独立桌面启动安全拦截生效。", "The standalone-desktop startup safety hold is active."},
+
+        {"请输入 Windows 账号。", "Enter your Windows account."},
+        {"账号格式应为 域\\用户名 或邮箱。", "The account must be DOMAIN\\user or an email address."},
+        {"Windows 未接受该登录信息，请检查账号密码（不是 PIN）。", "Windows rejected these credentials; check the password (not the PIN)."},
+        {"请使用当前 Windows 用户的账号，不能连接其他用户的桌面。", "Use the current Windows user's account; another user's desktop cannot be connected."},
+        {"无法确认当前 Windows 用户。", "Cannot confirm the current Windows user."},
+        {"登录信息长度不受支持。", "These credentials have an unsupported length."},
+        {"登录信息超过 Windows 保存限制。", "These credentials exceed the Windows storage limit."},
+        {"Windows 无法保存 Win-Pilot 登录信息。", "Windows cannot save the Win-Pilot sign-in."},
+        {"无法读取 Win-Pilot 登录设置，请在「登录设置」重新设置或清除。", "Cannot read the Win-Pilot sign-in; set it again or clear it in Sign-in settings."},
+        {"无法清除 Win-Pilot 登录设置。", "Cannot clear the Win-Pilot sign-in."},
+        {"Win-Pilot 保存的登录信息无法使用，请在「登录设置」重新设置或清除。", "The saved Win-Pilot sign-in is unusable; set it again or clear it in Sign-in settings."},
+        {"Windows 无法保护或恢复 Win-Pilot 登录信息，请重新设置。", "Windows cannot protect or recover the Win-Pilot sign-in; set it again."},
+        {"Windows 子会话凭据配置未生效。", "The Windows child-session credential configuration did not take effect."},
+        {"Windows 自动登录配置未生效。", "The Windows automatic sign-in configuration did not take effect."},
     };
 
     internal static string Failure(string message)
