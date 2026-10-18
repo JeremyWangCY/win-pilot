@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Win-Pilot Computer Use",
+    "description": "Operate Windows applications and Win-Pilot-owned Chromium sessions, optionally inside an isolated task desktop that keeps your own windows untouched."
+  }
+}

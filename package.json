@@ -16,8 +16,11 @@
     "./browser-provider": "./lib/browser-provider.js",
     "./mcp-server": "./lib/mcp-server.js",
     "./agent-install": "./lib/agent-install.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
+  "icon": "./icon.svg",
   "scripts": {
     "pretest": "node test/branding.check.mjs && node test/mcp-server.check.mjs && node test/agent-install.check.mjs && node test/dsh-provider.check.mjs && node test/plugin-manifest.check.mjs && node test/settings.check.mjs && node test/client-bundle.check.mjs && node test/cua-parity.check.mjs && node test/settings-integration.check.mjs",
     "build:wgc": "dotnet publish native/wgc-capture/wgc-capture.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o lib/wgc",
@@ -78,6 +81,8 @@
     "lib/task-desktop/win-pilot-task-desktop.deps.json",
     "lib/task-desktop/win-pilot-task-desktop.runtimeconfig.json",
     "skills/win-pilot/**/*",
+    "locale/*.json",
+    "icon.svg",
     "AGENT_INSTALL.md",
     ".codex-plugin/plugin.json",
     ".mcp.json",
