@@ -1550,7 +1550,18 @@ function Invoke-ActionRequest {
         }
       } else {
         $launchArgs = if ($argList.Count -gt 0) { [string]::Join(' ', [string[]]$argList) } else { '' }
-        $launchPid = [DshWin32]::LaunchShellSilent($filePath, $launchArgs)
+        try {
+          $launchPid = [DshWin32]::LaunchShellSilent($filePath, $launchArgs)
+        } catch {
+          # A refused ShellExecuteEx means nothing was started, so this is a
+          # definite not_executed failure. Surface the Windows message directly
+          # instead of PowerShell's reflection wrapper ("Exception calling
+          # LaunchShellSilent with 2 argument(s)"), which names the call rather
+          # than the reason the launch failed.
+          $inner = $_.Exception.InnerException
+          $reason = if ($inner) { $inner.Message } else { $_.Exception.Message }
+          throw "launch_failed: $filePath ($reason)"
+        }
         # ShellExecuteEx may successfully route an activation to an existing
         # process without returning a process handle. Keep pid=0 in that case;
         # the resolver will leave the window unresolved without process ancestry.
@@ -2425,7 +2436,10 @@ finally {
       # This is an observed, bounded read-only condition failure, not an
       # ambiguous transport or input outcome. Preserve its retry-safe meaning.
       $result.outcome = 'not_executed'
-    } elseif ($result.message -match '^(snapshot_required|stale_snapshot|stale_screenshot|target_required|target_mismatch|ambiguous_window|app_not_found|window_not_found|element_not_found|background_unavailable|target_read_only|foreground_activation_unconfirmed|invalid_paste_format|clipboard_unavailable|clipboard_changed):') {
+    } elseif ($result.message -match '^(snapshot_required|stale_snapshot|stale_screenshot|target_required|target_mismatch|ambiguous_window|app_not_found|window_not_found|element_not_found|background_unavailable|target_read_only|foreground_activation_unconfirmed|invalid_paste_format|clipboard_unavailable|clipboard_changed|launch_failed):') {
+      # launch_failed means ShellExecuteEx refused the request, so no process
+      # was started: that is a definite not_executed outcome, not an ambiguous
+      # one that would invite the caller to observe for a window that cannot exist.
       $result.error_code = $Matches[1]
       $result.outcome = 'not_executed'
     }

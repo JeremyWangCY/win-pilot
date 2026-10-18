@@ -266,6 +266,25 @@ static class ManualInputChecks
             var infoType=desktopType.Assembly.GetType("WinPilotTaskDesktop.ProcessIdentity+Info",true)!;
             Set(form,"workerIdentity",Activator.CreateInstance(infoType,[0u,77u,"synthetic-unused-image",0L,"synthetic-unused-user"]));
             Set(form,"childSession",77u);Set(form,"liveSnapshot",new HashSet<uint>(){77u});
+            // HWND values are session-local. The host must forward the opaque
+            // value to the authenticated worker, rather than query it in the
+            // host's own window namespace before the worker can validate it.
+            Reset();
+            Set(form,"previewOnly",false);
+            var forwarded=(Task<JsonObject>)Call(form,"Execute",new JsonObject(){["action"]="get_window_state",["hwnd"]=form.Handle.ToInt64()})!;
+            Set(form,"previewOnly",true);
+            PumpUntil(()=>forwarded.IsCompleted||Pending().Count==1,"Window request did not reach the worker boundary");
+            Require(Pending().Count==1,"Host must not resolve a child-session HWND in its own session: "+(forwarded.IsCompleted?forwarded.GetAwaiter().GetResult().ToJsonString():"pending"));
+            PumpUntil(()=>Requests()[^1]["command"]!.ToString()=="execute","Window request was not written to the worker");
+            Reply("execute",true);PumpUntil(()=>forwarded.IsCompleted,"Worker reply did not settle window request");
+            Require(forwarded.GetAwaiter().GetResult()["ok"]?.GetValue<bool>()==true,"Host must preserve the authenticated worker result");
+            var nativeType=desktopType.Assembly.GetType("WinPilotTaskDesktop.Native",true)!;
+            var owns=nativeType.GetMethod("WindowBelongsToSession",BindingFlags.Static|BindingFlags.NonPublic)!;
+            bool Owned(IntPtr handle,uint session)=>(bool)owns.Invoke(null,[handle,session])!;
+            uint ownSession=(uint)System.Diagnostics.Process.GetCurrentProcess().SessionId;
+            Require(Owned(form.Handle,ownSession),"Window validation must accept the window in its actual caller session");
+            Require(!Owned(form.Handle,77u)&&!Owned(IntPtr.Zero,ownSession),"Worker must reject wrong-session and invalid windows");
+            Reset();Feed(0x201,1);Feed(0x202,0);Acknowledge(true);probe.Delivered.Clear();
             workerWriter.AfterWrite=line=>{if(JsonNode.Parse(line)?["command"]?.ToString()=="resume")Set(form,"connected",false);};
             Set(form,"lastManualInput",Environment.TickCount64-11000);requestCount=Requests().Length;Call(form,"Poll");
             // SendWorker can yield in WriteLineAsync after registering pending.

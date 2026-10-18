@@ -23,9 +23,12 @@ $end = $body.IndexOf('public static class WinPilotDeadline')
 if ($start -lt 0) { Write-Output 'FAIL: DshWin32 class not found'; exit 1 }
 if ($end -gt $start) { $body = $body.Substring(0, $end) }
 
+# Win32Exception is type-forwarded to Microsoft.Win32.Primitives, which the
+# default reference set includes but this explicit list does not.
 Add-Type -TypeDefinition ("using System.Windows.Forms;`n" + $body) -ReferencedAssemblies @(
-  'System.Windows.Forms', 'System.Drawing', 'System.Linq', 'System.Collections',
-  'System.Threading', 'System.Threading.Thread', 'System.Runtime', 'System.Runtime.InteropServices'
+  'System', 'System.Windows.Forms', 'System.Drawing', 'System.Linq', 'System.Collections',
+  'System.Threading', 'System.Threading.Thread', 'System.Runtime', 'System.Runtime.InteropServices',
+  'Microsoft.Win32.Primitives'
 )
 
 $failures = New-Object System.Collections.Generic.List[string]

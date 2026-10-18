@@ -67,6 +67,10 @@ static class Native
     [DllImport("user32.dll")]internal static extern bool EnumChildWindows(IntPtr parent,ChildWindowVisitor visitor,IntPtr state);
     [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint process);
     [DllImport("kernel32.dll")] internal static extern bool ProcessIdToSessionId(uint process,out uint session);
+    internal static bool WindowBelongsToSession(IntPtr window,uint session){
+        GetWindowThreadProcessId(window,out uint process);
+        return IsWindow(window)&&ProcessIdToSessionId(process,out uint actual)&&actual==session;
+    }
     [DllImport("user32.dll")] internal static extern short VkKeyScanW(char ch);
     [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
@@ -380,6 +384,40 @@ sealed class DesktopWindow : Form
         try{return await OpenCore(prepare,windowsLogin);}
         finally{opening=false;startupGate.Release();if(!IsDisposed)UpdateState();}
     }
+    // Resolve the Windows credential this connection will present. Returns a null
+    // failure on success; the caller owns the returned WindowsLogin and must
+    // dispose it. Kept separate from the RDP sequence because human entry can
+    // stay open for minutes and has its own cancellation and recovery rules.
+    async Task<(WindowsLogin? Login,JsonObject? Failure)> AcquireCredential()
+    {
+        WindowsLogin? credential=null;
+        try {
+            credential=new WindowsLoginStore().Read();
+            if(credential!=null)await Task.Run(credential.ValidateCurrentUser);
+            else if(windowsLoginRequested){
+                state="login_settings";lastError="请在本机登录设置窗口完成首次设置，勾选记住后可自动连接。";UpdateState();
+                using var dialog=new LoginSettingsDialog();
+                if(dialog.ShowDialog(this)!=DialogResult.OK)return (null,Program.Fail("task_desktop_login_cancelled","已取消首次登录设置，未创建 Windows 会话。"));
+                credential=dialog.Login;
+            }
+        }catch(Exception e){
+            credential?.Dispose();
+            // A saved login that Windows now rejects (expired or changed password)
+            // must stay recoverable: drop the unusable entry and open the same
+            // settings form the user would otherwise have to discover in a
+            // right-click menu, instead of dead-ending on a bare error.
+            string message=e.Message;
+            try{new WindowsLoginStore().Delete();message+="\n\n已清除无法使用的保存登录，请重新填写 Windows 密码。";}
+            catch(Exception clearFailure){message+="\n\n保存的登录信息也无法清除："+clearFailure.Message;return (null,Program.Fail("task_desktop_login_unavailable",message));}
+            state="login_settings";lastError=message;UpdateState();
+            using var retryDialog=new LoginSettingsDialog();
+            if(retryDialog.ShowDialog(this)!=DialogResult.OK)return (null,Program.Fail("task_desktop_login_unavailable",message+"\n\n已取消重新设置，未创建 Windows 会话。"));
+            credential=retryDialog.Login;
+            try{if(credential!=null)await Task.Run(credential.ValidateCurrentUser);}
+            catch(Exception retryFailure){credential?.Dispose();Error(retryFailure.Message);return (null,Program.Fail("task_desktop_login_unavailable",retryFailure.Message));}
+        }
+        return (credential,null);
+    }
     async Task<JsonObject> OpenCore(bool prepare,bool windowsLogin)
     {
         Show(); if(WindowState==FormWindowState.Minimized)WindowState=FormWindowState.Normal;
@@ -400,17 +438,8 @@ sealed class DesktopWindow : Form
             try{await Native.EnableChildSessions(startupCancellation.Token);}catch(Exception e){return Program.Fail("task_desktop_preparation_failed",e.Message);}
         }
         if(!File.Exists(helperPath))return Program.Fail("task_desktop_helper_missing","缺少任务桌面执行工具。");
-        WindowsLogin? credential=null;
-        try {
-            credential=new WindowsLoginStore().Read();
-            if(credential!=null)await Task.Run(credential.ValidateCurrentUser);
-            else if(windowsLoginRequested){
-                state="login_settings";lastError="请在本机登录设置窗口完成首次设置，勾选记住后可自动连接。";UpdateState();
-                using var dialog=new LoginSettingsDialog();
-                if(dialog.ShowDialog(this)!=DialogResult.OK)return Program.Fail("task_desktop_login_cancelled","已取消首次登录设置，未创建 Windows 会话。");
-                credential=dialog.Login;
-            }
-        }catch(Exception e){credential?.Dispose();Error(e.Message);return Program.Fail("task_desktop_login_unavailable",e.Message);}
+        var (credential,loginFailure)=await AcquireCredential();
+        if(loginFailure!=null)return loginFailure;
         using var loginLifetime=credential;
         if(closing||lifetime.IsCancellationRequested||startupCancellation.IsCancellationRequested)return Program.Fail("task_desktop_closed","连接已取消，未创建 Windows 会话。");
         // Capture ownership after human setup, which can remain open for minutes.
@@ -607,10 +636,6 @@ sealed class DesktopWindow : Form
         if(File.Exists(Path.Combine(AppContext.BaseDirectory,"safety-hold.json")))return Program.Fail("task_desktop_safety_hold","独立桌面操作已被安全拦截。");
         if(!connected||(paused&&Native.Mutation(action)))return Program.Fail("task_desktop_paused","任务桌面已暂停或断开，未执行操作。");
         if(workerIdentity==null||workerIdentity.Session!=childSession||!LiveCached(childSession)||childSession==(uint)parentSession)return Program.Fail("task_desktop_session_changed","目标子会话已改变。");
-        if(request["hwnd"]!=null) {
-            var hwnd=new IntPtr(request["hwnd"]!.GetValue<long>());Native.GetWindowThreadProcessId(hwnd,out uint pid);
-            if(!Native.IsWindow(hwnd)||!Native.ProcessIdToSessionId(pid,out uint sid)||sid!=childSession)return Program.Fail("task_desktop_wrong_window","窗口不属于独立任务桌面。");
-        }
         return await SendWorker("execute",request);
     }
     Task<JsonObject> CloseCommand(){var result=Snapshot();startupCancellation.Cancel();paused=true;BeginInvoke(new Action(async()=>await Shutdown()));return Task.FromResult(result);}
@@ -712,6 +737,9 @@ static class Worker
                 else if(command=="resume"){paused=false;result=new(){["ok"]=true};}
                 else if(command is "pause" or "stop" or "close")result=await Invoke(new(){["id"]=id,["action"]="stop",["control_session_id"]=msg["request"]?["control_session_id"]?.DeepClone()});
                 else if(paused&&Native.Mutation(msg["request"]?["action"]?.ToString()??""))result=Program.Fail("task_desktop_paused","任务已暂停。");
+                // HWND lookup must run inside the target session: the host has
+                // a different window namespace, even for an identical number.
+                else if(msg["request"]?["hwnd"] is JsonValue window&&!Native.WindowBelongsToSession(new IntPtr(window.GetValue<long>()),(uint)session))result=Program.Fail("task_desktop_wrong_window","窗口不属于独立任务桌面。");
                 else {
                     var request=msg["request"]!.DeepClone().AsObject();request["id"]=id;
                     activeCancel=Path.Combine(Path.GetTempPath(),"win-pilot","task-cancel-"+Guid.NewGuid()+".signal");Directory.CreateDirectory(Path.GetDirectoryName(activeCancel)!);
