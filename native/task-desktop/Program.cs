@@ -21,6 +21,12 @@ static class Program
         }
         if(args.Length==2 && args[0]=="--worker") { try{Worker.Run(args[1]).GetAwaiter().GetResult();}catch(Exception e){try{File.WriteAllText(args[1]+".worker-error",e.ToString());}catch{}} return; }
         ApplicationConfiguration.Initialize();
+        // The host process is per-monitor DPI aware, but a WinForms entry point
+        // launched by itself (--setup-login) starts at system DPI without this, so
+        // the dialog lays out for 100% on a 150% display and clips its own action
+        // row. Apply the same mode the test harness applies before any form exists.
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        Application.EnableVisualStyles();
         if(args.Length==1&&args[0]=="--setup-login") {
             using var dialog=new LoginSettingsDialog();Environment.ExitCode=dialog.ShowDialog()==DialogResult.OK?0:2;dialog.Login?.Dispose();return;
         }

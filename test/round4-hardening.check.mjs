@@ -189,4 +189,35 @@ execFileSync('powershell.exe', ['-NoProfile', '-Command',
   `if ($errs.Count -gt 0) { $errs | ForEach-Object { Write-Host $_.Message } ; exit 1 } else { exit 0 }`,
 ], { stdio: 'inherit' })
 
+// ---------------------------------------------------------------- 6. UiText translation table has no duplicate keys
+// A duplicate key compiles cleanly but throws at runtime from the static
+// constructor, which kills every localised surface at once. Catching it here is
+// much cheaper than finding it in a dialog.
+{
+  const uiTextSrc = fs.readFileSync(path.join(rootDir, 'native', 'task-desktop', 'UiText.cs'), 'utf8')
+  const dictStart = uiTextSrc.indexOf('FailureEnglish')
+  assert.ok(dictStart >= 0, 'UiText must declare the FailureEnglish dictionary')
+  const openBrace = uiTextSrc.indexOf('{', dictStart)
+  let depth = 0
+  let closeBrace = -1
+  for (let i = openBrace; i < uiTextSrc.length; i++) {
+    if (uiTextSrc[i] === '{') depth++
+    else if (uiTextSrc[i] === '}') {
+      depth--
+      if (depth === 0) { closeBrace = i; break }
+    }
+  }
+  const dictBody = uiTextSrc.slice(openBrace + 1, closeBrace)
+  const entries = [...dictBody.matchAll(/\{\s*"((?:[^"\\]|\\.)*)"\s*,\s*"((?:[^"\\]|\\.)*)"\s*\}/g)]
+    .map((m) => m[1])
+  assert.ok(entries.length > 0, 'FailureEnglish must contain at least one mapping')
+  const seen = new Map()
+  for (const key of entries) {
+    assert.ok(!seen.has(key),
+      `UiText.FailureEnglish has a duplicate key: ${JSON.stringify(key)}`)
+    seen.set(key, true)
+  }
+  console.log(`UiText translation table: ${entries.length} entries, no duplicate keys`)
+}
+
 console.log('round4-hardening check PASSED')

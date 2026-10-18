@@ -78,7 +78,6 @@ static class UiText
     {"当前窗口仅供预览，不执行电脑动作。", "This window is preview-only; no computer action is executed."},
     {"不支持的窗口命令。", "Unsupported window command."},
     {"无法确认独立执行工具已停止。", "Cannot confirm the task-desktop tool has stopped."},
-    {"当前窗口已有连接，请使用「重试工具」或结束后重新连接。", "This window already has a connection. Use \"retry tool\" or reconnect after ending it."},
     {"执行工具正在连接。", "The tool is connecting."},
     {"无法枚举 Windows 会话，未建立连接：", "Cannot enumerate Windows sessions; no connection was made: "},
     {"任务桌面已暂停或断开，未执行操作。", "The task desktop is paused or disconnected; nothing was executed."},
@@ -159,14 +158,48 @@ static class UiText
         {"Windows 无法保护或恢复 Win-Pilot 登录信息，请重新设置。", "Windows cannot protect or recover the Win-Pilot sign-in; set it again."},
         {"Windows 子会话凭据配置未生效。", "The Windows child-session credential configuration did not take effect."},
         {"Windows 自动登录配置未生效。", "The Windows automatic sign-in configuration did not take effect."},
+        {"观察到多个候选子会话，已拒绝猜测。", "Several candidate child sessions were seen; refusing to guess."},
+        {"新会话与 Windows 父子会话关联尚未一致，未取得目标归属。", "The new session and the Windows parent/child link do not agree yet; no target ownership was obtained."},
+        {"尚未观察到本次新建的子会话。", "The newly created child session has not been observed yet."},
+        {"无法枚举 Windows 会话：", "Cannot enumerate Windows sessions: "},
+        {"独立桌面执行工具启动自检失败：", "The standalone-desktop tool failed its startup self-check: "},
+        {"Windows 已登录，但独立输入桌面在启动预算内尚未就绪；未发送任何输入。", "Windows has signed in, but the standalone input desktop was not ready within the startup budget; no input was sent."},
+        {"独立桌面执行工具已退出，未返回当前请求的响应。", "The standalone-desktop tool exited without returning a response to this request."},
+        {"进程缺少用户身份。", "The process has no user identity."},
+        {"执行进程身份或所属会话不匹配。", "The tool process identity or its session does not match."},
+        {"执行工具管道进程身份不匹配。", "The tool pipe process identity does not match."},
+        {"任务桌面宿主管道身份不匹配。", "The task-desktop host pipe identity does not match."},
+        {"无法映射远程按键。", "Cannot map this remote key."},
+        {"启动已被安全拦截。", "Startup is blocked by the safety hold."},
+        {"目标子会话编号无效。", "The target child-session id is invalid."},
+        {"目标子会话与宿主会话相同。", "The target child session is the same as the host session."},
+        {"目标子会话已消失（会话 ", "The target child session disappeared (session "},
+        {" 不在活动列表中）。", " is not in the active list)."},
+        {"独立会话的 Windows 桌面尚未完成登录。", "The standalone session's Windows desktop has not finished signing in."},
+        {"拒绝标记主桌面或无效会话。", "Refusing to mark the main desktop or an invalid session."},
+        {"目标子会话已改变，未继续标记。", "The target child session changed; marking was not continued."},
+        {"无效的会话启动标记。", "Invalid session startup marker."},
+        {"Windows 会话启动信息尚未准备好。", "The Windows session startup information is not ready yet."},
+        {"\n\n已清除无法使用的保存登录，请重新填写 Windows 密码。", "\n\nThe unusable saved sign-in was cleared; enter your Windows password again."},
+        {"\n\n保存的登录信息也无法清除：", "\n\nThe saved sign-in could not be cleared either: "},
+        {"\n\n已取消重新设置，未创建 Windows 会话。", "\n\nRe-setup was cancelled; no Windows session was created."},
+        {"当前窗口已有连接，请使用「重试工具」或结束后重新连接。", "This window already has a connection; use retry tool or reconnect after ending it."},
+        {"启动隔离时序未验证成功，已停止任务。", "Startup-isolation timing was not verified; the task was stopped."},
+        {"；需要检查本机子会话和 Windows 登录条件。", "; check the local child-session and Windows sign-in conditions."},
     };
 
+    // Some messages splice a value into the middle, e.g. ("session " + id + " is not
+    // in the active list"). A single match cannot translate those, so every mapped
+    // fragment is replaced wherever it appears and the spliced value passes through.
     internal static string Failure(string message)
     {
         if (Chinese) return message;
-        foreach (var pair in FailureEnglish)
-            if (message.StartsWith(pair.Key, StringComparison.Ordinal))
-                return pair.Value + message[pair.Key.Length..];
-        return message;
+        var result = message;
+        foreach (var pair in FailureEnglish.OrderByDescending(pair => pair.Key.Length))
+        {
+            if (result.Contains(pair.Key, StringComparison.Ordinal))
+                result = result.Replace(pair.Key, pair.Value, StringComparison.Ordinal);
+        }
+        return result;
     }
 }

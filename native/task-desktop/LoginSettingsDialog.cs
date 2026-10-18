@@ -105,7 +105,7 @@ class LoginSettingsDialog : Form
             }
             finally{login?.Dispose();busy=false;if(!cancelled&&!IsDisposed){save.Enabled=true;clear.Enabled=true;account.Enabled=true;password.Enabled=true;remember.Enabled=true;password.Focus();}}
         };
-        clear.Click+=(_,_)=>{try{store.Delete();result.ForeColor=Palette.InkSoft;result.Text=UiText.ClearedLogin;password.Clear();}catch(Exception e){result.ForeColor=Palette.Danger;result.Text=e.Message;}};
+        clear.Click+=(_,_)=>{try{store.Delete();result.ForeColor=Palette.InkSoft;result.Text=UiText.ClearedLogin;password.Clear();}catch(Exception e){result.ForeColor=Palette.Danger;result.Text=UiText.Failure(e.Message);}};
         FormClosing+=(_,_)=>{cancelled=DialogResult!=DialogResult.OK;password.Clear();};
     }
 }
