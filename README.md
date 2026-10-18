@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected for this release: version `0.2.0`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
+Expected for this release: version `0.3.0`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
 
 ### Settings
 
@@ -97,6 +97,7 @@ In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or 
 | `overlay` | `true` | Show the operation cursor |
 | `statusPill` | `true` | Show the running status pill |
 | `browserHeadlessDefault` | `false` | Run browsers without a visible window |
+| `desktopEnvironment` | `current` | Where computer actions run: this desktop or the separate task window |
 
 `desktopEnvironment` defaults to `current`; `task` selects the separate task window. Save the setting and start a new task. Existing tasks keep their original desktop so observed targets cannot silently change. With the option off, model schemas, runtime skills and diagnostics do not advertise the task-desktop option. With it on, native actions, observations, clipboard and recovery stay in that task desktop; failure never redirects work to the main desktop. Browser actions require a browser launched by the same task.
 
@@ -104,7 +105,7 @@ The light, frameless window defaults to 432×300. Its toolbar contains expand/re
 
 After updating an already-loaded plugin, restart DeepSeek Harness before saving new settings. See [task desktop](./docs/task-desktop.md) for behavior and verification limits.
 
-Use `win-pilot desktop --preview` to view the native window without creating a session or running computer actions. `win-pilot desktop` is the normal connection entry and respects the connection hold. Source builds use `npm run build:desktop`; checks without Windows sessions use `npm run test:desktop`. These additions have not been published to npm or GitHub.
+Use `win-pilot desktop --preview` to view the native window without creating a session or running computer actions. `win-pilot desktop` is the normal connection entry and respects the connection hold. Source builds use `npm run build:desktop`; checks without Windows sessions use `npm run test:desktop`.
 
 Numeric limits and input policy use internal defaults; old settings cannot change them. Required Windows/Meta system keys stay enabled internally. Background input, lock checks, user-interruption cancellation, focus yielding and window text reads follow this project's own [desktop control contract](docs/desktop-control-contract.md). CLI/MCP installs without a harness use the built-in defaults.
 
@@ -125,7 +126,7 @@ When a sandbox reaps children after every command, configure `win-pilot mcp` in 
 
 ## Usage
 
-Version 0.2.0 adds session-scoped `stop` / `resume`, queued and active request cancellation, and atomic per-user control ownership. Observation remains available after stopping. Desktop accessibility uses stable sparse indexes and model-visible `full` / `delta` / `no_change` trees; hidden observations do not advance that baseline. Rich `paste` accepts `format: text | html | md` and restores supported original clipboard formats unless the user changes the clipboard meanwhile. Markdown conversion covers a limited subset.
+Version 0.3.0 adds session-scoped `stop` / `resume`, queued and active request cancellation, and atomic per-user control ownership. Observation remains available after stopping. Desktop accessibility uses stable sparse indexes and model-visible `full` / `delta` / `no_change` trees; hidden observations do not advance that baseline. Rich `paste` accepts `format: text | html | md` and restores supported original clipboard formats unless the user changes the clipboard meanwhile. Markdown conversion covers a limited subset.
 
 Browser additions are `browser_frames`, `browser_filechooser`, `browser_claim_tab`, and `browser_finalize`. Same-origin child frames use `frame_id` and semantic references; cross-origin/OOPIF frames are explicitly rejected. Claims bind to the current control session: keep `claim_id` for mutations, then finalize to release without activating the tab. Arm a chooser before opening it, read its event, and pass the single-use `filechooser_id` plus explicit absolute paths to `browser_upload` within 60 seconds. The provider uses explicit loopback CDP and does not include a user-browser extension.
 

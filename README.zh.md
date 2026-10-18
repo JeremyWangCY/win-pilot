@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-本版预期版本为 `0.2.0`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
+本版预期版本为 `0.3.0`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
 
 ### 更新
 
@@ -105,7 +105,7 @@ DSH profile 需要单独重启。需要刷新 Win-Pilot 管理的 Skill 副本�
 
 ## 使用方法
 
-0.2.0 新增会话级 `stop` / `resume`、正在执行及排队请求的取消，以及每用户的原子控制锁。停止后仍可观察。桌面元素使用稳定的稀疏编号，无障碍树输出 `full` / `delta` / `no_change`；隐藏观察不推进模型可见基线。富文本 `paste` 支持 `format: text | html | md`，恢复受支持的原剪贴板格式，并保留用户并发复制的新内容。Markdown 仅支持部分语法。
+0.3.0 新增会话级 `stop` / `resume`、正在执行及排队请求的取消，以及每用户的原子控制锁。停止后仍可观察。桌面元素使用稳定的稀疏编号，无障碍树输出 `full` / `delta` / `no_change`；隐藏观察不推进模型可见基线。富文本 `paste` 支持 `format: text | html | md`，恢复受支持的原剪贴板格式，并保留用户并发复制的新内容。Markdown 仅支持部分语法。
 
 浏览器新增 `browser_frames`、`browser_filechooser`、`browser_claim_tab` 和 `browser_finalize`。同源子框架使用 `frame_id` 及语义引用；跨域框架和 OOPIF 明确拒绝。标签认领绑定当前控制会话，修改时传回 `claim_id`，完成后交付释放控制，不主动切换标签。先开启文件选择器监听，再打开选择器、读取事件，随后在 60 秒内将单次 `filechooser_id` 及明确的绝对文件路径传给 `browser_upload`。当前仍使用显式本机 CDP 连接，尚未提供用户浏览器扩展。
 
@@ -140,6 +140,7 @@ MCP `tools/list` 返回的实时 Schema 是完整参数和默认值的权威定�
 | `overlay` | `true` | 显示操作光标 |
 | `statusPill` | `true` | 显示运行状态提示 |
 | `browserHeadlessDefault` | `false` | 浏览器在后台运行，不显示窗口 |
+| `desktopEnvironment` | `current` | 电脑动作的执行位置：当前桌面或独立任务窗口 |
 
 `desktopEnvironment` 默认 `current`（当前桌面），可选 `task`（独立任务窗口）。保存后对新任务生效；已有任务保持原桌面，避免已观察的目标悄然改变。关闭时，模型工具定义、运行时技能和诊断不宣传独立桌面选项。开启后，电脑动作、观察、剪贴板和恢复都使用同一任务桌面；连接失败不会转到主桌面。浏览器动作只能使用同一任务启动的浏览器。
 
@@ -147,7 +148,7 @@ MCP `tools/list` 返回的实时 Schema 是完整参数和默认值的权威定�
 
 更新已加载的插件后，先重启 DeepSeek Harness 再保存新增选项。行为和验证限制见[独立任务桌面](./docs/task-desktop.md)。
 
-查看原生窗口：`win-pilot desktop --preview`。预览不能连接会话或执行电脑动作。正常连接入口为 `win-pilot desktop`，受启动拦截约束。源码构建使用 `npm run build:desktop`，无会话测试使用 `npm run test:desktop`。这些增量尚未发布到 npm 或 GitHub。
+查看原生窗口：`win-pilot desktop --preview`。预览不能连接会话或执行电脑动作。正常连接入口为 `win-pilot desktop`，受启动拦截约束。源码构建使用 `npm run build:desktop`，无会话测试使用 `npm run test:desktop`。
 
 数值限制和输入策略采用内部默认值，旧设置不再改变它们；必需的 Windows/Meta 系统按键能力始终开启。后台输入、锁屏检查、用户输入中断、焦点让路和窗口文字读取遵循本项目自己的[桌面控制契约](docs/desktop-control-contract.md)。没有宿主的 CLI/MCP 安装使用内置默认值。
 

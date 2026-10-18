@@ -1,6 +1,6 @@
 {
   "name": "win-pilot",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Windows Computer Use for agents through one MCP tool and a shared operating skill.",
   "author": {
     "name": "JeremyWangCY",
@@ -32,7 +32,7 @@
       "List the open Windows applications without changing anything.",
       "Open an isolated browser and inspect the requested page."
     ],
-    "brandColor": "#2563EB",
+    "brandColor": "#5686FE",
     "composerIcon": "./assets/composer-icon.png",
     "logo": "./assets/logo.png",
     "screenshots": [
