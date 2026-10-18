@@ -709,7 +709,7 @@ function Invoke-ActionRequest {
       if ($null -eq $shot) { $shot = $true }
       $withText = Get-PayloadValue 'include_text'
       if ($null -eq $withText) { $withText = $true }
-      # `disable_diffing` (ZCode/Computer Use spelling) returns a complete tree
+      # `disable_diffing` (an accepted alias) returns a complete tree
       # instead of a delta against the previous observation.
       $disableDiffing = Get-PayloadValue 'disable_diffing'
       if ($null -eq $disableDiffing) { $disableDiffing = $false }

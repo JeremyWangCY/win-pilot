@@ -8,4 +8,7 @@
 - Settings panel contains only checkbox/dropdown preferences; no numeric input or mandatory permission switch. Follow confirmed Codex defaults where they correspond. Required system-key capability remains enabled internally.
 - Audit changed and directly related code, fix contradictions/ineffective paths, run meaningful regression checks, push a branch and create a GitHub PR.
 
-Reference behavior is recorded in cua-parity.md. That evidence supports guarded input cancellation and monitor-unavailable errors, but does not expose Codex proprietary source. Windows hooks must run on a message-loop thread with short callbacks; injected-event flags do not identify the originating application by themselves.
+See [desktop-control-contract.md](desktop-control-contract.md) for the full
+control contract. Windows hooks must run on a message-loop thread with short
+callbacks; injected-event flags do not identify the originating application by
+themselves, which is why Win-Pilot tags its own input.

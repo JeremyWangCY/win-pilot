@@ -4,12 +4,13 @@
 // under test is a side effect on the desktop: string assertions on the helper
 // source cannot show that the user's focus survives an action.
 //
-// Reference behavior (see docs/cua-parity.md): the OpenAI Codex and ZCode CUA
-// runtimes detect a foreground/user change and hand control back rather than
-// competing for it. Win-Pilot previously did the opposite — it demoted the
-// window the user had moved to and reclaimed the foreground with
-// AttachThreadInput + a synthetic ALT/ESC, which is more intrusive than the
-// activation it was correcting. Default is now `yield`: report and stop.
+// Reference behavior (see docs/desktop-control-contract.md): a foreground change
+// caused by the user is a valid action, so the correct response is to report it
+// and hand control back rather than competing for it. Win-Pilot previously did
+// the opposite — it demoted the window the user had moved to and reclaimed the
+// foreground with AttachThreadInput + a synthetic ALT/ESC, which is more
+// intrusive than the activation it was correcting. Default is now `yield`:
+// report and stop.
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'

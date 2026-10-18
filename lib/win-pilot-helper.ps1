@@ -927,8 +927,8 @@ public static class DshWin32
       case "minus": case "dash": return 0xBD;
       case "plus": return 0xBB;
       // Numpad keys are distinct virtual keys from the number row and the
-      // operators above it. ZCode and ChatGPT both accept keysym spellings
-      // (`KP_0`, `Numpad_Add`), which normalize onto these names.
+      // operators above it. Keysym spellings such as `kp_enter` and `greater`
+      // (`KP_0`, `Numpad_Add`) normalize onto these names.
       case "numpad0": return 0x60;
       case "numpad1": return 0x61;
       case "numpad2": return 0x62;
@@ -4012,7 +4012,7 @@ function Invoke-ActionRequest {
       if ($null -eq $shot) { $shot = $true }
       $withText = Get-PayloadValue 'include_text'
       if ($null -eq $withText) { $withText = $true }
-      # `disable_diffing` (ZCode/Computer Use spelling) returns a complete tree
+      # `disable_diffing` (an accepted alias) returns a complete tree
       # instead of a delta against the previous observation.
       $disableDiffing = Get-PayloadValue 'disable_diffing'
       if ($null -eq $disableDiffing) { $disableDiffing = $false }

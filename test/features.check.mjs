@@ -71,7 +71,7 @@ assert.equal(params.button.type, 'string')
 assert.deepEqual(params.button.enum, ['left', 'right', 'middle', 'wheel', 'back', 'forward'])
 assert.equal(
   params.button.description,
-  'Mouse button for click and mouse_down/mouse_up (default left). wheel is the OpenAI name for the middle button; back and forward are the physical extended buttons.'
+  'Mouse button for click and mouse_down/mouse_up (default left). wheel is an alternative name for the middle button; back and forward are the physical extended buttons.'
 )
 
 // duration_ms property schema

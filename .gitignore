@@ -11,3 +11,8 @@ lib/task-desktop/*.dll
 lib/task-desktop/*.deps.json
 lib/task-desktop/*.runtimeconfig.json
 lib/wgc/*.exe
+
+# Internal work products: build reports, probe logs and judge output. These are
+# local scratch and must never be published.
+reports/
+artifacts/

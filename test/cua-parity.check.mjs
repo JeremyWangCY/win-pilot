@@ -1,4 +1,4 @@
-// Codex/ZCode computer-use parity: the additive surface this branch adds, and
+// Computer-use compatibility surface: the additive surface this branch adds, and
 // the invariants that keep it from regressing the existing contract.
 //
 // Every assertion here is about behavior Win-Pilot can actually perform, not
@@ -40,7 +40,7 @@ for (const added of ['elements', 'stop', 'paste']) {
   assert.ok(actionEnum.includes(added), `extension action must be model-callable: ${added}`)
 }
 
-// The ZCode/OpenAI spellings still normalize for non-model callers.
+// The alias spellings still normalize for non-model callers.
 const aliases = [
   [{ action: 'left_click' }, 'click'],
   [{ action: 'left_click_drag' }, 'drag'],

@@ -58,7 +58,7 @@ assert.equal(normalizeComputerAction({ action: 'click', mouse_button: 'r' }).arg
 assert.equal(normalizeComputerAction({ action: 'click', mouse_button: 'm' }).args.button, 'middle')
 assert.equal(normalizeComputerAction({ action: 'click', button: 'wheel' }).args.button, 'middle')
 for (const button of ['left', 'right', 'middle', 'wheel', 'back', 'forward']) {
-  assert.ok(parameters.button.enum.includes(button), `OpenAI click button must be model-callable: ${button}`)
+  assert.ok(parameters.button.enum.includes(button), `Click button must be model-callable: ${button}`)
 }
 assert.deepEqual(normalizeComputerAction({ action: 'get_window_state', window: { id: 42, app: 'notepad.exe' }, include_screenshot: false }), {
   requestedAction: 'get_window_state', action: 'get_window_state', args: { action: 'get_window_state', window: { id: 42, app: 'notepad.exe' }, include_screenshot: false, hwnd: 42, app: 'notepad.exe', screenshot: false },
@@ -80,7 +80,7 @@ assert.deepEqual(normalizeComputerAction({ action: 'keypress', keys: ['CTRL', 'L
 assert.deepEqual(normalizeComputerAction({ action: 'move', x: 7, y: 9 }), {
   requestedAction: 'move', action: 'mouse_move', args: { action: 'mouse_move', x: 7, y: 9 },
 })
-for (const alias of ['double_click', 'type', 'keypress', 'move']) assert.ok(actionEnum.includes(alias), `OpenAI computer-use alias must be model-callable: ${alias}`)
+for (const alias of ['double_click', 'type', 'keypress', 'move']) assert.ok(actionEnum.includes(alias), `Action alias must be model-callable: ${alias}`)
 assert.deepEqual(normalizeComputerAction({ action: 'perform_secondary_action', secondary_action: 'expand' }), {
   requestedAction: 'perform_secondary_action', action: 'perform_secondary_action', args: { action: 'perform_secondary_action', secondary_action: 'expand' },
 })
