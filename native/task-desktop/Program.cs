@@ -67,6 +67,10 @@ static class Native
     [DllImport("user32.dll")]internal static extern bool EnumChildWindows(IntPtr parent,ChildWindowVisitor visitor,IntPtr state);
     [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint process);
     [DllImport("kernel32.dll")] internal static extern bool ProcessIdToSessionId(uint process,out uint session);
+    internal static bool WindowBelongsToSession(IntPtr window,uint session){
+        GetWindowThreadProcessId(window,out uint process);
+        return IsWindow(window)&&ProcessIdToSessionId(process,out uint actual)&&actual==session;
+    }
     [DllImport("user32.dll")] internal static extern short VkKeyScanW(char ch);
     [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
@@ -607,10 +611,6 @@ sealed class DesktopWindow : Form
         if(File.Exists(Path.Combine(AppContext.BaseDirectory,"safety-hold.json")))return Program.Fail("task_desktop_safety_hold","独立桌面操作已被安全拦截。");
         if(!connected||(paused&&Native.Mutation(action)))return Program.Fail("task_desktop_paused","任务桌面已暂停或断开，未执行操作。");
         if(workerIdentity==null||workerIdentity.Session!=childSession||!LiveCached(childSession)||childSession==(uint)parentSession)return Program.Fail("task_desktop_session_changed","目标子会话已改变。");
-        if(request["hwnd"]!=null) {
-            var hwnd=new IntPtr(request["hwnd"]!.GetValue<long>());Native.GetWindowThreadProcessId(hwnd,out uint pid);
-            if(!Native.IsWindow(hwnd)||!Native.ProcessIdToSessionId(pid,out uint sid)||sid!=childSession)return Program.Fail("task_desktop_wrong_window","窗口不属于独立任务桌面。");
-        }
         return await SendWorker("execute",request);
     }
     Task<JsonObject> CloseCommand(){var result=Snapshot();startupCancellation.Cancel();paused=true;BeginInvoke(new Action(async()=>await Shutdown()));return Task.FromResult(result);}
@@ -712,6 +712,9 @@ static class Worker
                 else if(command=="resume"){paused=false;result=new(){["ok"]=true};}
                 else if(command is "pause" or "stop" or "close")result=await Invoke(new(){["id"]=id,["action"]="stop",["control_session_id"]=msg["request"]?["control_session_id"]?.DeepClone()});
                 else if(paused&&Native.Mutation(msg["request"]?["action"]?.ToString()??""))result=Program.Fail("task_desktop_paused","任务已暂停。");
+                // HWND lookup must run inside the target session: the host has
+                // a different window namespace, even for an identical number.
+                else if(msg["request"]?["hwnd"] is JsonValue window&&!Native.WindowBelongsToSession(new IntPtr(window.GetValue<long>()),(uint)session))result=Program.Fail("task_desktop_wrong_window","窗口不属于独立任务桌面。");
                 else {
                     var request=msg["request"]!.DeepClone().AsObject();request["id"]=id;
                     activeCancel=Path.Combine(Path.GetTempPath(),"win-pilot","task-cancel-"+Guid.NewGuid()+".signal");Directory.CreateDirectory(Path.GetDirectoryName(activeCancel)!);

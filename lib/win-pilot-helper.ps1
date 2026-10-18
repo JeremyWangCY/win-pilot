@@ -516,6 +516,7 @@ public static class DshWin32
   public const int SW_SHOWNOACTIVATE = 4;
   public const int STARTF_USESHOWWINDOW = 0x00000001;
   public const uint SEE_MASK_NOCLOSEPROCESS = 0x00000040;
+  public const uint SEE_MASK_FLAG_NO_UI = 0x00000400;
 
   [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
   public struct SHELLEXECUTEINFO
@@ -668,7 +669,7 @@ public static class DshWin32
   {
     SHELLEXECUTEINFO sei = new SHELLEXECUTEINFO();
     sei.cbSize = Marshal.SizeOf(typeof(SHELLEXECUTEINFO));
-    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
     sei.lpVerb = "open";
     sei.lpFile = file;
     sei.lpParameters = string.IsNullOrEmpty(args) ? null : args;
@@ -683,7 +684,7 @@ public static class DshWin32
       }
       return pid;
     }
-    return 0;
+    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
   }
 
   public static uint LaunchProcessSilent(string appName, string cmdLine)

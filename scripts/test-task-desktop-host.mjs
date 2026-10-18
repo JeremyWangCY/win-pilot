@@ -90,6 +90,13 @@ try {
   } else {
   const startupView=await desktop.command('preview_snapshot',{},abort.signal)
   if(startupView.ok&&startupView.path){fs.copyFileSync(startupView.path,path.join(output,'ready-window.png'));report.ready_screenshot=path.join(output,'ready-window.png');save()}
+  if(process.argv.includes('--probe-missing-app')){
+    const started=Date.now()
+    const missing=await desktop.execute('launch_app',{dispatch:'background',focus_policy:'never',overlay:false,status_pill:false,control_session_id:instance,name:'win-pilot-missing-'+instance+'.exe'},abort.signal)
+    if(missing.ok!==false||missing.error_code==='task_desktop_timeout'||Date.now()-started>=10000)throw new Error('Missing application did not fail promptly: '+JSON.stringify(missing))
+    requireOk(await desktop.execute('list_displays',{control_session_id:instance},abort.signal),'observation after missing app')
+    check('missing_app_fails_without_blocking_worker',{elapsed_ms:Date.now()-started,message:missing.message})
+  }
   const launched=await desktop.execute('launch_app',{dispatch:'background',focus_policy:'never',overlay:false,status_pill:false,control_session_id:instance,name:`"${fixture}" --host-test ${instance} --session ${report.child_session} --parent-session ${report.parent_session} --events "${events}"`},abort.signal)
   // An explicitly completed launch must be observed, never launched again merely
   // because Windows declined foreground activation during shell startup.
