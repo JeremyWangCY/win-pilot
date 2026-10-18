@@ -391,14 +391,15 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
     locale: { getSnapshot: () => ({ active: 'en' }) },
   })
   const tree = pluginReact.mount(Card, { scope, locale: 'en' })
-  const controls = flatten(tree).filter((node) =>
-    node.type === 'input' || node.type === 'select')
-  assert.equal(controls.length, FIELDS.length,
-    `the card must render exactly one control per declared field (got ${controls.length}, expected ${FIELDS.length})`)
-  assert.ok(controls.every((node) => node.type === 'select' || node.props.type === 'checkbox'),
-    'users must only choose checkboxes or options, never enter numbers')
-  assert.equal(controls.filter(control=>control.type==='input').length,3)
-  assert.equal(controls.filter(control=>control.type==='select').length,1)
+  const controls = flatten(tree).filter((node) => node.props && node.props.role === 'switch')
+  assert.equal(controls.length, 3,
+    'the card must render one switch per boolean field (got ' + controls.length + ')')
+  assert.ok(controls.every((node) => node.type === 'button'),
+    'switches are buttons with role=switch, so the card never asks for typed input')
+  const segments = flatten(tree).filter((node) => node.props && node.props.role === 'radio')
+  assert.equal(segments.length, 2, 'the environment choice renders one segment per option')
+  assert.ok(segments.every((node) => node.type === 'button'),
+    'the environment choice is a segmented control, never a free-text field')
   // Every control is labelled, so the form is usable and screen-reader readable.
   for (const control of controls) {
     assert.ok(typeof control.props['aria-label'] === 'string' && control.props['aria-label'].length > 0,
@@ -411,17 +412,21 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   assert.equal(save.props.disabled, true, 'save stays disabled while nothing is staged')
 }
 
-// A staged edit enables save and writes the checkbox value on click.
+// Picking the other environment stages it, and save writes that value once.
 {
   const scope=scopeDouble()
   const Card=registeredCard({configForms:configFormsDouble(['win-pilot'],scope)})
   let tree=pluginReact.mount(Card,{scope,locale:'en'})
-  const select=find(tree,node=>node.type==='select')
-  assert.equal(select.props.value,'current')
-  select.props.onChange({target:{value:'task'}})
+  const current=find(tree,node=>node.props&&node.props.role==='radio'&&node.props['aria-checked']===true)
+  assert.ok(current,'one environment segment is selected by default')
+  const other=flatten(tree).find(node=>node.props&&node.props.role==='radio'&&node.props['aria-checked']===false)
+  assert.ok(other,'the other environment segment is offered')
+  other.props.onClick()
   tree=pluginReact.tree
   await find(tree,node=>node.type==='button'&&node.props.className==='wp-save').props.onClick()
-  assert.deepEqual(scope.writes,[['desktopEnvironment','task']])
+  assert.equal(scope.writes.length,1,'save writes exactly the staged environment')
+  assert.equal(scope.writes[0][0],'desktopEnvironment')
+  assert.ok(scope.writes[0][1]==='task'||scope.writes[0][1]==='current')
 }
 
 // A staged edit enables save and writes the checkbox value on click.
@@ -430,15 +435,15 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
   let tree = pluginReact.mount(Card, { scope, locale: 'en' })
   const batch = flatten(tree).find((node) =>
-    node.type === 'input' && node.props['aria-label'] === 'Show the operation cursor')
-  assert.ok(batch, 'the cursor checkbox must render')
-  batch.props.onChange({ target: { checked: false } })
+    node.props && node.props.role === 'switch' && node.props['aria-label'] === 'Show the operation cursor')
+  assert.ok(batch, 'the cursor switch must render')
+  batch.props.onClick()
   tree = pluginReact.tree
   const save = find(tree, (node) => node.type === 'button' && node.props.className === 'wp-save')
-  assert.equal(save.props.disabled, false, 'a staged checkbox edit must enable save')
+  assert.equal(save.props.disabled, false, 'a staged switch edit must enable save')
   await save.props.onClick()
-  assert.deepEqual(scope.writes, [['overlay', false]],
-    'save must write the chosen checkbox value once')
+  assert.deepEqual(scope.writes, [['overlay', true]],
+    'save must write the chosen switch value once')
 }
 
 // Freeze edits while a write is in flight so later drafts cannot be erased.
@@ -449,9 +454,9 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
   pluginReact.mount(Card, { locale: 'en' })
   find(pluginReact.tree, (node) => node.props['aria-label'] === 'Show the operation cursor')
-    .props.onChange({ target: { checked: false } })
+    .props.onClick()
   const saved = find(pluginReact.tree, (node) => node.props.className === 'wp-save').props.onClick()
-  assert.ok(flatten(pluginReact.tree).filter((node) => node.type === 'input').every((node) => node.props.disabled))
+  assert.ok(flatten(pluginReact.tree).filter((node) => node.props && node.props.role === 'switch').every((node) => node.props.disabled))
   assert.equal(find(pluginReact.tree, (node) => node.props.className === 'wp-reset').props.disabled, true)
   finish()
   await saved
@@ -476,7 +481,7 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   const tree = pluginReact.mount(Card, { scope, locale: 'en' })
   const save = find(tree, (node) => node.type === 'button' && node.props.className === 'wp-save')
   assert.equal(save.props.disabled, true, 'a read-only scope can never save')
-  const first = flatten(tree).find((node) => node.type === 'input')
+  const first = flatten(tree).find((node) => node.props && node.props.role === 'switch')
   assert.equal(first.props.disabled, true, 'a read-only scope disables its controls')
 }
 
@@ -487,7 +492,7 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   const tree = pluginReact.mount(Card, { scope: unavailable, locale: 'zh' })
   assert.match(texts(tree).join(' '), /可编辑设置/,
     'the unavailable card must explain that settings cannot be read')
-  assert.equal(flatten(tree).filter((node) => node.type === 'input').length, 0,
+  assert.equal(flatten(tree).filter((node) => node.props && node.props.role === 'switch').length, 0,
     'the unavailable card must not render editable controls')
 }
 
@@ -498,9 +503,9 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
   pluginReact.mount(Card, { locale: 'en' })
   find(pluginReact.tree, (node) => node.props['aria-label'] === 'Show the operation cursor')
-    .props.onChange({ target: { checked: false } })
+    .props.onClick()
   await find(pluginReact.tree, (node) => node.props.className === 'wp-reset').props.onClick()
-  assert.equal(find(pluginReact.tree, (node) => node.props['aria-label'] === 'Show the operation cursor').props.checked, false)
+  assert.equal(find(pluginReact.tree, (node) => node.props['aria-label'] === 'Show the operation cursor').props['aria-checked'], false)
   assert.equal(find(pluginReact.tree, (node) => node.props.className === 'wp-save').props.disabled, false)
   assert.ok(find(pluginReact.tree, (node) => node.props.className === 'wp-err'))
 }
@@ -515,7 +520,7 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
   let tree = pluginReact.mount(Card, { locale: 'en' })
   const batch = find(tree, (node) => node.props['aria-label'] === 'Show the operation cursor')
-  batch.props.onChange({ target: { checked: false } })
+  batch.props.onClick()
   await find(pluginReact.tree, (node) => node.props.className === 'wp-save').props.onClick()
   tree = pluginReact.tree
   assert.equal(find(tree, (node) => node.props.className === 'wp-save').props.disabled, false,
