@@ -62,4 +62,52 @@ static class UiText
     internal static string ClearedLogin => T("已清除保存的登录信息。", "Saved sign-in cleared.");
 
     internal static string StatusPill => T("Win-Pilot 运行中", "Win-Pilot running");
+
+    // Failure messages travel to the caller as JSON message and are shown to the
+    // user by the JS layer, so they need the same treatment as labels. Keyed by the
+    // Chinese source string: the call sites stay readable, and a missing key simply
+    // falls through to the original text rather than throwing.
+    static readonly System.Collections.Generic.Dictionary<string,string> FailureEnglish = new()
+    {
+    {"执行工具正在结束，拒绝新操作。", "The tool is shutting down; new operations are refused."},
+    {"目标子会话已改变。", "The target child session changed."},
+    {"执行工具未就绪、已断开或启动已被拦截。", "The tool is not ready, has disconnected, or startup is blocked."},
+    {"任务窗口已停止连接，请重新打开窗口。", "The task window stopped connecting; reopen the window."},
+    {"执行工具返回无效结果。", "The tool returned an invalid result."},
+    {"缺少任务桌面执行工具。", "The task-desktop tool is missing."},
+    {"当前窗口仅供预览，不执行电脑动作。", "This window is preview-only; no computer action is executed."},
+    {"不支持的窗口命令。", "Unsupported window command."},
+    {"无法确认独立执行工具已停止。", "Cannot confirm the task-desktop tool has stopped."},
+    {"当前窗口已有连接，请使用「重试工具」或结束后重新连接。", "This window already has a connection. Use \"retry tool\" or reconnect after ending it."},
+    {"执行工具正在连接。", "The tool is connecting."},
+    {"无法枚举 Windows 会话，未建立连接：", "Cannot enumerate Windows sessions; no connection was made: "},
+    {"任务桌面已暂停或断开，未执行操作。", "The task desktop is paused or disconnected; nothing was executed."},
+    {"独立桌面启动已被拦截。", "Task-desktop startup is blocked by the safety hold."},
+    {"任务窗口正在结束，拒绝新操作。", "The task window is closing; new operations are refused."},
+    {"无法读取 Windows 子会话配置，错误 ", "Cannot read the Windows child-session configuration, error "},
+    {"已取消首次登录设置，未创建 Windows 会话。", "First-time sign-in was cancelled; no Windows session was created."},
+    {"控制状态已改变，请重新观察。", "Control state changed; observe again."},
+    {"手动操作或控制状态已改变，未交还 AI。", "Manual input or the control state changed; not handed back to the AI."},
+    {"原独立桌面执行工具已退出。", "The original task-desktop tool has exited."},
+    {"停止执行工具未获确认：", "Stopping the tool was not confirmed: "},
+    {"已有活动子会话，请结束现有会话后连接。", "An active child session exists; end it before connecting."},
+    {"任务已暂停。", "The task is paused."},
+    {"任务窗口正在结束，拒绝恢复操作。", "The task window is closing; restore refused."},
+    {"独立桌面操作已被安全拦截。", "Task-desktop operations are blocked by the safety hold."},
+    {"连接已取消，未创建 Windows 会话。", "Connection cancelled; no Windows session was created."},
+    {"窗口不属于独立任务桌面。", "That window does not belong to the task desktop."},
+    {"独立执行工具尚未就绪。", "The task-desktop tool is not ready yet."},
+    {"任务桌面正在连接，请稍后观察状态。", "The task desktop is connecting; check its state shortly."},
+    {"当前窗口仅供预览，不建立 Windows 会话。", "This window is preview-only; no Windows session is created."},
+    {"当前连接不能安全重试执行工具。", "The current connection cannot safely restart the tool."}
+    };
+
+    internal static string Failure(string message)
+    {
+        if (Chinese) return message;
+        foreach (var pair in FailureEnglish)
+            if (message.StartsWith(pair.Key, StringComparison.Ordinal))
+                return pair.Value + message[pair.Key.Length..];
+        return message;
+    }
 }

@@ -12,7 +12,7 @@ static class Program
     internal static readonly object OutputLock = new();
     internal static bool Stdio;
     internal static void Emit(object value) { if (!Stdio) return; lock(OutputLock) Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(value)); }
-    internal static JsonObject Fail(string code, string message, bool sent = false) => new() { ["ok"]=false,["error_code"]=code,["message"]=message,["outcome"]=sent?"unknown":"not_executed",["actionSent"]=sent,["retry"]=sent?"reobserve":"never" };
+    internal static JsonObject Fail(string code, string message, bool sent = false) => new() { ["ok"]=false,["error_code"]=code,["message"]=UiText.Failure(message),["outcome"]=sent?"unknown":"not_executed",["actionSent"]=sent,["retry"]=sent?"reobserve":"never" };
     [STAThread]
     static void Main(string[] args)
     {

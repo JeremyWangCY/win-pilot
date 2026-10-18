@@ -68,6 +68,24 @@ class LoginSettingsDialog : Form
 
         Controls.Add(layout);AcceptButton=save;CancelButton=cancel;
 
+        // The dialog is a FixedDialog, so the user cannot resize it and it must size
+        // itself to its content. A hardcoded height clipped the bottom action row in
+        // Chinese even at 100% DPI, and by roughly 50px in English at 120% DPI, which
+        // pushed the primary button below the fold.
+        void FitToContent()
+        {
+            layout.PerformLayout();
+            int preferred=layout.GetPreferredSize(new Size(ClientSize.Width,0)).Height;
+            int chrome=ClientSize.Height-layout.ClientSize.Height;
+            int maxHeight=Screen.FromControl(this).WorkingArea.Height-80;
+            int height=Math.Min(Math.Max(preferred+chrome+28,240),maxHeight);
+            if(ClientSize.Height!=height)ClientSize=new(ClientSize.Width,height);
+        }
+        // Layout is not final until the window is shown, so fit both then and on any
+        // later content change (the result label can grow after a failed sign-in).
+        Shown+=(_,_)=>{FitToContent();FitToContent();};
+        layout.SizeChanged+=(_,_)=>FitToContent();
+
         try{using var saved=store.Read();if(saved!=null){account.Text=saved.Account;result.Text=UiText.SavedLoginHint;}}
         catch(Exception){result.Text=UiText.SavedLoginUnavailable;}
 
