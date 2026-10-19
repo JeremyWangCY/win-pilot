@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url'
 import { syncBuiltinESMExports } from 'node:module'
 import { EventEmitter } from 'node:events'
 import { controlCoordinator } from '../lib/control-session.js'
+import { setSettingsForTest, resetSettingsForTest } from '../lib/settings.js'
 
 // These tests inject failures at the native transport boundary, including
 // concurrent pending JSONL requests and fake clocks. Isolate that boundary from
@@ -15,11 +16,14 @@ import { controlCoordinator } from '../lib/control-session.js'
 // are tested in control-session.check.mjs. No real helper input is dispatched.
 const originalControlRun = controlCoordinator.run
 controlCoordinator.run = async (_id, _request, signal, operation) => operation(signal)
+// This transport fixture counts helper processes. Status UI has its own real
+// process tests and must not be mistaken for a native transport child here.
+setSettingsForTest({ statusPill: false })
 
 const originals = { spawn: cp.spawn, copy: fs.copyFileSync, set: globalThis.setTimeout, clear: globalThis.clearTimeout }
 let children, timers, behavior
 cp.spawn = (exe, argv) => {
-  if (behavior === 'spawn-throw') throw new Error('spawn unavailable')
+  if (behavior === 'spawn-throw') { behavior = ''; throw new Error('spawn unavailable') }
   const child = new EventEmitter()
   child.unref = () => {}
   child.kill = () => { child.kills++; return false }
@@ -186,9 +190,7 @@ try {
   await check('pre-dispatch spawn failure can use one-shot fallback', async m => {
     behavior = 'spawn-throw'
     const p = m.defineComputerTool(d => d).execute({ action: 'click' })
-    // The synchronous daemon spawn failure happens before fallback acquisition.
-    for (let i = 0; i < 2; i++) await Promise.resolve()
-    behavior = ''
+    // Fail exactly the daemon acquisition; the one-shot fallback can start.
     await flush()
     assert.equal(children.length, 1)
     children[0].stdout.emit('data', Buffer.from('{"ok":true}'))
@@ -325,12 +327,14 @@ try {
   cp.spawn = originals.spawn; fs.copyFileSync = originals.copy
   globalThis.setTimeout = originals.set; globalThis.clearTimeout = originals.clear
   controlCoordinator.run = originalControlRun
+  resetSettingsForTest()
   syncBuiltinESMExports()
 }
 assert.equal(failures, 0, `${failures} reliability checks failed`)
 
 // Optional real OS-process fault injection. Fixtures perform no desktop input.
 if (process.argv.includes('--real')) {
+  setSettingsForTest({ statusPill: false })
   // Preserve transport-only isolation for the real subprocess fault fixtures.
   controlCoordinator.run = async (_id, _request, signal, operation) => operation(signal)
   const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
@@ -374,4 +378,5 @@ if (process.argv.includes('--real')) {
     }
   }
   controlCoordinator.run = originalControlRun
+  resetSettingsForTest()
 }

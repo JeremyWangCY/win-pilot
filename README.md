@@ -86,11 +86,11 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected for this release: version `0.3.0`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
+Expected for this release: version `0.3.1`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
 
 ### Settings
 
-In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or the plugin detail page. The host projects the plugin's `Config`. Display preferences apply immediately; the desktop environment applies to new tasks.
+In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or the plugin detail page. The host projects the plugin's `Config`. Display preferences apply immediately. Changing the desktop environment applies to the next computer operation, including an existing chat.
 
 | Preference | Default | Effect |
 |---|---|---|
@@ -99,7 +99,7 @@ In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or 
 | `browserHeadlessDefault` | `false` | Run browsers without a visible window |
 | `desktopEnvironment` | `current` | Where computer actions run: this desktop or the separate task window |
 
-`desktopEnvironment` defaults to `current`; `task` selects the separate task window. Save the setting and start a new task. Existing tasks keep their original desktop so observed targets cannot silently change. With the option off, model schemas, runtime skills and diagnostics do not advertise the task-desktop option. With it on, native actions, observations, clipboard and recovery stay in that task desktop; failure never redirects work to the main desktop. Browser actions require a browser launched by the same task.
+`desktopEnvironment` defaults to `current`; `task` selects the separate task window. Save the setting to switch on the next computer operation. Win-Pilot cancels and cleans up the old control session before changing desktops, releases old browser claims, and requires a fresh window list or desktop screenshot before input. Old targets cannot carry over; failed cleanup blocks the switch. With the option off, model schemas, runtime skills and diagnostics do not advertise the task-desktop option. With it on, native actions, observations, clipboard and recovery stay in that task desktop; failure never redirects work to the main desktop. Browser actions require a browser launched by the same task.
 
 The light, frameless window defaults to 432×300. Its toolbar contains expand/restore, pin and close. In the expanded view, click, drag or type to take over: AI input stops before your first gesture is delivered. After 10 seconds without manual input, control returns to the AI; a held button or key prevents that return. The compact view is read-only. Right-click the toolbar for local sign-in settings. Complete Windows feature setup and local sign-in once; optionally remember credentials using the current Windows user's DPAPI and Credential Manager. Passwords stay in the local dialog. This mode requires .NET 8 Windows Desktop Runtime and working Windows child-session support. A Windows user change, credential change or system policy may require setup again; it is not a virtual machine.
 
@@ -125,6 +125,8 @@ DSH profiles must be restarted separately. Re-run `win-pilot install` when you w
 When a sandbox reaps children after every command, configure `win-pilot mcp` in the host's persistent plugin or MCP supervisor. Do not detach a process from an ephemeral command. Shell-only agents can use one-shot `win-pilot request` calls.
 
 ## Usage
+
+Version 0.3.1 applies desktop setting changes within existing chats and keeps the running pill visible for CLI observations and long actions. Switching requires fresh discovery before input.
 
 Version 0.3.0 adds session-scoped `stop` / `resume`, queued and active request cancellation, and atomic per-user control ownership. Observation remains available after stopping. Desktop accessibility uses stable sparse indexes and model-visible `full` / `delta` / `no_change` trees; hidden observations do not advance that baseline. Rich `paste` accepts `format: text | html | md` and restores supported original clipboard formats unless the user changes the clipboard meanwhile. Markdown conversion covers a limited subset.
 
