@@ -30,6 +30,10 @@ static class UiText
     // fall through to the raw state key.
     internal static string Badge(string state, bool paused) => state switch
     {
+        "running" => T("● 执行中", "● Running"),
+        "preparing" => T("● 等待系统授权", "● Waiting for system permission"),
+        "awaiting_login" => T("● 等待登录", "● Waiting for sign-in"),
+        "pausing" => T("● 正在暂停", "● Pausing"),
         "ready" => paused ? T("● 已暂停", "● Paused") : T("● 运行就绪", "● Ready"),
         "login_settings" => T("● 首次登录设置", "● Sign-in setup needed"),
         "awaiting_windows_login" => T("● 请登录 Windows", "● Sign in to Windows"),

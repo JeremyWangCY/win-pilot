@@ -1,13 +1,54 @@
-# Win-Pilot status pill: top-center dark bar with one low-contrast accent dot.
+﻿# Win-Pilot status pill: top-center dark bar with one low-contrast accent dot.
 # Visible while the helper is acting (status.state fresh), hides shortly after
 # the last action. Click-through, never activates, per-pixel-alpha layered
 # window — same technique as the virtual cursor overlay (PS 5.1 + PS7 compatible).
 param(
-  [string]$RenderSample = ""
+  [string]$RenderSample = "",
+  [switch]$SampleActivity
 )
 $ErrorActionPreference = "Stop"
+$rendererMutex = $null
+$rendererDir = Join-Path $env:TEMP 'win-pilot'
+$rendererVersion = ''
+if (-not $RenderSample) {
+  [IO.Directory]::CreateDirectory($rendererDir) | Out-Null
+  $hasher = [Security.Cryptography.SHA256]::Create()
+  try { $rendererVersion = [BitConverter]::ToString($hasher.ComputeHash([IO.File]::ReadAllBytes($PSCommandPath))).Replace('-', '') }
+  finally { $hasher.Dispose() }
+  $rendererMutex = New-Object Threading.Mutex($false, ('Local\WinPilotActivity-' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value))
+  try {
+    if (-not $rendererMutex.WaitOne(0)) {
+      $previous = ''
+      try { $previous = [IO.File]::ReadAllText((Join-Path $rendererDir 'renderer.version')) } catch { }
+      if ($previous -eq $rendererVersion) { $rendererMutex.Dispose(); exit 0 }
+      if (-not $previous) {
+        # Upgrade a pre-handshake renderer only when its saved PID and creation
+        # time still identify this application's PowerShell status worker.
+        try {
+          $marker = ([IO.File]::ReadAllText((Join-Path $rendererDir 'statusbar.pid'))).Trim().Split('|')
+          $oldProcess = [Diagnostics.Process]::GetProcessById([int]$marker[0])
+          $details = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $oldProcess.Id)
+          if ($oldProcess.StartTime.ToFileTimeUtc() -eq [long]$marker[1] -and $oldProcess.ProcessName -eq 'powershell' -and
+              $details.CommandLine -match '(?i)-File\s+.*winpilot-statusbar\.ps1"?\s*$') {
+            Stop-Process -Id $oldProcess.Id -Force
+          }
+        } catch { }
+      }
+      [IO.File]::WriteAllText((Join-Path $rendererDir 'renderer.restart'), $rendererVersion)
+      if (-not $rendererMutex.WaitOne(4000)) { $rendererMutex.Dispose(); exit 0 }
+    }
+  }
+  catch [Threading.AbandonedMutexException] { }
+  [IO.File]::WriteAllText((Join-Path $rendererDir 'renderer.version'), $rendererVersion)
+  Remove-Item -LiteralPath (Join-Path $rendererDir 'renderer.restart') -Force -ErrorAction SilentlyContinue
+}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+# Windows PowerShell otherwise opts the .NET Framework controls into legacy
+# accessibility, which omits UIA InvokePattern for these action buttons.
+[AppContext]::SetSwitch('Switch.UseLegacyAccessibilityFeatures', $false)
+[AppContext]::SetSwitch('Switch.UseLegacyAccessibilityFeatures.2', $false)
+[AppContext]::SetSwitch('Switch.UseLegacyAccessibilityFeatures.3', $false)
 $dpiSig = @"
 using System;
 using System.Runtime.InteropServices;
@@ -86,7 +127,8 @@ public static class DshStatusPill
     public uint biClrUsed; public uint biClrImportant;
   }
 
-  public const int W = 320, H = 56;
+  public static int W { get { return activityLabel == null ? 320 : 400; } }
+  public static int H { get { return activityLabel == null ? 56 : 88; } }
   static IntPtr hwnd = IntPtr.Zero;
   static IntPtr hdcMem = IntPtr.Zero;
   static IntPtr hbm = IntPtr.Zero;
@@ -120,7 +162,9 @@ public static class DshStatusPill
     .CurrentUICulture.TwoLetterISOLanguageName.Equals("zh", StringComparison.OrdinalIgnoreCase)
     ? "Win-Pilot \u8fd0\u884c\u4e2d"
     : "Win-Pilot running";
-  static string PillLabel() { return Label; }
+  static string activityLabel = null;
+  public static void SetLabel(string value) { activityLabel = value; }
+  static string PillLabel() { return activityLabel ?? Label; }
   static Bitmap RenderBitmap(double breath)
   {
     Bitmap bmp = new Bitmap(W, H, PixelFormat.Format32bppPArgb);
@@ -131,27 +175,28 @@ public static class DshStatusPill
       g.Clear(Color.Transparent);
 
       var rect = new RectangleF(0.5f, 0.5f, W - 1.0f, H - 1.0f);
-      var radius = (float)(H - 1.0);
+      var radius = activityLabel == null ? (float)(H - 1.0) : 40f;
       using (GraphicsPath pill = RoundedRect(rect, radius))
       {
         // Harness dark surface (neutral-bluish-950) with a hairline edge. The old
         // gradient plus a white sheen read as glossy chrome, which is a different
         // product language from the flat, near-black harness surfaces.
-        using (var fill = new SolidBrush(Color.FromArgb(242, 21, 21, 23)))
+        using (var fill = new SolidBrush(Color.FromArgb(activityLabel == null ? 242 : 255, 21, 21, 23)))
         {
           g.FillPath(fill, pill);
         }
-        using (var edge = new Pen(Color.FromArgb(26, 255, 255, 255), 1.0f))
+        using (var edge = new Pen(Color.FromArgb(31, 255, 255, 255), 1.0f))
         {
           edge.Alignment = PenAlignment.Inset;
           g.DrawPath(edge, pill);
         }
       }
 
-      using (var font = new Font("Segoe UI", 13f, FontStyle.Regular, GraphicsUnit.Point))
+      using (var font = new Font("Segoe UI", activityLabel == null ? 13f : 11f, FontStyle.Regular, GraphicsUnit.Point))
       {
-        var fmt = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center };
-        var textRect = new RectangleF(20, 0, W - 70, H);
+        var fmt = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center,
+          Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
+        var textRect = new RectangleF(20, 0, W - 70, activityLabel == null ? H : 44);
         using (var brush = new SolidBrush(Color.FromArgb(242, 249, 250, 251)))
         {
           g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
@@ -162,7 +207,7 @@ public static class DshStatusPill
       // A single soft dot marks the live session. The previous version layered a
       // pulsing halo over a saturated green; this keeps one low-contrast tone so
       // the pill cannot compete with the user's own windows.
-      float cx = W - 30f, cy = H / 2f;
+      float cx = W - 30f, cy = activityLabel == null ? H / 2f : 22f;
       float alpha = (float)(0.45 + 0.55 * (0.5 + 0.5 * Math.Sin(breath)));
       using (SolidBrush dot = new SolidBrush(Color.FromArgb((int)(255 * alpha), 86, 134, 254)))
       {
@@ -174,6 +219,11 @@ public static class DshStatusPill
 
   static void RenderSurface(double breath)
   {
+    // Legacy and activity layouts can alternate within the same renderer.
+    if (hbm != IntPtr.Zero && surfaceHeight != H) {
+      SelectObject(hdcMem, hbmOld); DeleteObject(hbm); DeleteDC(hdcMem);
+      hbm = hdcMem = hbmOld = IntPtr.Zero;
+    }
     using (Bitmap bmp = RenderBitmap(breath))
     {
       var bmi = new BITMAPINFO();
@@ -190,6 +240,7 @@ public static class DshStatusPill
         hdcMem = CreateCompatibleDC(dc);
         hbm = CreateDIBSection(hdcMem, ref bmi, 0, out bitsAt, IntPtr.Zero, 0);
         hbmOld = SelectObject(hdcMem, hbm);
+        surfaceHeight = H;
       }
       BitmapData data = bmp.LockBits(new Rectangle(0, 0, W, H), ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb);
       try
@@ -203,6 +254,7 @@ public static class DshStatusPill
       ReleaseDC(IntPtr.Zero, dc);
     }
   }
+  static int surfaceHeight;
 
   static void EnsureWindow()
   {
@@ -241,6 +293,10 @@ public static class DshStatusPill
   {
     if (hwnd != IntPtr.Zero) ShowWindow(hwnd, 0);
   }
+  public static void RaiseControls(IntPtr controls)
+  {
+    SetWindowPos(controls, (IntPtr)(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040);
+  }
 
   public static void Cleanup()
   {
@@ -269,52 +325,282 @@ if ($PSVersionTable.PSEdition -eq 'Core') {
   Add-Type -Path $csFile -ReferencedAssemblies "System.Drawing"
 }
 
-if ($RenderSample) {
+if ($RenderSample -and -not $SampleActivity) {
   [DshStatusPill]::SaveSampleImage($RenderSample, 1.2)
   exit 0
 }
 
 $processMarker = "$PID|$([Diagnostics.Process]::GetCurrentProcess().StartTime.ToFileTimeUtc())"
-Set-Content -Path (Join-Path $dir "statusbar.pid") -Value $processMarker -Encoding ascii
+if (-not $RenderSample) { [IO.File]::WriteAllText((Join-Path $dir 'statusbar.pid'), $processMarker) }
 
-$stateFile = Join-Path $dir "status.state"
-$lastTs = 0.0
+Add-Type -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Windows.Forms;
+public class WinPilotChoiceItem {
+  public string Name { get; set; }
+  public object Record { get; set; }
+}
+public class WinPilotMenuColors : ProfessionalColorTable {
+  public override Color ToolStripDropDownBackground { get { return Color.FromArgb(21,21,23); } }
+  public override Color MenuItemSelected { get { return Color.FromArgb(44,44,46); } }
+  public override Color MenuItemBorder { get { return Color.FromArgb(44,44,46); } }
+  public override Color MenuBorder { get { return Color.FromArgb(49,49,51); } }
+}
+public class WinPilotChoice : Button {
+  public System.Collections.Generic.List<WinPilotChoiceItem> Items = new System.Collections.Generic.List<WinPilotChoiceItem>();
+  public string DisplayMember { get; set; }
+  public bool DroppedDown { get; private set; }
+  int selected = -1;
+  public event EventHandler SelectedIndexChanged;
+  public WinPilotChoiceItem SelectedItem { get { return selected >= 0 && selected < Items.Count ? Items[selected] : null; } }
+  public int SelectedIndex { get { return selected; } set {
+    selected = value; Text = SelectedItem == null ? "" : SelectedItem.Name;
+    if (SelectedIndexChanged != null) SelectedIndexChanged(this, EventArgs.Empty);
+    Invalidate();
+  } }
+  public void BeginUpdate() { }
+  public void EndUpdate() { Invalidate(); }
+  protected override void OnClick(EventArgs e) {
+    base.OnClick(e);
+    var menu = new ContextMenuStrip();
+    menu.ShowImageMargin = false; menu.ShowCheckMargin = false; menu.Font = Font;
+    menu.Renderer = new ToolStripProfessionalRenderer(new WinPilotMenuColors());
+    for (int i = 0; i < Items.Count; i++) {
+      int index = i;
+      var item = new ToolStripMenuItem(Items[i].Name);
+      item.ForeColor = ForeColor; item.Padding = new Padding(8,6,8,6);
+      item.Click += delegate { SelectedIndex = index; };
+      menu.Items.Add(item);
+    }
+    DroppedDown = true;
+    menu.Closed += delegate { DroppedDown = false; menu.Dispose(); };
+    menu.Show(this, new Point(0, Height + 6));
+  }
+  protected override void OnPaint(PaintEventArgs e) {
+    base.OnPaint(e);
+    using (var brush = new SolidBrush(BackColor)) e.Graphics.FillRectangle(brush, new Rectangle(0,0,Width,Height));
+    TextRenderer.DrawText(e.Graphics, Text, Font, new Rectangle(10,0,Width-32,Height), ForeColor,
+      TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+    using (var pen = new Pen(ForeColor,1.2f)) {
+      int x=Width-16, y=Height/2-1;
+      e.Graphics.DrawLines(pen,new Point[]{ new Point(x-3,y),new Point(x,y+3),new Point(x+3,y) });
+    }
+  }
+}
+public class WinPilotControlForm : System.Windows.Forms.Form {
+  protected override bool ShowWithoutActivation { get { return true; } }
+  protected override System.Windows.Forms.CreateParams CreateParams {
+    get { var value = base.CreateParams; value.ExStyle |= 0x08000000 | 0x80; return value; }
+  }
+}
+'@ -ReferencedAssemblies System.Windows.Forms,System.Drawing
+$zh = [Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName -eq 'zh'
+$activityDir = Join-Path $dir 'activity'
+$controls = New-Object WinPilotControlForm
+$controls.Text = 'Win-Pilot controls'
+$controls.FormBorderStyle = 'None'
+$controls.ShowInTaskbar = $false
+$controls.TopMost = $true
+$controls.StartPosition = 'Manual'
+$controls.Size = New-Object Drawing.Size(368, 32)
+$controls.BackColor = [Drawing.Color]::FromArgb(21, 21, 23)
+$controls.Font = New-Object Drawing.Font('Segoe UI', 9)
+$selector = New-Object WinPilotChoice
+$selector.DisplayMember = 'Name'
+$selector.SetBounds(0, 3, 184, 26)
+$selector.FlatStyle = 'Flat'
+$selector.BackColor = [Drawing.Color]::FromArgb(32, 32, 35)
+$selector.ForeColor = [Drawing.Color]::FromArgb(208, 208, 215)
+$pauseButton = New-Object Windows.Forms.Button
+$pauseButton.SetBounds(192, 2, 80, 28)
+$endButton = New-Object Windows.Forms.Button
+$endButton.SetBounds(280, 2, 88, 28)
+$endButton.Text = $(if ($zh) { '结束控制' } else { 'End' })
+foreach ($button in @($selector, $pauseButton, $endButton)) {
+  $button.AccessibleRole = 'PushButton'
+  $button.FlatStyle = 'Flat'
+  $button.FlatAppearance.BorderSize = 0
+  # DSH: label-secondary, bg-layer-1, bg-layer-2 and hover-solid.
+  $button.ForeColor = [Drawing.Color]::FromArgb(207, 211, 214)
+  $button.BackColor = [Drawing.Color]::FromArgb(35, 35, 36)
+  $button.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(44, 44, 46)
+  $button.FlatAppearance.MouseDownBackColor = [Drawing.Color]::FromArgb(53, 54, 56)
+  $shape = New-Object Drawing.Drawing2D.GraphicsPath
+  $shape.AddArc(0, 0, 12, 12, 180, 90)
+  $shape.AddArc(($button.Width - 13), 0, 12, 12, 270, 90)
+  $shape.AddArc(($button.Width - 13), ($button.Height - 13), 12, 12, 0, 90)
+  $shape.AddArc(0, ($button.Height - 13), 12, 12, 90, 90)
+  $shape.CloseFigure()
+  $button.Region = New-Object Drawing.Region($shape)
+  $shape.Dispose()
+}
+$controls.Controls.AddRange(@($selector, $pauseButton, $endButton))
+$tooltip = New-Object Windows.Forms.ToolTip
+$script:controlBusy = $false
+$script:activitySignature = ''
+function State-Label([string]$State) {
+  switch ($State) {
+    'running' { if ($zh) { return '运行中' }; return 'Running' }
+    'paused' { if ($zh) { return '已暂停' }; return 'Paused' }
+    'pausing' { if ($zh) { return '正在暂停' }; return 'Pausing' }
+    'takeover' { if ($zh) { return '用户接管' }; return 'Manual control' }
+    'login_settings' { if ($zh) { return '等待登录设置' }; return 'Sign-in setup' }
+    { $_ -in 'awaiting_login','awaiting_windows_login' } { if ($zh) { return '等待登录' }; return 'Waiting for sign-in' }
+    { $_ -in 'preparing','needs_preparation' } { if ($zh) { return '等待系统授权' }; return 'Setup required' }
+    'connecting' { if ($zh) { return '正在连接' }; return 'Connecting' }
+    'error' { if ($zh) { return '连接失败' }; return 'Connection failed' }
+    'disconnected' { if ($zh) { return '已断开' }; return 'Disconnected' }
+    'ended' { if ($zh) { return '已结束' }; return 'Ended' }
+    default { if ($zh) { return '已完成' }; return 'Complete' }
+  }
+}
+function Environment-Label([string]$Environment) {
+  if ($Environment -eq 'task') { if ($zh) { return '独立桌面' }; return 'Task' }
+  if ($zh) { return '当前桌面' }; return 'Current'
+}
+function Update-ControlButtons {
+  $entry = $selector.SelectedItem
+  $record = if ($entry) { $entry.Record } else { $null }
+  $interactive = $record -and $record.endpoint -and $record.state -notin @('ended','idle') -and -not $script:controlBusy
+  $canToggle = $record -and $record.state -in @('running','paused','takeover')
+  $pauseButton.Enabled = [bool]($interactive -and $canToggle)
+  $endButton.Enabled = [bool]$interactive
+  $resume = $record -and $record.state -in @('paused','takeover')
+  $pauseButton.Text = if ($resume) { if ($zh) { '继续' } else { 'Resume' } } else { if ($zh) { '暂停' } else { 'Pause' } }
+  $pauseButton.AccessibleName = $pauseButton.Text
+  $endButton.AccessibleName = $endButton.Text
+}
+function Invoke-ActivityControl([string]$Command) {
+  $entry = $selector.SelectedItem
+  if (-not $entry -or $script:controlBusy) { return }
+  $record = $entry.Record
+  if (-not $record.endpoint -or -not $record.token) { return }
+  $script:controlBusy = $true
+  Update-ControlButtons
+  $pipe = $null
+  try {
+    $pipeName = ([string]$record.endpoint) -replace '^\\\\\.\\pipe\\', ''
+    $pipe = New-Object IO.Pipes.NamedPipeClientStream('.', $pipeName, [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::Asynchronous)
+    $pipe.Connect(1000)
+    $writer = New-Object IO.StreamWriter($pipe)
+    $writer.AutoFlush = $true
+    $reader = New-Object IO.StreamReader($pipe)
+    $writer.WriteLine((@{ token=$record.token; command=$Command; session_id=$record.id } | ConvertTo-Json -Compress))
+    $pending = $reader.ReadLineAsync()
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while (-not $pending.IsCompleted -and $watch.ElapsedMilliseconds -lt 10000) {
+      [Windows.Forms.Application]::DoEvents()
+      Start-Sleep -Milliseconds 20
+    }
+    if (-not $pending.IsCompleted) { throw 'Control is still being processed; inspect its state before trying again.' }
+    $response = $pending.GetAwaiter().GetResult() | ConvertFrom-Json
+    if (-not $response.ok) { throw ([string]$response.message) }
+    $tooltip.SetToolTip($controls, '')
+  } catch { $tooltip.SetToolTip($controls, $_.Exception.Message) }
+  finally { if ($pipe) { $pipe.Dispose() }; $script:controlBusy = $false; Update-ControlButtons }
+}
+$selector.Add_SelectedIndexChanged({ Update-ControlButtons })
+$pauseButton.Add_Click({
+  $record = $selector.SelectedItem.Record
+  Invoke-ActivityControl $(if ($record.state -in @('paused','takeover')) { 'resume' } else { 'pause' })
+})
+$endButton.Add_Click({ Invoke-ActivityControl 'end' })
+
+if ($RenderSample -and $SampleActivity) {
+  [DshStatusPill]::SetLabel(('Win-Pilot · ' + (Environment-Label 'task') + ' · ' + (State-Label 'running')))
+  $selector.Items.Add((New-Object WinPilotChoiceItem -Property @{ Name=((Environment-Label 'task') + ' 1 · ' + (State-Label 'running')); Record=@{ state='running'; endpoint='sample' } }))
+  $selector.SelectedIndex = 0
+  Update-ControlButtons
+  [DshStatusPill]::SaveSampleImage($RenderSample, 1.2)
+  $image = [Drawing.Bitmap]::FromFile($RenderSample)
+  $footer = New-Object Drawing.Bitmap(368, 32)
+  $controls.Location = New-Object Drawing.Point(-4000, -4000)
+  $controls.Show()
+  [Windows.Forms.Application]::DoEvents()
+  $controls.DrawToBitmap($footer, (New-Object Drawing.Rectangle(0, 0, 368, 32)))
+  $graphics = [Drawing.Graphics]::FromImage($image)
+  $graphics.DrawImageUnscaled($footer, 16, 44)
+  $temporary = $RenderSample + '.tmp.png'
+  $image.Save($temporary, [Drawing.Imaging.ImageFormat]::Png)
+  $graphics.Dispose(); $footer.Dispose(); $image.Dispose(); $controls.Dispose(); $tooltip.Dispose()
+  Move-Item -LiteralPath $temporary -Destination $RenderSample -Force
+  exit 0
+}
+
 $lastActive = [DateTime]::Now
 $visible = $false
-while ($true) {
-  [System.Windows.Forms.Application]::DoEvents()
-  $show = $false
-  if (Test-Path $stateFile) {
-    try {
-      $st = Get-Content -Path $stateFile -Raw -ErrorAction Stop | ConvertFrom-Json
-      if ($null -ne $st -and $st.ts) {
-        $age = ([DateTimeOffset]::Now.ToUnixTimeMilliseconds()) - ([double]$st.ts)
-        if ($st.show -and $age -ge 0 -and $age -lt 6000) { $show = $true }
+$readyFile = Join-Path $dir 'renderer.ready'
+[IO.File]::WriteAllText($readyFile, (@{pid=$PID;version=$rendererVersion} | ConvertTo-Json -Compress))
+try {
+  while ($true) {
+    [Windows.Forms.Application]::DoEvents()
+    $restartFile = Join-Path $rendererDir 'renderer.restart'
+    if (Test-Path -LiteralPath $restartFile) {
+      if ([IO.File]::ReadAllText($restartFile) -ne $rendererVersion) { break }
+    }
+    $now = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
+    $records = @()
+    if (Test-Path -LiteralPath $activityDir) {
+      foreach ($file in Get-ChildItem -LiteralPath $activityDir -Filter '*.json' -File | Sort-Object Name) {
+        try {
+          $record = [IO.File]::ReadAllText($file.FullName) | ConvertFrom-Json
+          if ($record.expires -gt $now -and $record.expires -lt ($now + 30000)) { $records += $record }
+          elseif ($record.expires -le $now) { Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue }
+        } catch { }
       }
-    } catch { }
-  }
-  if ($show) {
-    $lastActive = [DateTime]::Now
-    $breath = ([DateTimeOffset]::Now.ToUnixTimeMilliseconds()) / 1000.0 * (2 * [Math]::PI / 1.8)
-    $x = [int](([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width) / 2 - [DshStatusPill]::W / 2)
-    $y = 14
-    [DshStatusPill]::Show($x, $y, $breath)
-    $visible = $true
-  } elseif ($visible) {
-    [DshStatusPill]::Hide()
-    $visible = $false
-  }
-  if (([DateTime]::Now - $lastActive).TotalSeconds -ge 120) {
-    [DshStatusPill]::Hide()
-    [DshStatusPill]::Cleanup()
-    $pidFile = Join-Path $dir "statusbar.pid"
-    if (Test-Path $pidFile) {
+    }
+    $legacy = $false
+    if ($records.Count -eq 0) {
       try {
-        $savedMarker = Get-Content $pidFile -Raw -ErrorAction SilentlyContinue
-        if (($savedMarker.Trim().Split('|')[0]) -eq [string]$PID) { Remove-Item $pidFile -Force -ErrorAction SilentlyContinue }
+        $old = [IO.File]::ReadAllText((Join-Path $dir 'status.state')) | ConvertFrom-Json
+        $legacy = $old.show -and ($now - [double]$old.ts) -ge 0 -and ($now - [double]$old.ts) -lt 6000
       } catch { }
     }
-    exit 0
+    if ($records.Count -gt 0 -or $legacy) {
+      $lastActive = [DateTime]::Now
+      if ($records.Count -gt 0) {
+        $signature = ($records | ForEach-Object { $_.owner + ':' + $_.id + ':' + $_.state }) -join '|'
+        if ($signature -ne $script:activitySignature -and -not $selector.DroppedDown -and -not $script:controlBusy) {
+          $selectedId = if ($selector.SelectedItem) { $selector.SelectedItem.Record.id } else { '' }
+          $selector.BeginUpdate(); $selector.Items.Clear(); $index = 0; $selectedIndex = 0
+          foreach ($item in $records) {
+            $name = (Environment-Label $item.environment) + ' ' + ($index + 1) + ' · ' + (State-Label $item.state)
+            $selector.Items.Add((New-Object WinPilotChoiceItem -Property @{ Name=$name; Record=$item }))
+            if ($item.id -eq $selectedId) { $selectedIndex = $index }
+            $index++
+          }
+          $selector.SelectedIndex = $selectedIndex; $selector.EndUpdate()
+          $script:activitySignature = $signature
+          Update-ControlButtons
+        }
+        $record = $selector.SelectedItem.Record
+        $label = 'Win-Pilot · ' + (Environment-Label $record.environment) + ' · ' + (State-Label $record.state)
+        if ($records.Count -gt 1) { $label += ' (+' + ($records.Count - 1) + ')' }
+        [DshStatusPill]::SetLabel($label)
+        $x = [int](([Windows.Forms.Screen]::PrimaryScreen.Bounds.Width - [DshStatusPill]::W) / 2)
+        $controls.Location = New-Object Drawing.Point(($x + 16), 58)
+        if (-not $controls.Visible) { $controls.Show() }
+      } else {
+        [DshStatusPill]::SetLabel($null); $controls.Hide()
+        $x = [int](([Windows.Forms.Screen]::PrimaryScreen.Bounds.Width - [DshStatusPill]::W) / 2)
+      }
+      $breath = $now / 1000.0 * (2 * [Math]::PI / 1.8)
+      [DshStatusPill]::Show($x, 14, $breath)
+      if ($records.Count -gt 0) { [DshStatusPill]::RaiseControls($controls.Handle) }
+      $visible = $true
+    } elseif ($visible) { [DshStatusPill]::Hide(); $controls.Hide(); $visible = $false }
+    if (([DateTime]::Now - $lastActive).TotalSeconds -ge 120) { break }
+    Start-Sleep -Milliseconds 80
   }
-  Start-Sleep -Milliseconds 80
+} finally {
+  [DshStatusPill]::Hide(); [DshStatusPill]::Cleanup(); $controls.Dispose(); $tooltip.Dispose()
+  $pidFile = Join-Path $dir 'statusbar.pid'
+  if (Test-Path -LiteralPath $pidFile) {
+    if (([IO.File]::ReadAllText($pidFile)).Trim() -eq $processMarker) { Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue }
+  }
+  if ($rendererMutex) { $rendererMutex.ReleaseMutex(); $rendererMutex.Dispose() }
+  try {
+    if (([IO.File]::ReadAllText($readyFile) | ConvertFrom-Json).pid -eq $PID) { Remove-Item -LiteralPath $readyFile -Force }
+  } catch { }
 }

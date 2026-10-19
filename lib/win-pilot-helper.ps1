@@ -2316,10 +2316,11 @@ function Notify-Cursor {
   $on = Get-OverlayEnabled
   $pill = Get-PayloadValue 'status_pill'
   if ($null -eq $pill) { $pill = $true }
+  $managed = (Get-PayloadValue 'status_managed') -eq $true
   if ($on) { Ensure-OverlayProcess }
-  if ($pill) { Ensure-StatusbarProcess }
+  if ($pill -and -not $managed) { Ensure-StatusbarProcess }
   Write-CursorState -X $X -Y $Y -Label $Label -Show $on
-  Write-StatusState -Show ([bool]$pill)
+  if (-not $managed) { Write-StatusState -Show ([bool]$pill) }
 }
 function Get-BackgroundCapabilityRecord {
   param([IntPtr]$Hwnd, $Element)

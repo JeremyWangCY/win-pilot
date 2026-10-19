@@ -4,7 +4,7 @@ $start = $source.IndexOf('function Notify-Cursor {')
 if ($start -lt 0) { throw 'Notify-Cursor missing' }
 Invoke-Expression $source.Substring($start)
 function Get-OverlayEnabled { return $script:overlay }
-function Get-PayloadValue { param($Name) return $script:pill }
+function Get-PayloadValue { param($Name) if ($Name -eq 'status_pill') { return $script:pill }; return $null }
 function Ensure-OverlayProcess { $script:cursorStarted = $true }
 function Ensure-StatusbarProcess { $script:pillStarted = $true }
 function Write-CursorState { param($X, $Y, $Label, $Show) $script:cursorShown = $Show }

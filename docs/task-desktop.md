@@ -1,8 +1,8 @@
 # Task desktop / 独立任务桌面
 
-DeepSeek Harness 0.2.0-rc.2+ is the primary integration. In Settings → Win-Pilot, save the computer environment; it applies to the next computer operation in the same chat. Updating an already-loaded plugin requires restarting the host before newly added fields can be saved. Switching cancels and cleans up the previous control session and browser claims. Fresh discovery is required before input on the selected desktop; cleanup failure blocks all dispatch.
+DeepSeek Harness 0.2.0-rc.2+ is the primary integration. In Settings → Win-Pilot, save the computer environment; it applies to the next computer operation in the same chat. The card distinguishes installed and running versions. A managed release can reload after active operations finish and control is released; an older running plugin or an in-place update may require a host restart. Switching cancels and cleans up the previous control session and browser claims. Fresh discovery is required before input on the selected desktop; cleanup failure blocks all dispatch.
 
-默认关闭。在 DeepSeek Harness 设置 → Win-Pilot 中选择电脑操作环境并保存，同一聊天的下一次电脑操作即可切换。更新已加载的插件后需重启宿主，使新增字段的前后端定义一致；切换前取消并清理旧控制会话及浏览器控制权，切换后重新观察再输入；清理失败则不执行后续动作。
+默认关闭。在 DeepSeek Harness 设置 → Win-Pilot 中选择电脑操作环境并保存，同一聊天的下一次电脑操作即可切换。设置页区分已安装与运行中的版本；托管版本可以等待当前操作完成、释放控制后重新加载，旧运行版本或原地更新可能仍需重启宿主。切换前取消并清理旧控制会话及浏览器控制权，切换后重新观察再输入；清理失败则不执行后续动作。
 
 | Setting / 设置 | Behavior / 行为 |
 |---|---|

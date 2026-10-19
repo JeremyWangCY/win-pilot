@@ -49,7 +49,8 @@ const taskDesktopProvider = {
 }
 let runtime
 try {
-  runtime = createWinPilotRuntime({browserProvider,taskDesktopProvider})
+  runtime = createWinPilotRuntime({browserProvider,taskDesktopProvider,
+    activityReporter:{begin:async()=>{},finish(){},remove(){},close:async()=>{}}})
   setSettingsForTest({desktopEnvironment:'current',statusPill:true,overlay:false})
   assert.equal(runtime.status().desktop_environment,'task','runtime captures its environment before its first action')
   assert.equal(runtime.status().providers.desktop,process.platform === 'win32' ? 'windows-child-session' : 'unavailable')
@@ -108,12 +109,13 @@ try {
   const expected = await runtime.act('get_window',{app:'fixture',browser_endpoint:endpoint,tab_id:'tab-1',expect:{type:'browser_url',url:'https://example.test/ready'}})
   assert.equal(expected.ok,true,JSON.stringify(expected))
   assert.equal(browserCalls.at(-1).action,'browser_state','owned postconditions use the same endpoint')
-  const separate = createWinPilotRuntime({desktopEnvironment:'task',browserProvider,taskDesktopProvider})
+  const noActivity = {begin:async()=>{},finish(){},remove(){},close:async()=>{}}
+  const separate = createWinPilotRuntime({desktopEnvironment:'task',browserProvider,taskDesktopProvider,activityReporter:noActivity})
   try {
     assert.equal((await separate.act('browser_tabs',{browser_endpoint:endpoint})).error_code,'browser_not_owned','another runtime cannot reuse a task endpoint without ownership')
   } finally { await separate.close() }
 
-  const tool = defineComputerTool(value => value, {}, {desktopEnvironment:'task',browserProvider,taskDesktopProvider})
+  const tool = defineComputerTool(value => value, {}, {desktopEnvironment:'task',browserProvider,taskDesktopProvider,activityReporter:noActivity})
   const agentA = {}, agentB = {}
   try {
     await tool.execute({action:'launch_app',name:'msedge',headless:true},{agent:agentA})
@@ -122,7 +124,7 @@ try {
     assert.equal((await tool.execute({action:'browser_shutdown',browser_endpoint:endpoint},{agent:agentA})).ok,true)
     assert.equal((await tool.execute({action:'browser_tabs',browser_endpoint:endpoint},{agent:agentA})).error_code,'browser_not_owned','shutdown revokes the endpoint capability')
   } finally { await tool.close() }
-  assert.equal(forbiddenSpawnAttempts,0,'task routing and diagnostics must not attempt a main-desktop helper or status-bar process')
+  assert.equal(forbiddenSpawnAttempts,0,'routing tests with the activity presenter disabled must not start main-desktop helpers')
   console.log('task desktop ownership and non-invasive diagnostics mock check PASSED')
 } finally {
   await runtime?.close()

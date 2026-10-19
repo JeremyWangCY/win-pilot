@@ -679,7 +679,9 @@ sealed class DesktopWindow : Form
         if(File.Exists(Path.Combine(AppContext.BaseDirectory,"safety-hold.json")))return Program.Fail("task_desktop_safety_hold","独立桌面操作已被安全拦截。");
         if(!connected||(paused&&Native.Mutation(action)))return Program.Fail("task_desktop_paused","任务桌面已暂停或断开，未执行操作。");
         if(workerIdentity==null||workerIdentity.Session!=childSession||!LiveCached(childSession)||childSession==(uint)parentSession)return Program.Fail("task_desktop_session_changed","目标子会话已改变。");
-        return await SendWorker("execute",request);
+        state="running";UpdateState();
+        try{return await SendWorker("execute",request);}
+        finally{if(state=="running"){state="ready";UpdateState();}}
     }
     Task<JsonObject> CloseCommand(){var result=Snapshot();startupCancellation.Cancel();paused=true;BeginInvoke(new Action(async()=>await Shutdown()));return Task.FromResult(result);}
     async Task Shutdown()

@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected for this release: version `0.3.1`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
+Expected for this release: version `0.4.0`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
 
 ### Settings
 
@@ -103,7 +103,7 @@ In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or 
 
 The light, frameless window defaults to 432×300. Its toolbar contains expand/restore, pin and close. In the expanded view, click, drag or type to take over: AI input stops before your first gesture is delivered. After 10 seconds without manual input, control returns to the AI; a held button or key prevents that return. The compact view is read-only. Right-click the toolbar for local sign-in settings. Complete Windows feature setup and local sign-in once; optionally remember credentials using the current Windows user's DPAPI and Credential Manager. Passwords stay in the local dialog. This mode requires .NET 8 Windows Desktop Runtime and working Windows child-session support. A Windows user change, credential change or system policy may require setup again; it is not a virtual machine.
 
-After updating an already-loaded plugin, restart DeepSeek Harness before saving new settings. See [task desktop](./docs/task-desktop.md) for behavior and verification limits.
+The settings card distinguishes the installed version from the running version. When a new managed release is installed, use Safely reload to wait for active operations, release control and load that release. An in-place update or an older running plugin may require restarting DeepSeek Harness. See [task desktop](./docs/task-desktop.md) for behavior and verification limits.
 
 Use `win-pilot desktop --preview` to view the native window without creating a session or running computer actions. `win-pilot desktop` is the normal connection entry and respects the connection hold. Source builds use `npm run build:desktop`; checks without Windows sessions use `npm run test:desktop`.
 
@@ -125,6 +125,10 @@ DSH profiles must be restarted separately. Re-run `win-pilot install` when you w
 When a sandbox reaps children after every command, configure `win-pilot mcp` in the host's persistent plugin or MCP supervisor. Do not detach a process from an ephemeral command. Shell-only agents can use one-shot `win-pilot request` calls.
 
 ## Usage
+
+Version 0.4.0 connects DSH native tools, CLI children and MCP children to the host’s current settings. Independent hosts keep their own defaults. The top status pill aggregates concurrent owners and offers pause, resume and end controls; task setup and sign-in waits remain visible. The settings card reports installed and running versions and offers safe reload when supported.
+
+`win-pilot session` accepts JSON Lines on stdin and emits one response per request, preserving request `id` values. Keep stdin open between observation and input so snapshots and browser claims remain in the same runtime. Send `{"id":"done","action":"session_close"}` or close stdin to cancel outstanding work and release control. One-shot `request` commands still have separate lifetimes.
 
 Version 0.3.1 applies desktop setting changes within existing chats and keeps the running pill visible for CLI observations and long actions. Switching requires fresh discovery before input.
 
