@@ -3,6 +3,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import fs from 'node:fs'
+import os from 'node:os'
+import { createHash } from 'node:crypto'
 import { createActivityReporter } from '../lib/activity.js'
 import { createWinPilotRuntime } from '../lib/runtime.js'
 import { setSettingsForTest, resetSettingsForTest } from '../lib/settings.js'
@@ -20,6 +23,16 @@ const activity = createActivityReporter({
     renderer.stderr.on('data', value => { rendererError += value })
     renderer.stderr.unref()
     renderer.unref()
+    const version = createHash('sha256').update(fs.readFileSync(path.join(root,'lib/winpilot-statusbar.ps1'))).digest('hex').toUpperCase()
+    const ready = path.join(os.tmpdir(),'win-pilot','renderer.ready')
+    for (let attempt = 0; attempt < 150; attempt++) {
+      try {
+        const value = JSON.parse(fs.readFileSync(ready,'utf8'))
+        if (value.version === version) { process.kill(value.pid,0); return }
+      } catch { }
+      await new Promise(resolve => setTimeout(resolve,100))
+    }
+    throw new Error('Activity renderer did not initialize: ' + rendererError)
   },
   handleControl:async (command, id) => {
     received.push({command,id}); state = command === 'pause' ? 'paused' : 'running'; return {ok:true}
