@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import { runCliSession } from '../lib/cli-session.js'
+import { runCli } from '../lib/cli.js'
 
 const stdin = new PassThrough(), responses = [], waiting = []
 const next = () => responses.length ? Promise.resolve(responses.shift()) : new Promise(resolve => waiting.push(resolve))
@@ -37,4 +38,18 @@ assert.equal((await send({ id:6, action:'click', snapshot_id:observed.snapshot_i
 assert.equal((await send({ id:7, action:'session_close' })).cleanup_confirmed, true)
 assert.equal(await done, 0)
 assert.equal(ended, true)
-console.log('CLI session check PASSED (same runtime, request correlation, cancellation, cleanup)')
+const cliInput = new PassThrough()
+let cliClosed = false, firstReply
+const replied = new Promise(resolve => { firstReply = resolve })
+const cliDone = runCli(['session'], {
+  stdin:cliInput, stderr:{write() {}}, stdout:{write(line) { firstReply(JSON.parse(line)) }},
+  runtimeFactory:() => ({ async run() { return {ok:!cliClosed} }, async close() { cliClosed = true } }),
+})
+await Promise.resolve()
+assert.equal(cliClosed, false, 'the CLI entry point must await its session before final cleanup')
+cliInput.write('{"id":"live","action":"observe"}\n')
+assert.equal((await replied).ok, true)
+cliInput.write('{"id":"close","action":"session_close"}\n')
+assert.equal(await cliDone, 0)
+assert.equal(cliClosed, true)
+console.log('CLI session check PASSED (real CLI entry point, same runtime, request correlation, cancellation, cleanup)')
