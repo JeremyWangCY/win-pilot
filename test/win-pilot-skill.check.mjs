@@ -25,6 +25,30 @@ apply({
 })
 assert.equal(registeredSkill, WIN_PILOT_SKILL, 'apply registers the exact model-facing skill with DSH')
 assert.equal(registeredTool?.name, 'computer', 'apply registers the computer tool under DSH schema validation')
+// Scope-aware DSH hosts register a provider factory and await its results, so
+// list()/get() must return thenables. Returning plain arrays/objects makes the
+// host fail with "promise.then is not a function" when it awaits them.
+let providerFactory
+const providerCtx = {
+  tools: { register(tool) { registeredTool = tool } },
+  skills: { register() {}, registerProvider(create) { providerFactory = create } },
+}
+apply(providerCtx)
+assert.equal(typeof providerFactory, 'function', 'apply registers a skill provider factory when the host supports providers')
+const provider = providerFactory()
+assert.equal(provider.name, 'win-pilot')
+const listed = provider.list()
+assert.equal(typeof listed?.then, 'function', 'skill provider list() must return a thenable')
+const candidates = await listed
+assert.equal(candidates.length, 1)
+assert.equal(candidates[0].locator, 'win-pilot')
+assert.equal(candidates[0].provider, 'win-pilot')
+const got = provider.get(candidates[0], { scope: undefined })
+assert.equal(typeof got?.then, 'function', 'skill provider get() must return a thenable')
+const definition = await got
+assert.equal(definition.provider, 'win-pilot')
+assert.equal(typeof definition.content, 'string')
+assert.deepEqual(JSON.parse(JSON.stringify(definition)), definition, 'skill definition must be lossless JSON')
 assert.doesNotMatch(JSON.stringify({ skill:WIN_PILOT_SKILL, description:registered.description, parameters:registered.parameters }), /task.?desktop|second desktop|alternate session|independent.*desktop|virtual desktop/i)
 const taskSkill = createWinPilotSkill('task')
 assert.match(taskSkill.content, /Never fall back to the main desktop/)

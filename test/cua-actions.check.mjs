@@ -99,4 +99,15 @@ for (const action of ['paste', 'launch_app', 'select_text', 'perform_secondary_a
   assert.equal(blocked.actionSent, false)
 }
 
+// Hosts validate tool output as lossless JSON (a value that survives
+// JSON.parse(JSON.stringify(value)) unchanged). A key holding `undefined` is
+// dropped by JSON.stringify, so every control action must stay lossless and may
+// only carry a `message` when there is text to report.
+for (const action of ['control_status', 'resume', 'stop']) {
+  const result = await tool.execute({ action })
+  assert.equal(result.ok, true, `${action} must succeed`)
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), result, `${action} result must be lossless JSON`)
+  assert.equal(Object.prototype.hasOwnProperty.call(result, 'message'), action === 'stop',
+    `${action} must only carry message when it has text`)
+}
 console.log('canonical computer-use actions check PASSED')
