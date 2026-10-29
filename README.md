@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected for this release: version `0.4.0`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
+Expected for this release: version `0.5.0`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
 
 ### Settings
 
@@ -125,6 +125,8 @@ DSH profiles must be restarted separately. Re-run `win-pilot install` when you w
 When a sandbox reaps children after every command, configure `win-pilot mcp` in the host's persistent plugin or MCP supervisor. Do not detach a process from an ephemeral command. Shell-only agents can use one-shot `win-pilot request` calls.
 
 ## Usage
+
+Version 0.5.0 makes the task desktop use the same pixel size and scale factor as the primary display, and refuses to open it while a remote-control product is attached: by default the action runs on the current desktop instead, and `remoteControlPolicy: refuse` stops instead. It also merges the contributor fix that returns thenables from the skill provider and keeps control-action results lossless JSON.
 
 Version 0.4.0 connects DSH native tools, CLI children and MCP children to the host’s current settings. Independent hosts keep their own defaults. The top status pill aggregates concurrent owners and offers pause, resume and end controls; task setup and sign-in waits remain visible. The settings card reports installed and running versions and offers safe reload when supported.
 
