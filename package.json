@@ -1,6 +1,6 @@
 {
   "name": "win-pilot",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Agent-neutral Windows and Chromium computer-use runtime for Claude Code, Qoder, Pi, DeepSeek Harness, and other MCP or CLI hosts.",
   "type": "module",
   "main": "lib/index.js",
@@ -13,6 +13,7 @@
     "./settings": "./lib/settings.js",
     "./client": "./lib/client.js",
     "./task-desktop": "./lib/task-desktop.js",
+    "./remote-session-guard": "./lib/remote-session-guard.js",
     "./browser-provider": "./lib/browser-provider.js",
     "./mcp-server": "./lib/mcp-server.js",
     "./agent-install": "./lib/agent-install.js",
@@ -27,7 +28,7 @@
     "test": "node test/host-context.check.mjs && node test/host-integration.check.mjs && node test/runtime-version.check.mjs && node test/cli-session.check.mjs && node test/activity.check.mjs && node scripts/build-helper.mjs --check && node test/browser-ownership-mock.check.mjs && node test/control-session.check.mjs && node test/desktop-mode-switch.check.mjs && node test/mcp-cancellation.check.mjs && node test/semantic-state.check.mjs && node test/clipboard-format.check.mjs && node test/desktop-cancellation.check.mjs && node test/browser-frames.check.mjs && node test/cursor-transition.check.mjs && node test/split-text.check.mjs && node test/native-fixes.check.mjs && node test/package-contents.check.mjs && node test/wgc-server-lifecycle.check.mjs && node test/ipc-payload.check.mjs && node test/round4-hardening.check.mjs && node test/features.check.mjs && node test/gemini-schema.check.mjs && node test/parity.check.mjs && node test/cua-actions.check.mjs && node test/postcondition.check.mjs && node test/app-identity.check.mjs && node test/batch-observation.check.mjs && node test/image-history.check.mjs && node test/element-cache.check.mjs && node test/cursor-render.check.mjs && node test/codex-parity.check.mjs && node test/common-dialog.check.mjs && node test/fix-validation.check.mjs && node test/delegated-launch.check.mjs && node test/close-window-verification.check.mjs && node test/oneshot-stdin.check.mjs && node test/snapshot-contract.check.mjs && node test/process-reliability.check.mjs && node test/background-target.check.mjs && node test/mouse-move-coordinates.check.mjs && node test/process-marker.check.mjs && node test/browser-session.check.mjs && node test/cdp-rejection.check.mjs && node test/browser-statusbar.check.mjs && node test/headless-launch.check.mjs && node test/statusbar.check.mjs && node test/cli-statusbar.check.mjs && node test/win-pilot-skill.check.mjs && node test/cli.check.mjs && node test/cli-version.check.mjs && node test/browser-provider.check.mjs && node test/focus-policy.check.mjs && node test/background-input-interruption.check.mjs && node test/user-activity.check.mjs && node test/text-read.check.mjs && node test/activity-controls.check.mjs && node test/latency.check.mjs",
     "build:helper": "node scripts/build-helper.mjs",
     "build:desktop": "node scripts/build-task-desktop.mjs",
-    "test:desktop": "node test/task-desktop-availability.check.mjs && node test/task-desktop-provider.check.mjs && node test/task-desktop-routing.check.mjs && node test/desktop-mode-switch.check.mjs",
+    "test:desktop": "node test/task-desktop-availability.check.mjs && node test/task-desktop-provider.check.mjs && node test/task-desktop-remote-guard.check.mjs && node test/remote-control-policy.check.mjs && node test/task-desktop-routing.check.mjs && node test/desktop-mode-switch.check.mjs",
     "check:helper": "node scripts/build-helper.mjs --check",
     "session": "node scripts/session.mjs",
     "test:dsh": "node test/settings-integration.check.mjs && node test/desktop-mode-contract.check.mjs"

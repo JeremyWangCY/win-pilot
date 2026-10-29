@@ -11,6 +11,9 @@ lib/task-desktop/*.dll
 lib/task-desktop/*.deps.json
 lib/task-desktop/*.runtimeconfig.json
 lib/wgc/*.exe
+# The WGC host publishes its own dependencies next to the exe; all of it is build output.
+lib/wgc/*.dll
+lib/wgc/*.json
 
 # Internal work products: build reports, probe logs and judge output. These are
 # local scratch and must never be published.

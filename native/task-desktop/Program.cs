@@ -20,6 +20,21 @@ static class Program
             Environment.ExitCode=Native.WTSEnableChildSessions(true)&&Native.WTSIsChildSessionsEnabled(out bool enabled)&&enabled?0:1;return;
         }
         if(args.Length==2 && args[0]=="--worker") { try{Worker.Run(args[1]).GetAwaiter().GetResult();}catch(Exception e){try{File.WriteAllText(args[1]+".worker-error",e.ToString());}catch{}} return; }
+        // Read-only session inspection for the pre-flight check. No window, no
+        // child session, no user input: it only reports what WTS already exposes.
+        if(args.Length==1&&args[0]=="--session-state") {
+            // This is a WinExe: it may have no console handle, and setting
+            // Console.OutputEncoding would throw when stdout is redirected.
+            // Write UTF-8 bytes to the stream directly instead.
+            static void WriteLine(string text) {
+                using var stdout=Console.OpenStandardOutput();
+                byte[] bytes=new UTF8Encoding(false).GetBytes(text+"\n");
+                stdout.Write(bytes,0,bytes.Length); stdout.Flush();
+            }
+            try { WriteLine(SessionProbe.Snapshot().ToJsonString()); Environment.ExitCode=0; }
+            catch(Exception e) { WriteLine(new JsonObject { ["ok"]=false,["error"]=e.Message }.ToJsonString()); Environment.ExitCode=1; }
+            return;
+        }
         ApplicationConfiguration.Initialize();
         // The host process is per-monitor DPI aware, but a WinForms entry point
         // launched by itself (--setup-login) starts at system DPI without this, so
@@ -85,6 +100,31 @@ static class Native
         return (GetAsyncKeyState(key)&0x8000)!=0;
     }
     [DllImport("user32.dll")] internal static extern uint MapVirtualKeyW(uint code,uint type);
+    // The child session must look like the user's own desktop, so the RDP client
+    // is told the same pixel size and the same scale factor. GetSystemMetrics
+    // returns physical pixels because this process is per-monitor DPI aware.
+    [DllImport("user32.dll")] internal static extern uint GetDpiForWindow(IntPtr window);
+    [DllImport("user32.dll")] static extern uint GetDpiForSystem();
+    const int SM_CXSCREEN=0,SM_CYSCREEN=1;
+    internal static (int Width,int Height) PrimaryDesktopSize()
+    {
+        int width=GetSystemMetrics(SM_CXSCREEN),height=GetSystemMetrics(SM_CYSCREEN);
+        // A headless or just-started session can report zero; keep the old default.
+        return width>0&&height>0?(width,height):(1280,800);
+    }
+    /// <summary>
+    /// Scale factor in percent (100,125,150,...) of the main desktop. The system
+    /// DPI reflects the primary monitor, which is what the child session mirrors;
+    /// the window's own DPI is only a fallback because the task window can be
+    /// moved to a secondary monitor with a different scale.
+    /// </summary>
+    internal static uint DesktopScalePercent(IntPtr window)
+    {
+        uint dpi=GetDpiForSystem();
+        if(dpi==0)dpi=window!=IntPtr.Zero?GetDpiForWindow(window):0;
+        if(dpi==0)dpi=96;
+        return (uint)Math.Round(dpi*100.0/96.0);
+    }
     internal static void SendKeys(object client,(uint vk,bool up,bool extended)[] events)=>RdpKeyboard.Send(client,events);
     [ComImport,Guid("302D8188-0052-4807-806A-362B628F9AC5"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface ExtendedSettings
@@ -394,7 +434,7 @@ sealed class DesktopWindow : Form
         try {
             int value=(int)((dynamic)view.Client).Connected;
             RefreshLiveSessions();
-            if(workerIdentity!=null&&!LiveCached(workerIdentity.Session)) {sessionInvalidated=true;connected=false;takeover=false;Error("子会话已改变，已停止旧执行工具。");_=CancelWorker();return;}
+            if(workerIdentity!=null&&!LiveCached(workerIdentity.Session)) {sessionInvalidated=true;connected=false;takeover=false;Error("子会话已结束，正在清理；下次观察将重新连接。");_=Shutdown(recoverable:true);return;}
             if(value==1&&!connected){connected=true;UpdateState();}
             if(connected&&childSession==uint.MaxValue&&TryResolveCached(out uint later,out _)){childSession=later;UpdateState();}
             if(connected&&loginCompleted.Task.IsCompletedSuccessfully&&startupMarkersReady.Task.IsCompletedSuccessfully&&childSession!=uint.MaxValue&&!bootstrapStarted&&!workerAuthenticated&&!workerReady.Task.IsCompleted){bootstrapStarted=true;bootstrapTask=BootstrapWorker();}
@@ -501,7 +541,14 @@ sealed class DesktopWindow : Form
             pipe=new NamedPipeServerStream(pipeName,PipeDirection.InOut,1,PipeTransmissionMode.Byte,PipeOptions.Asynchronous|PipeOptions.CurrentUserOnly);
             acceptWorkerTask=AcceptWorker();
             view=new RdpView(){Dock=DockStyle.Fill};view.UserActivity=()=>lastManualInput=Environment.TickCount64;ConfigureManualInput(); ((System.ComponentModel.ISupportInitialize)view).BeginInit();canvas.Controls.Add(view);((System.ComponentModel.ISupportInitialize)view).EndInit();notice.Visible=false;view.BringToFront();view.CreateControl();
-            dynamic client=view.Client; client.Server="localhost";client.DesktopWidth=1280;client.DesktopHeight=800;client.ColorDepth=32;
+            // Match the child desktop to the user's own: same pixel size and same
+            // scale factor. A 100% child session renders every window smaller than
+            // the user's 125% desktop, which makes AI-driven UI work land on
+            // different pixels than the human sees. DesktopScaleFactor is a
+            // VT_UI4-only property, so an Int32 VARIANT is rejected.
+            var (desktopWidth,desktopHeight)=Native.PrimaryDesktopSize();
+            uint desktopScale=Native.DesktopScalePercent(Handle);
+            dynamic client=view.Client; client.Server="localhost";client.DesktopWidth=desktopWidth;client.DesktopHeight=desktopHeight;client.ColorDepth=32;
             var rdpEvents=new Guid("336D5562-EFA8-482E-8CB3-C5C0FC7A7DB6");
             ComEventsHelper.Combine(view.Client,rdpEvents,1,new Action(()=>StartupEvent("connecting")));
             ComEventsHelper.Combine(view.Client,rdpEvents,2,new Action(()=>{StartupEvent("connected");rdpConnected.TrySetResult(true);startupTimer.Start();PrepareStartupMarkers();}));
@@ -513,6 +560,13 @@ sealed class DesktopWindow : Form
             ComEventsHelper.Combine(view.Client,rdpEvents,3,new Action(()=>{PrepareStartupMarkers();StartupEvent("login_complete",childSession==uint.MaxValue?null:childSession);if(startupMarkersReady.Task.IsCompletedSuccessfully)loginCompleted.TrySetResult(true);if(!startupMarkersReady.Task.IsCompletedSuccessfully){startupTimer.Stop();startupCancellation.Cancel();startupMarkersReady.TrySetException(new InvalidOperationException("Windows 登录先于启动隔离完成，已拒绝继续启动工具。"));Error("启动隔离时序未验证成功，已停止任务。");}}));
             ComEventsHelper.Combine(view.Client,rdpEvents,4,new Action<int>(reason=>{if(!closing){connected=false;paused=true;takeover=false;var error=new IOException("RDP 已断开，原因 "+reason+"；需要检查本机子会话和 Windows 登录条件。");rdpConnected.TrySetException(error);startupMarkersReady.TrySetException(error);workerReady.TrySetException(error);startupCancellation.Cancel();startupTimer.Stop();_=CancelWorker();Error(error.Message);}}));
             object yes=true;var extended=(Native.ExtendedSettings)view.Client;extended.SetProperty("ConnectToChildSession",ref yes);
+            // Scaling must be set before Connect(); the property is a VARIANT whose
+            // only accepted type is VT_UI4. A failure is not fatal: the session still
+            // works at 100%, it just will not match the main desktop.
+            bool scaleApplied=false;
+            try { object scaleValue=desktopScale; extended.SetProperty("DesktopScaleFactor",ref scaleValue); scaleApplied=true; }
+            catch(Exception scaleError) { StartupEvent("desktop_scale_failed",null,desktopScale+"%:"+scaleError.Message); }
+            StartupEvent("desktop_geometry",null,desktopWidth+"x"+desktopHeight+"@"+desktopScale+"%"+(scaleApplied?"":" (scale rejected)"));
             extended.GetProperty("ConnectToChildSession",out object childMode);
             if(childMode is not bool configuredChild||!configuredChild)throw new InvalidOperationException("RDP 控件没有启用子会话连接，已拒绝普通远程连接。");
             RdpCredentials.ConfigureChildSession(view.Client,windowsLoginRequested);
@@ -684,7 +738,7 @@ sealed class DesktopWindow : Form
         finally{if(state=="running"){state="ready";UpdateState();}}
     }
     Task<JsonObject> CloseCommand(){var result=Snapshot();startupCancellation.Cancel();paused=true;BeginInvoke(new Action(async()=>await Shutdown()));return Task.FromResult(result);}
-    async Task Shutdown()
+    async Task Shutdown(bool recoverable=false)
     {
         if(closing)return;closing=true;startupCancellation.Cancel();startupTimer.Stop();timer.Stop();paused=true;
         await CancelWorker();if(writer!=null)try{await SendWorker("close").WaitAsync(TimeSpan.FromSeconds(1));}catch{}
@@ -739,7 +793,7 @@ sealed class DesktopWindow : Form
         lifetime.Cancel();pipe?.Dispose();
         try{if(view!=null&&connected)((dynamic)view.Client).Disconnect();}catch{}
         try{File.Delete(configPath);}catch{};view?.Dispose();
-        Program.Emit(new{@event="closed",instance_id=instance,result=cleanupConfirmed?new JsonObject(){["ok"]=true,["cleanup_confirmed"]=true}:Program.Fail("task_desktop_cleanup_unconfirmed",lastError,true)});
+        Program.Emit(new{@event="closed",instance_id=instance,recoverable=recoverable&&cleanupConfirmed,result=cleanupConfirmed?new JsonObject(){["ok"]=true,["cleanup_confirmed"]=true}:Program.Fail("task_desktop_cleanup_unconfirmed",lastError,true)});
         shutdownComplete=true;
         Close();
     }

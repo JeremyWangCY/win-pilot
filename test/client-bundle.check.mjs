@@ -414,8 +414,9 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   assert.equal(controls.length, booleans.length,
     'the card must render one switch per boolean field (got ' + controls.length + ', expected ' + booleans.length + ')')
   const segments = flatten(tree).filter((node) => node.props && node.props.role === 'radio')
-  assert.equal(segments.length, enums[0].values.length,
-    'the environment choice renders one segment per option (got ' + segments.length + ')')
+  const expectedSegments = enums.reduce((sum, field) => sum + field.values.length, 0)
+  assert.equal(segments.length, expectedSegments,
+    'each enum field renders one segment per option (got ' + segments.length + ', expected ' + expectedSegments + ')')
   assert.equal(flatten(tree).filter((node) => node.props && node.props.role === 'radiogroup').length, enums.length,
     'each enum field renders exactly one radiogroup')
   // The card must never render a free-text or number input anywhere.

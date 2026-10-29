@@ -187,6 +187,51 @@ for(const closeOk of [true,false]){
   await runtime.close();assert.ok(commands.includes('close'))
   resetSettingsForTest()
 }
+
+for(const {ack,confirmed,canRecover} of [
+  {ack:true,confirmed:true,canRecover:true},
+  {ack:true,confirmed:false,canRecover:false},
+  {ack:false,confirmed:true,canRecover:false},
+]){
+  const f=fixture(),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true}),closeTimeoutMs:100})
+  await p.command('open')
+  const old=f.proc,instance=p.getState().instance_id
+  old.emit('exit',0)
+  if(ack)old.stdout.write(JSON.stringify({event:'closed',instance_id:instance,recoverable:true,result:{ok:true,cleanup_confirmed:confirmed}})+'\n')
+  // An exit is insufficient: wait for the cleanup ACK and stream drain.
+  assert.equal((await p.execute('screenshot')).ok,false)
+  assert.equal(f.proc,old)
+  old.stdout.end();old.emit('close',0)
+  if(canRecover){
+    assert.equal((await p.execute('click',{x:1,y:2})).error_code,'task_desktop_reobserve_required')
+    assert.equal(f.proc,old,'input alone cannot start a replacement')
+    old.emit('error',new Error('late error before replacement'))
+    assert.equal((await p.execute('screenshot')).ok,true,'a new observation recovers after confirmed cleanup')
+    assert.notEqual(f.proc,old)
+    old.emit('close',0)
+    assert.equal((await p.execute('click',{x:1,y:2})).ok,true,'late old events cannot break the replacement')
+    assert.equal(f.seen.filter(x=>x.command==='execute'&&x.request.action==='click').length,1)
+    await p.close()
+  }else{
+    assert.equal((await p.execute('screenshot')).ok,false,'unconfirmed cleanup must block recovery')
+    assert.equal(f.proc,old)
+    if(ack)await p.close();else await assert.rejects(p.close(),/without confirming session cleanup/)
+  }
+}
+
+{
+  const f=fixture({holdExecute:true}),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true}),timeoutMs:2000})
+  const active=p.execute('type_text',{text:'must not replay'})
+  while(!f.seen.some(x=>x.command==='execute'))await new Promise(resolve=>setTimeout(resolve,1))
+  const old=f.proc,instance=p.getState().instance_id
+  old.stdout.write(JSON.stringify({event:'closed',instance_id:instance,recoverable:true,result:{ok:true,cleanup_confirmed:true}})+'\n')
+  old.emit('exit',0);old.stdout.end();old.emit('close',0)
+  assert.equal((await active).outcome,'unknown')
+  assert.equal((await p.execute('click')).error_code,'task_desktop_reobserve_required')
+  assert.equal(f.seen.filter(x=>x.command==='execute'&&x.request.action==='type_text').length,1,'recovery cannot replay input with an unknown outcome')
+  await p.close()
+  assert.equal((await p.execute('screenshot')).ok,false,'explicit close permanently blocks recovery')
+}
 console.log('task desktop provider and trusted routing check PASSED')
 childProcess.spawn=originalSpawn
 syncBuiltinESMExports()

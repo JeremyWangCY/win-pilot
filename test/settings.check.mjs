@@ -17,8 +17,11 @@ import {
 } from '../lib/settings.js'
 
 assert.match(SETTINGS_NAMESPACE, /^[a-z][a-z0-9-]*$/)
-assert.deepEqual(KEYS, ['overlay', 'statusPill', 'browserHeadlessDefault', 'desktopEnvironment'])
-assert.deepEqual(FIELDS, [...KEYS.slice(0,3).map((key) => ({ key, type: 'boolean' })), {key:'desktopEnvironment',type:'enum',values:['current','task']}])
+assert.deepEqual(KEYS, ['overlay', 'statusPill', 'browserHeadlessDefault', 'desktopEnvironment', 'remoteControlPolicy'])
+assert.deepEqual(FIELDS, [...KEYS.slice(0,3).map((key) => ({ key, type: 'boolean' })), {key:'desktopEnvironment',type:'enum',values:['current','task']}, {key:'remoteControlPolicy',type:'enum',values:['fallback','refuse']}])
+// A remote-control product attached to the machine must never silently take the
+// AI desktop with it, so the safe policy is on by default.
+assert.equal(DEFAULTS.remoteControlPolicy,'fallback')
 assert.equal(DEFAULTS.desktopEnvironment,'current')
 assert.equal(DEFAULTS.overlay, true)
 assert.equal(DEFAULTS.statusPill, true)

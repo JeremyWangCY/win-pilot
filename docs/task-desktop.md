@@ -34,3 +34,41 @@ Verification includes pure protocol/routing tests, real DSH Config/volatile inte
 
 `lib/task-desktop.js` (the plugin module) and `lib/task-desktop/` (generated host binaries) share a stem but are unrelated; import the module by its full `.js` path.
 
+
+## Child-session recovery / 子会话恢复
+
+When an authenticated child session is logged off externally, the native window shuts down and confirms cleanup. The next observation may start a replacement host after its output has fully drained. A click or text input cannot trigger this replacement; observe first. In-flight actions are never replayed. Unexpected host crashes, missing/negative cleanup acknowledgements, and explicitly closed providers remain blocked.
+
+已认证的子会话被外部注销时，原生窗口结束并确认清理；输出完全收尾后，下次观察可以创建新宿主。点击或输入不能直接触发重建，须先重新观察。进行中的动作不会重放；进程崩溃、清理确认缺失或失败、明确关闭的 provider 均保持阻止操作。
+
+Live verification on 2026-10-29: owned session 5 was logged off, cleanup was confirmed, and the same provider started session 6 and returned list_displays without restarting DSH. This does not establish prevention of UU/GameViewer session selection or CrossDeviceResume shell activation.
+
+2026-10-29 本机验证：注销本次创建的会话5，清理确认后，同一 provider 创建会话6并成功返回显示器信息，无需重启 DSH。此结果不代表已修复 UU 的会话选择或 CrossDeviceResume 的 shell 激活错误。
+
+## Desktop geometry and scale / 桌面尺寸与缩放
+
+The child session inherits the primary display's pixel size and scale factor, so a window drawn by the AI lands on the same pixels the user sees. `DesktopScaleFactor` is a VARIANT that only accepts `VT_UI4`; an Int32 VARIANT is rejected with `E_INVALIDARG`. A rejected scale is logged through `desktop_geometry` and is not fatal: the session still runs, at 100%.
+
+子会话采用主显示器的像素尺寸与缩放比例，AI 绘制的窗口因此与用户看到的落在相同像素上。`DesktopScaleFactor` 只接受 `VT_UI4`，Int32 VARIANT 会被 `E_INVALIDARG` 拒绝。缩放被拒时通过 `desktop_geometry` 记录，不视为致命错误：会话仍以 100% 运行。
+
+Measured on 2026-10-29: a 1920x1080 @125% main desktop produced a child session reporting 1920x1080 with `desktop_geometry` = `1920x1080@125%`.
+
+2026-10-29 实测：主桌面 1920x1080 @125%，子会话报告 1920x1080，`desktop_geometry` = `1920x1080@125%`。
+
+## Remote-control conflict / 远程控制冲突
+
+Windows exposes no API that reserves a child session from other programs. `GameViewerServer.exe` 4.42.1.2835 (UU remote) imports `WTSEnumerateSessionsW`, `WTSQuerySessionInformationW` and `WTSGetActiveConsoleSessionId` but not `WTSGetChildSessionId`, so it treats our child session as an ordinary logged-on desktop: it enumerates sessions, finds one that is `WTSActive` with a logged-on user, and launches its streamer there. A child session is exactly that, and its `WTSClientProtocolType` is 2 (loopback RDP), so a user who connects while the task desktop exists is shown the AI desktop.
+
+Windows 没有任何接口能把子会话对其他程序保留起来。UU 远程的 `GameViewerServer.exe` 4.42.1.2835 导入了 `WTSEnumerateSessionsW`、`WTSQuerySessionInformationW` 与 `WTSGetActiveConsoleSessionId`，却没有导入 `WTSGetChildSessionId`，于是把子会话当成普通已登录桌面：枚举会话、挑一个 `WTSActive` 且已登录用户的会话，把串流进程投进去。子会话正是这个状态，且其 `WTSClientProtocolType` 为 2（回环 RDP），所以任务桌面存在期间接入远控的用户会看到 AI 的桌面。
+
+`lib/remote-session-guard.js` therefore inspects WTS before a session is created. The verdict is read-only and never creates, connects or logs off anything. `WTSGetActiveConsoleSessionId` is not sufficient because it keeps returning the console while a child session is also active, so the guard classifies each session by `WTSClientProtocolType` (0 = console, non-zero = remote) plus the live session set.
+
+`lib/remote-session-guard.js` 因此在创建会话之前只读地检查 WTS，不创建、不连接、不注销任何东西。仅用 `WTSGetActiveConsoleSessionId` 不够：子会话活动时它仍返回控制台会话号，所以守卫按 `WTSClientProtocolType`（0 为控制台、非 0 为远程）结合活动会话集合逐个判定。
+
+`remoteControlPolicy` chooses the outcome: `fallback` (default) runs the action on the current desktop and reports `remote_control_fallback`; `refuse` returns `task_desktop_remote_in_use` without running anything. Both decisions are made before a child session exists, so the remote screen cannot move. The reverse order — desktop already open, remote attaches afterwards — is reported by `inspectExposure()` instead of being silently tolerated.
+
+`remoteControlPolicy` 决定处理方式：`fallback`（默认）改在当前桌面执行并回报 `remote_control_fallback`；`refuse` 直接返回 `task_desktop_remote_in_use`，不执行任何动作。两种判断都发生在子会话创建之前，因此远程画面不会被带走。反向顺序——桌面已存在、之后才接入远控——由 `inspectExposure()` 报告，而不是静默容忍。
+
+Measured on 2026-10-29: with the phone attached, `status` reported `remote_in_use`/`allow=false` for the live child session and `login` was refused before any native host started.
+
+2026-10-29 实测：手机接入期间，`status` 对活动子会话报告 `remote_in_use`/`allow=false`，`login` 在任何原生宿主启动前即被拒绝。
