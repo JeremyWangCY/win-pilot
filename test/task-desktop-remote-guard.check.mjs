@@ -43,9 +43,16 @@ const consoleOnly={ok:true,remote_active:false,console_active:true,child_session
 const remoteActive={ok:true,remote_active:true,console_active:true,child_session_present:false,child_session_id:null,child_sessions_enabled:true,
   sessions:[{session_id:1,user:'me',state:0,child_session:false,client_protocol_type:0,remote:false},
             {session_id:2,user:'me',state:0,child_session:false,client_protocol_type:2,remote:true}]}
-const ownedExposed={ok:true,remote_active:false,console_active:true,child_session_present:true,child_session_id:5,child_sessions_enabled:true,
+// A healthy task desktop: the child session exists and is loopback RDP, but no
+// remote-control streamer runs inside it. This must NOT be reported as exposed,
+// otherwise every normal run would be blocked.
+const ownedHealthy={ok:true,remote_active:false,console_active:true,child_session_present:true,child_session_id:5,child_sessions_enabled:true,
   sessions:[{session_id:1,user:'me',state:0,child_session:false,client_protocol_type:0,remote:false},
-            {session_id:5,user:'me',state:0,child_session:true,client_protocol_type:2,remote:true}]}
+            {session_id:5,user:'me',state:0,child_session:true,client_protocol_type:2,remote:true}],
+  child_session_streamers:[]}
+// UU moves its streamer into the child session, which is the observable exposure.
+const ownedExposed={...ownedHealthy,
+  child_session_streamers:[{name:'GameViewerServer',process_id:4242,session_id:5}]}
 
 // 1. No remote control: opening is allowed and actually reaches the native host.
 {
@@ -103,17 +110,23 @@ for(const command of ['login','open']){
   await p.close()
 }
 
-// 6. An owned session that is exposed to remote control is a separate verdict.
+// 6. A child session with no streamer is healthy; a streamer inside it is exposure.
 {
+  const healthy=assessRemoteConflict(ownedHealthy,{hasOwnedSession:true})
+  assert.equal(healthy.allow,true,'a running task desktop with no streamer must not be blocked')
+  assert.equal(healthy.reason,'no_conflict')
+
   const verdict=assessRemoteConflict(ownedExposed,{hasOwnedSession:true})
   assert.equal(verdict.allow,false)
   assert.equal(verdict.reason,'owned_session_exposed')
   assert.equal(verdict.child_session_id,5)
-  // Without an owned session that same state is not a conflict for a fresh open:
-  // the child session is somebody else's, and opening still must not proceed silently.
+  assert.equal(verdict.streamers[0].name,'GameViewerServer')
+
+  // The same state without an owned session is still a report, not a silent pass:
+  // somebody else's exposed desktop must not be adopted either.
   const fresh=assessRemoteConflict(ownedExposed,{hasOwnedSession:false})
-  assert.equal(fresh.allow,false,'an active remote child session also blocks a new open')
-  assert.equal(fresh.reason,'remote_in_use')
+  assert.equal(fresh.allow,false,'an exposed child session is reported regardless of ownership')
+  assert.equal(fresh.reason,'owned_session_exposed')
 }
 
 // 7. A failed probe is a refusal, never a silent allowance.
@@ -142,9 +155,14 @@ for(const command of ['login','open']){
   assert.equal(quiet.running,true)
   assert.equal(quiet.verdict.allow,true,'an open desktop with no remote control is not exposed')
 
-  // Remote control attaches while the desktop stays open.
-  session={...consoleOnly,child_session_present:true,child_session_id:3,
+  // A healthy owned child session is still not exposure.
+  session={...consoleOnly,child_session_present:true,child_session_id:3,child_session_streamers:[],
     sessions:[...consoleOnly.sessions,{session_id:3,user:'me',state:0,child_session:true,client_protocol_type:2,remote:true}]}
+  const stillQuiet=await p.inspectExposure()
+  assert.equal(stillQuiet.verdict.allow,true,'a healthy owned child session must stay allowed')
+
+  // Remote control attaches: its streamer appears inside the child session.
+  session={...session,child_session_streamers:[{name:'GameViewerServer',process_id:4242,session_id:3}]}
   const exposed=await p.inspectExposure()
   assert.equal(exposed.running,true)
   assert.equal(exposed.verdict.allow,false,'an exposed owned desktop must be reported')

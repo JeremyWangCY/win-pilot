@@ -61,9 +61,15 @@ Windows exposes no API that reserves a child session from other programs. `GameV
 
 Windows 没有任何接口能把子会话对其他程序保留起来。UU 远程的 `GameViewerServer.exe` 4.42.1.2835 导入了 `WTSEnumerateSessionsW`、`WTSQuerySessionInformationW` 与 `WTSGetActiveConsoleSessionId`，却没有导入 `WTSGetChildSessionId`，于是把子会话当成普通已登录桌面：枚举会话、挑一个 `WTSActive` 且已登录用户的会话，把串流进程投进去。子会话正是这个状态，且其 `WTSClientProtocolType` 为 2（回环 RDP），所以任务桌面存在期间接入远控的用户会看到 AI 的桌面。
 
-`lib/remote-session-guard.js` therefore inspects WTS before a session is created. The verdict is read-only and never creates, connects or logs off anything. `WTSGetActiveConsoleSessionId` is not sufficient because it keeps returning the console while a child session is also active, so the guard classifies each session by `WTSClientProtocolType` (0 = console, non-zero = remote) plus the live session set.
+`lib/remote-session-guard.js` reads WTS and the process table, and never creates, connects or logs off anything. Two different signals are needed, because neither alone is sound:
 
-`lib/remote-session-guard.js` 因此在创建会话之前只读地检查 WTS，不创建、不连接、不注销任何东西。仅用 `WTSGetActiveConsoleSessionId` 不够：子会话活动时它仍返回控制台会话号，所以守卫按 `WTSClientProtocolType`（0 为控制台、非 0 为远程）结合活动会话集合逐个判定。
+- **Before creating a session**: an active session whose `WTSClientProtocolType` is non-zero and which is *not* our child session is a real external remote session (Remote Desktop and the like). `WTSGetActiveConsoleSessionId` is not enough on its own: it keeps returning the console while a child session is also active.
+- **While a session runs**: the child session is itself loopback RDP and is active by definition, so its mere existence must never be treated as exposure — that would block every healthy run. What proves exposure is a remote-control streamer process (UU's `GameViewerServer`, AnyDesk, ToDesk, RustDesk, ...) running *inside* the child session, which is what appears when a phone attaches.
+
+`lib/remote-session-guard.js` 会读取 WTS 与进程表，不创建、不连接、不注销任何东西。需要两个不同信号，因为单靠任何一个都不成立：
+
+- **创建会话之前**：某个活动会话的 `WTSClientProtocolType` 非 0 且**不是**我们的子会话，才是真正的外部远程会话（远程桌面等）。仅用 `WTSGetActiveConsoleSessionId` 不够：子会话活动时它仍返回控制台会话号。
+- **会话运行期间**：子会话本身就是回环 RDP、按定义处于活动状态，所以它的存在绝不能当作暴露——否则每次正常运行都会被拦截。真正的证据是远控串流进程（UU 的 `GameViewerServer`、AnyDesk、ToDesk、RustDesk 等）运行在子会话**内部**，手机接入时正是这个状态。
 
 `remoteControlPolicy` chooses the outcome: `fallback` (default) runs the action on the current desktop and reports `remote_control_fallback`; `refuse` returns `task_desktop_remote_in_use` without running anything. Both decisions are made before a child session exists, so the remote screen cannot move. The reverse order — desktop already open, remote attaches afterwards — is reported by `inspectExposure()` instead of being silently tolerated.
 

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 
@@ -23,6 +24,50 @@ static class SessionProbe
     [DllImport("wtsapi32.dll",EntryPoint="WTSGetChildSessionId",SetLastError=true)] static extern bool GetChildSessionIdRaw(out uint id);
     [DllImport("wtsapi32.dll")] static extern void WTSFreeMemory(IntPtr memory);
     [DllImport("wtsapi32.dll",SetLastError=true)] static extern bool WTSIsChildSessionsEnabled(out bool enabled);
+
+    // Process inspection stays on the managed API: WTSEnumerateProcessesW hands
+    // back image-name pointers whose lifetime cannot be verified here, and an
+    // access violation is not catchable, so a bad pointer would kill the host.
+
+    // Remote-control products that stream a session. A process from this list whose
+    // session is our child session is direct evidence that someone is watching it:
+    // the child session is a loopback RDP session, so its own existence is not a
+    // signal, and WTS reports the same client protocol whether or not a viewer is
+    // attached. These names are matched case-insensitively without the extension.
+    static readonly string[] RemoteControlNames = {
+        "GameViewerServer","GameViewer","AnyDesk","ToDesk","ToDesk_Service","SunloginClient",
+        "SunloginRemoteService","RustDesk","TeamViewer","TeamViewer_Service","mstsc","winvnc4","tvnserver",
+    };
+
+    internal static bool IsRemoteControl(string name)
+    {
+        if(string.IsNullOrEmpty(name))return false;
+        foreach(var candidate in RemoteControlNames)
+            if(string.Equals(name,candidate,StringComparison.OrdinalIgnoreCase))return true;
+        return false;
+    }
+
+    // Returns the remote-control processes this account can see. Anything that
+    // cannot be read is skipped rather than guessed, so an unreadable entry can
+    // never fabricate an exposure.
+    internal static JsonArray RemoteControlProcesses()
+    {
+        var found=new JsonArray();
+        Process[] all;
+        try { all=Process.GetProcesses(); } catch(Exception) { return found; }
+        foreach(var process in all) {
+            try {
+                if(!IsRemoteControl(process.ProcessName))continue;
+                found.Add(new JsonObject {
+                    ["name"]=process.ProcessName,
+                    ["process_id"]=process.Id,
+                    ["session_id"]=process.SessionId
+                });
+            } catch(Exception) { }
+            finally { process.Dispose(); }
+        }
+        return found;
+    }
 
     // WTS_CONNECTSTATE_CLASS.WTSListen: protocol listeners are not sessions.
     const int ListenState=6;
@@ -58,12 +103,16 @@ static class SessionProbe
         return id==uint.MaxValue||id==0?null:id;
     }
 
-    // A remote-control product has an interactive target when a non-console
-    // session is active, or when any session reports a non-zero client protocol.
+    // A remote-control product has an interactive target when an active session
+    // other than our own child reports a non-zero client protocol. The child
+    // session is itself loopback RDP, so counting it would flag every healthy run.
+    //
+    // Whether a viewer is attached to the child session is only observable through
+    // its streamer process: WTS reports the same protocol with or without one.
     internal static JsonObject Snapshot()
     {
         var sessions=new JsonArray();
-        bool remote=false, anyConsoleActive=false;
+        bool externalRemote=false, anyConsoleActive=false;
         uint? child=ChildSessionId();
         if(!WTSEnumerateSessionsW(IntPtr.Zero,0,1,out IntPtr buffer,out uint count))throw new Win32Exception(Marshal.GetLastWin32Error());
         try {
@@ -74,9 +123,7 @@ static class SessionProbe
                 int? protocol=ClientProtocolType(info.SessionId);
                 int? state=ConnectState(info.SessionId);
                 bool isChild=child.HasValue&&child.Value==info.SessionId;
-                // Console (protocol 0) that is active is the user's own desktop.
-                // Anything else that is active is an interactive remote target.
-                if(state==WTSActive&&protocol!=0)remote=true;
+                if(state==WTSActive&&protocol!=0&&!isChild)externalRemote=true;
                 if(state==WTSActive&&protocol==0&&!isChild)anyConsoleActive=true;
                 sessions.Add(new JsonObject {
                     ["session_id"]=info.SessionId,
@@ -87,15 +134,28 @@ static class SessionProbe
                 });
             }
         } finally { WTSFreeMemory(buffer); }
+        var streamers=RemoteControlProcesses();
+        var childStreamers=new JsonArray();
+        foreach(var entry in streamers) {
+            var row=entry?.AsObject();
+            if(row is null)continue;
+            // Process.SessionId is an Int32; comparing it as UInt32 would throw.
+            int streamerSession=row["session_id"]?.GetValue<int>()??-1;
+            if(child.HasValue&&streamerSession>=0&&(uint)streamerSession==child.Value)childStreamers.Add(row.DeepClone());
+        }
         bool enabled=WTSIsChildSessionsEnabled(out bool value)&&value;
         return new JsonObject {
             ["ok"]=true,
-            ["remote_active"]=remote,
+            ["remote_active"]=externalRemote,
             ["console_active"]=anyConsoleActive,
             ["child_session_present"]=child.HasValue,
             ["child_session_id"]=child,
             ["child_sessions_enabled"]=enabled,
-            ["sessions"]=sessions
+            ["sessions"]=sessions,
+            ["remote_control_processes"]=streamers,
+            // Non-empty means a remote-control streamer is running inside the child
+            // session, so a remote viewer is attached to the AI desktop.
+            ["child_session_streamers"]=childStreamers
         };
     }
 }
