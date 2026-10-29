@@ -5,6 +5,7 @@ import os from 'node:os'
 import {createHash} from 'node:crypto'
 import {execFileSync} from 'node:child_process'
 import {fileURLToPath} from 'node:url'
+import {copyTree} from '../lib/fs-copy.js'
 const root=fileURLToPath(new URL('..',import.meta.url))
 
 // Paths are derived, never hardcoded: this script is committed, so a developer's
@@ -23,7 +24,8 @@ if(!fs.existsSync(profile))throw new Error(`profile not found: ${profile} (set W
 if(!fs.existsSync(pnpm))throw new Error(`pnpm not found: ${pnpm} (set WIN_PILOT_PNPM)`)
 fs.mkdirSync(backup,{recursive:true});fs.mkdirSync(packDir,{recursive:true})
 for(const name of ['package.json','pnpm-lock.yaml','cordis.patch.yml'])if(fs.existsSync(path.join(profile,name)))fs.copyFileSync(path.join(profile,name),path.join(backup,name))
-fs.cpSync(installed,path.join(backup,'win-pilot'),{recursive:true,dereference:true})
+// copyTree, not fs.cpSync: the profile path can contain non-ASCII characters.
+copyTree(installed,path.join(backup,'win-pilot'))
 const before=JSON.parse(fs.readFileSync(path.join(profile,'package.json'),'utf8'))
 // `npm pack` is run through the current Node binary, so resolve npm relative to
 // that installation instead of assuming a system-wide Node directory.
