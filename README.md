@@ -126,7 +126,7 @@ When a sandbox reaps children after every command, configure `win-pilot mcp` in 
 
 ## Usage
 
-Version 0.5.0 makes the task desktop use the same pixel size and scale factor as the primary display, and refuses to open it while a remote-control product is attached: by default the action runs on the current desktop instead, and `remoteControlPolicy: refuse` stops instead. It also merges the contributor fix that returns thenables from the skill provider and keeps control-action results lossless JSON.
+Version 0.5.0 makes the task desktop use the same pixel size and scale factor as the primary display, and refuses to open it while a remote-control product is attached: by default the action runs on the current desktop instead, and `remoteControlPolicy: refuse` stops instead. It also merges the contributor fix that returns thenables from the skill provider and keeps control-action results lossless JSON, and stops copying bundles with `fs.cpSync`, which terminates the host on a non-ASCII install path such as `C:\Users\<中文名>\.dsh`.
 
 Version 0.4.0 connects DSH native tools, CLI children and MCP children to the host’s current settings. Independent hosts keep their own defaults. The top status pill aggregates concurrent owners and offers pause, resume and end controls; task setup and sign-in waits remain visible. The settings card reports installed and running versions and offers safe reload when supported.
 
