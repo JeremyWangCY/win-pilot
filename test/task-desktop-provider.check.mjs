@@ -13,6 +13,15 @@ import {syncBuiltinESMExports} from 'node:module'
 const originalSpawn=childProcess.spawn
 childProcess.spawn=()=>{throw new Error('REAL PROCESS START FORBIDDEN IN MOCK TEST')}
 syncBuiltinESMExports()
+// Session probing reads the real machine through the native host, so an injected
+// fixture spawn must be paired with an injected session state: on a checkout with
+// no built host the probe fails and the guard correctly refuses, which would make
+// this file pass or fail depending on the machine. The guard's own verdicts are
+// covered by task-desktop-remote-guard.check.mjs; here the session is a plain
+// console with no remote control attached.
+const consoleOnly={ok:true,remote_active:false,console_active:true,child_session_present:false,child_session_id:null,child_sessions_enabled:true,
+  sessions:[{session_id:1,user:'me',state:0,child_session:false,client_protocol_type:0,remote:false}],child_session_streamers:[]}
+const inspectSessions=()=>consoleOnly
 Object.assign(controlCoordinator,createControlCoordinator({lockName:`\\\\.\\pipe\\task-desktop-test-${randomUUID()}`}))
 function fixture({sid=3,holdExecute=false,holdLogin=false,closeOk=true,holdCommands=[],holdClose=false,exitBeforeAck=false,omitAck=false}={}) {
   const seen=[];let proc,instance,paused=false,previewOnly=false,finishClose
@@ -40,14 +49,14 @@ function fixture({sid=3,holdExecute=false,holdLogin=false,closeOk=true,holdComma
   return {spawn,seen,get proc(){return proc},finishClose:()=>finishClose(),emitReady:()=>emit({event:'state',state:state()})}
 }
 {
-  const f=fixture(),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true})})
+  const f=fixture(),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
   const abort=new AbortController();abort.abort()
   assert.equal((await p.command('login',{},abort.signal)).error_code,'action_aborted')
   assert.equal(f.proc,undefined,'already-cancelled login must not create a native host')
   await p.close()
 }
 for(const command of ['login','open','prepare','retry']){
-  const f=fixture({holdCommands:[command],holdClose:true}),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true})})
+  const f=fixture({holdCommands:[command],holdClose:true}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
   if(command==='retry')await p.command('open')
   const abort=new AbortController(),startup=p.command(command,{},abort.signal)
   abort.abort()
@@ -64,21 +73,21 @@ for(const command of ['login','open','prepare','retry']){
   f.finishClose();await closing
 }
 {
-  const f=fixture({holdLogin:true}),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true})})
+  const f=fixture({holdLogin:true}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
   const abort=new AbortController(),active=p.execute('type_text',{text:'never dispatched'},abort.signal)
   abort.abort();assert.equal((await active).error_code,'action_aborted')
   await p.close()
   assert.deepEqual(f.seen.map(x=>x.command),['login','close'],'cancelling implicit login cannot send the original input')
 }
 for(const closeOk of [true,false]){
-  const f=fixture({exitBeforeAck:true,closeOk}),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true})})
+  const f=fixture({exitBeforeAck:true,closeOk}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
   await p.command('open')
   if(closeOk)await p.close()
   else await assert.rejects(p.close(),/fixture cleanup unconfirmed/,'buffered negative cleanup ACK must retain its native error')
   assert.equal((await p.execute('click')).outcome,'not_executed')
 }
 {
-  const f=fixture(),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true})})
+  const f=fixture(),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
   await p.command('open')
   let finished=false
   const waiting=p.waitForClose().then(()=>{finished=true})
@@ -93,19 +102,19 @@ for(const closeOk of [true,false]){
   await closing;await waiting
 }
 {
-  const f=fixture({exitBeforeAck:true,omitAck:true}),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true})})
+  const f=fixture({exitBeforeAck:true,omitAck:true}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
   await p.command('open')
   await assert.rejects(p.close(),/without confirming session cleanup/,'stdio drain without a cleanup ACK must remain a failure')
   await assert.rejects(p.close(),/without confirming session cleanup/,'repeated close cannot hide a previous cleanup failure')
 }
 {
-  const f=fixture({holdClose:true}),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true}),closeTimeoutMs:20})
+  const f=fixture({holdClose:true}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true}),closeTimeoutMs:20})
   await p.command('open')
   const closing=p.close();f.proc.emit('exit',0)
   await assert.rejects(closing,/did not confirm shutdown/,'an exited process whose streams never close must have a bounded cleanup wait')
 }
 {
-  const f=fixture(),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:false,preview_available:true,safety_hold:true})})
+  const f=fixture(),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:false,preview_available:true,safety_hold:true})})
   const preview=await p.command('preview')
   assert.equal(preview.preview_only,true)
   assert.equal(preview.worker_ready,false)
@@ -117,7 +126,7 @@ for(const closeOk of [true,false]){
   await p.close()
 }
 {
-  const f=fixture({holdLogin:true}),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true}),timeoutMs:15})
+  const f=fixture({holdLogin:true}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true}),timeoutMs:15})
   const abort=new AbortController();let settled=false
   const login=p.command('login',{},abort.signal).then(value=>{settled=true;return value})
   await new Promise(resolve=>setTimeout(resolve,50))
@@ -126,13 +135,13 @@ for(const closeOk of [true,false]){
   await p.close()
 }
 {
-  const f=fixture(),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true})})
+  const f=fixture(),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
   assert.equal((await p.command('login')).worker_ready,true)
   assert.equal(f.seen[0].command,'login','explicit Windows sign-in must reach only the owned native host')
   await p.close()
 }
 {
-  const f=fixture(),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true})})
+  const f=fixture(),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
   assert.equal((await p.command('status')).state,'idle')
   assert.equal((await p.command('pause')).error_code,'task_desktop_not_ready')
   assert.equal(f.proc,undefined,'status and pause may not create a task window')
@@ -146,18 +155,18 @@ for(const closeOk of [true,false]){
   await p.close()
 }
 {
-  const f=fixture({closeOk:false}),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true})})
+  const f=fixture({closeOk:false}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
   await p.execute('get_window')
   await assert.rejects(p.close(),/fixture cleanup unconfirmed/,'native exit alone must not claim complete cleanup')
 }
 {
-  const f=fixture({sid:1}),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true})})
+  const f=fixture({sid:1}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
   assert.equal((await p.execute('click',{x:1,y:2})).outcome,'not_executed')
   assert.equal(f.seen.some(x=>x.command==='execute'),false,'same Windows session must never receive input')
   await p.close()
 }
 {
-  const f=fixture({holdExecute:true}),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true}),timeoutMs:2000})
+  const f=fixture({holdExecute:true}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true}),timeoutMs:2000})
   const abort=new AbortController(),active=p.execute('type_text',{text:'once'},abort.signal)
   while(!f.seen.some(x=>x.command==='execute'))await new Promise(resolve=>setTimeout(resolve,1))
   abort.abort();assert.equal((await active).outcome,'unknown')
@@ -165,7 +174,7 @@ for(const closeOk of [true,false]){
   await p.close()
 }
 {
-  const f=fixture({holdExecute:true}),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true}),timeoutMs:2000})
+  const f=fixture({holdExecute:true}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true}),timeoutMs:2000})
   const active=p.execute('click',{x:4,y:5})
   while(!f.seen.some(x=>x.command==='execute'))await new Promise(resolve=>setTimeout(resolve,1))
   f.proc.emit('exit',1);f.proc.stdout.end();f.proc.emit('close',1);assert.equal((await active).outcome,'unknown')
@@ -193,7 +202,7 @@ for(const {ack,confirmed,canRecover} of [
   {ack:true,confirmed:false,canRecover:false},
   {ack:false,confirmed:true,canRecover:false},
 ]){
-  const f=fixture(),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true}),closeTimeoutMs:100})
+  const f=fixture(),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true}),closeTimeoutMs:100})
   await p.command('open')
   const old=f.proc,instance=p.getState().instance_id
   old.emit('exit',0)
@@ -220,7 +229,7 @@ for(const {ack,confirmed,canRecover} of [
 }
 
 {
-  const f=fixture({holdExecute:true}),p=createTaskDesktopProvider({spawn:f.spawn,inspectHost:()=>({available:true}),timeoutMs:2000})
+  const f=fixture({holdExecute:true}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true}),timeoutMs:2000})
   const active=p.execute('type_text',{text:'must not replay'})
   while(!f.seen.some(x=>x.command==='execute'))await new Promise(resolve=>setTimeout(resolve,1))
   const old=f.proc,instance=p.getState().instance_id
