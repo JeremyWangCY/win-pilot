@@ -834,6 +834,20 @@ sealed class DesktopWindow : Form
 
 static class Worker
 {
+    // Tray clients that a Run key starts at logon and that never stream. UU's
+    // streamer, GameViewerServer, is injected by its SYSTEM service instead; it
+    // cannot be closed from here and is judged by its traffic in SessionProbe.
+    static readonly string[] AutorunRemoteClients={"GameViewer"};
+
+    static void CloseAutorunRemoteClients(int session)
+    {
+        foreach(var name in AutorunRemoteClients)
+            foreach(var process in Process.GetProcessesByName(name)) {
+                try { if(process.SessionId==session)process.Kill(); } catch(Exception) { }
+                finally { process.Dispose(); }
+            }
+    }
+
     public static async Task Run(string configPath)
     {
         if(File.Exists(Path.Combine(AppContext.BaseDirectory,"safety-hold.json")))throw new InvalidOperationException("独立桌面启动安全拦截生效，未启动任何程序。");
@@ -856,6 +870,10 @@ static class Worker
         var psi=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe")){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8};
         foreach(string arg in new[]{"-NoProfile","-ExecutionPolicy","Bypass","-File",config["helper"]!.GetValue<string>(),"-Server"})psi.ArgumentList.Add(arg);
         using var helper=Process.Start(psi)!;_=helper.StandardError.ReadToEndAsync();
+        // The child session logs on as this user, so HKCU\Run starts the user's
+        // remote-control tray clients here too. Close this session's copies for as
+        // long as the worker runs; the user's own session keeps its client.
+        using var autorunSweep=new System.Threading.Timer(_=>CloseAutorunRemoteClients(session),null,0,5000);
         var gate=new SemaphoreSlim(1,1);var write=new SemaphoreSlim(1,1);string? activeCancel=null;bool paused=false,draining=false;var operations=new List<Task>();
         var helperProtocol=new HelperProtocol(helper.StandardInput,helper.StandardOutput);
         async Task Reply(string id,JsonObject result){await write.WaitAsync();try{await writer.WriteLineAsync(new JsonObject(){["id"]=id,["result"]=result}.ToJsonString());}finally{write.Release();}}

@@ -178,4 +178,26 @@ for(const command of ['login','open']){
   assert.equal(result.error_code,'task_desktop_host_missing')
 }
 
+// 10. UU's service injects GameViewerServer into every session, so presence is
+// not attachment: an idle streamer (HTTPS signaling only, no UDP) and its
+// tray client are allowed, and media sockets or unknown traffic still block.
+{
+  const idle={name:'GameViewerServer',process_id:4242,session_id:5,established:5,non_https:0,udp:0}
+  const tray={name:'GameViewer',process_id:4243,session_id:5,established:3,non_https:3,udp:0}
+  assert.equal(assessRemoteConflict({...ownedHealthy,child_session_streamers:[idle,tray]}).allow,true,
+    'an idle UU streamer in the child session must not block')
+  for(const live of [{...idle,udp:2},{...idle,non_https:1},{name:'GameViewerServer',process_id:4242,session_id:5}]){
+    const verdict=assessRemoteConflict({...ownedHealthy,child_session_streamers:[live]})
+    assert.equal(verdict.reason,'owned_session_exposed',`attached or unknown traffic must block: ${JSON.stringify(live)}`)
+  }
+  assert.equal(assessRemoteConflict({...ownedHealthy,child_session_streamers:[{name:'AnyDesk',process_id:7,session_id:5,established:0,non_https:0,udp:0}]}).allow,false,
+    'an unprofiled product still counts as attached by presence')
+
+  // A UU viewer on the main session would follow a new child session.
+  const serving={...consoleOnly,remote_control_processes:[{name:'GameViewerServer',process_id:9,session_id:1,established:1,non_https:0,udp:3}]}
+  assert.equal(assessRemoteConflict(serving).reason,'remote_in_use')
+  const quietMain={...consoleOnly,remote_control_processes:[{...serving.remote_control_processes[0],udp:0},{name:'TeamViewer',process_id:8,session_id:1}]}
+  assert.equal(assessRemoteConflict(quietMain).allow,true,'an idle UU or unprofiled product on the main session must not block')
+}
+
 console.log('remote session guard check PASSED')
