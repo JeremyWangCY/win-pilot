@@ -35,6 +35,7 @@ static class Program
             catch(Exception e) { WriteLine(new JsonObject { ["ok"]=false,["error"]=e.Message }.ToJsonString()); Environment.ExitCode=1; }
             return;
         }
+        if(args.Length==2&&args[0]=="--restore-display-scale") { try{DisplayScale.Watch(args[1]);}catch{} return; }
         ApplicationConfiguration.Initialize();
         // The host process is per-monitor DPI aware, but a WinForms entry point
         // launched by itself (--setup-login) starts at system DPI without this, so
@@ -800,6 +801,7 @@ sealed class DesktopWindow : Form
         if(File.Exists(Path.Combine(AppContext.BaseDirectory,"safety-hold.json"))) {
             if(!cleanupConfirmed)lastError="安全拦截生效，未注销本次会话。";
         } else if(owned.Count>0)try {
+            string scales=DisplayScale.Capture();
             foreach(uint id in owned) {
                 // Re-verify the authenticated worker when there is one; otherwise the
                 // baseline diff is the ownership evidence for this exact session.
@@ -811,6 +813,7 @@ sealed class DesktopWindow : Form
                 if(!ChildSessionQuery.CanCleanup(live,sessionBaseline,(uint)parentSession,id,reported,accountSid,parentUserSid))throw new InvalidOperationException("Windows 父子会话关联或用户身份已改变，未执行注销。");
                 if(!Native.WTSLogoffSession(IntPtr.Zero,id,false))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             }
+            DisplayScale.WatchDetached(scales);
             var deadline=DateTime.UtcNow.AddSeconds(20);
             do {
                 var remaining=deadline-DateTime.UtcNow;
