@@ -2018,10 +2018,26 @@ function Invoke-ActionRequest {
         }
       }
       if ($disp -le 0) { $disp = 1 }
+      # A window target crops to that window on whichever display holds it, so the
+      # returned rect is the origin for window-local click coordinates.
+      $shotHwnd = [IntPtr]::Zero
+      $rawHwnd = Get-PayloadValue 'hwnd'
+      if ($null -ne $rawHwnd -and [int64]$rawHwnd -ne 0) {
+        $shotHwnd = [IntPtr][int64]$rawHwnd
+        if (-not [DshWin32]::IsWindow($shotHwnd)) { throw 'screenshot: hwnd is not a window' }
+        $hostScreen = [System.Windows.Forms.Screen]::FromHandle($shotHwnd)
+        $disp = [Array]::IndexOf($screens, $hostScreen) + 1
+        if ($disp -le 0) { $disp = 1 }
+      }
       if ($disp -gt $screens.Length) { throw "display index out of range: $disp (1..$($screens.Length))" }
       $bounds = $screens[$disp - 1].Bounds
       $rx = [int]$bounds.X; $ry = [int]$bounds.Y
       $rw = [int]$bounds.Width; $rh = [int]$bounds.Height
+      if ($shotHwnd -ne [IntPtr]::Zero) {
+        # Same DWM bounds that window-local click coordinates are measured from.
+        $wr = [DshWin32]::GetDwmRect($shotHwnd)
+        if ($wr.Right -gt $wr.Left -and $wr.Bottom -gt $wr.Top) { $rx = $wr.Left; $ry = $wr.Top; $rw = $wr.Right - $wr.Left; $rh = $wr.Bottom - $wr.Top }
+      }
       $rawX = Get-PayloadValue 'x'
       $rawY = Get-PayloadValue 'y'
       $rawW = Get-PayloadValue 'width'

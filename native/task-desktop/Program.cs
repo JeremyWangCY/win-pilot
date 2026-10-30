@@ -566,7 +566,12 @@ sealed class DesktopWindow : Form
             Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
             var hostIdentity=ProcessIdentity.Capture((uint)Environment.ProcessId);
             File.WriteAllText(configPath,new JsonObject(){["pipe"]=pipeName,["token"]=token,["helper"]=helperPath,["parent_session"]=parentSession,["host_pid"]=Environment.ProcessId,["host_created"]=hostIdentity.Created,["instance_id"]=instance}.ToJsonString(),new UTF8Encoding(false));
-            pipe=new NamedPipeServerStream(pipeName,PipeDirection.InOut,1,PipeTransmissionMode.Byte,PipeOptions.Asynchronous|PipeOptions.CurrentUserOnly);
+            // Grant the user SID alone rather than relying on the token's default owner,
+            // which is BUILTIN\Administrators for an elevated host.
+            var user=System.Security.Principal.WindowsIdentity.GetCurrent().User!;
+            var security=new PipeSecurity();security.SetOwner(user);security.SetAccessRuleProtection(true,false);
+            security.AddAccessRule(new PipeAccessRule(user,PipeAccessRights.FullControl,System.Security.AccessControl.AccessControlType.Allow));
+            pipe=NamedPipeServerStreamAcl.Create(pipeName,PipeDirection.InOut,1,PipeTransmissionMode.Byte,PipeOptions.Asynchronous,0,0,security);
             acceptWorkerTask=AcceptWorker();
             view=new RdpView(){Dock=DockStyle.Fill};view.UserActivity=()=>lastManualInput=Environment.TickCount64;ConfigureManualInput(); ((System.ComponentModel.ISupportInitialize)view).BeginInit();canvas.Controls.Add(view);((System.ComponentModel.ISupportInitialize)view).EndInit();notice.Visible=false;view.BringToFront();view.CreateControl();
             // Match the child desktop to the user's own: same pixel size and same
@@ -835,7 +840,11 @@ static class Worker
         var config=JsonNode.Parse(await File.ReadAllTextAsync(configPath))!.AsObject();int session=Process.GetCurrentProcess().SessionId;
         File.WriteAllText(configPath+".worker-entry",new JsonObject(){["stage"]="entry",["pid"]=Environment.ProcessId,["session"]=session,["parent_session"]=config["parent_session"]!.DeepClone(),["timestamp"]=DateTime.UtcNow.ToString("O")}.ToJsonString());
         if(session==config["parent_session"]!.GetValue<int>())throw new InvalidOperationException("执行程序被 Windows 启动到了宿主会话，已拒绝启动操控工具。");
-        using var pipe=new NamedPipeClientStream(".",config["pipe"]!.GetValue<string>(),PipeDirection.InOut,PipeOptions.Asynchronous|PipeOptions.CurrentUserOnly);
+        // No CurrentUserOnly: it compares the pipe owner with this token's default
+        // owner, which differs between an elevated host and the highest-run-level
+        // worker even for the same user. PipeIdentity.Server below pins the server
+        // to the host's pid, creation time, image, session and user instead.
+        using var pipe=new NamedPipeClientStream(".",config["pipe"]!.GetValue<string>(),PipeDirection.InOut,PipeOptions.Asynchronous);
         await pipe.ConnectAsync(30000);using var reader=new StreamReader(pipe,Encoding.UTF8,false,65536,true);using var writer=new StreamWriter(pipe,new UTF8Encoding(false),65536,true){AutoFlush=true};
         var server=PipeIdentity.Server(pipe,config["host_pid"]!.GetValue<uint>(),(uint)config["parent_session"]!.GetValue<int>(),Environment.ProcessPath!,config["host_created"]!.GetValue<long>());
         var self=ProcessIdentity.Capture((uint)Environment.ProcessId);
