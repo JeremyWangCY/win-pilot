@@ -49,7 +49,7 @@ assert.ok(!timeoutBlock.includes('runAction'), 'timeout path must not invoke the
 // judge fix 4: id/action spread LAST so args.id cannot clobber correlation
 assert.ok(indexSrc.includes('{ ...(args || {}), cancellation_path:cancellationPath, id, action }'), 'request payload must spread id/action LAST')
 // judge fix 5: dying child's trailing stdout must not pollute the respawned buffer
-assert.ok(/if \(daemon\.child !== child\) return\s*daemon\.buf \+= chunk/.test(indexSrc), 'daemon stdout feed must ignore data from a non-current child')
+assert.ok(/if \(daemon\.child !== child\) return\s*(?:\/\/[^\n]*\s*)*const end = chunk\.lastIndexOf\('\\n'\)/.test(indexSrc), 'daemon stdout feed must ignore data from a non-current child')
 // judge fix 1b: idle lifecycle moved to node — 300s kill timer re-armed per success
 assert.ok(indexSrc.includes('const DAEMON_IDLE_MS = 300000'), 'node side must define the 300s idle kill timer')
 assert.ok(indexSrc.includes('armIdleKill()  // successful request -> re-arm the 300s idle kill timer'), 'successful requests must re-arm the idle kill timer')

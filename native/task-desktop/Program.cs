@@ -224,7 +224,7 @@ sealed class DesktopWindow : Form
     readonly string pipeName, configPath, helperPath;
     readonly Panel canvas=new(){Dock=DockStyle.Fill,BackColor=Palette.PaperTile};
     readonly Label notice=new(){Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleCenter,ForeColor=Palette.InkFaint,Font=new Font("Microsoft YaHei UI",13)};
-    readonly Label badge=new(){AutoSize=false,Dock=DockStyle.Fill,ForeColor=Palette.InkSoft,Padding=new Padding(9,6,0,0)};
+    readonly Label badge=new(){AutoSize=false,Dock=DockStyle.Fill,ForeColor=Palette.Ink,Padding=new Padding(24,7,0,0),AutoEllipsis=true};
     readonly CancellationTokenSource lifetime=new();
     readonly CancellationTokenSource startupCancellation=new();
     readonly Dictionary<string,TaskCompletionSource<JsonObject>> pending=new();
@@ -297,8 +297,17 @@ sealed class DesktopWindow : Form
         pinWindow=Button("",()=>{TopMost=!TopMost;pinWindow!.Invalidate();return Task.CompletedTask;});pinWindow.Name="task-window-pin";pinWindow.AccessibleName=UiText.PinToggle;
         pinWindow.Paint+=(_,e)=>PaintGlyph(e.Graphics,pinWindow.ClientRectangle,Glyph.Pin,TopMost);
         var closeWindow=Button("",()=>{Close();return Task.CompletedTask;});closeWindow.AccessibleName=UiText.CloseWindow;
-        closeWindow.Paint+=(_,e)=>PaintGlyph(e.Graphics,closeWindow.ClientRectangle,Glyph.Close);
+        bool closeHot=false;
+        closeWindow.MouseEnter+=(_,_)=>{closeHot=true;closeWindow.Invalidate();};
+        closeWindow.MouseLeave+=(_,_)=>{closeHot=false;closeWindow.Invalidate();};
+        closeWindow.Paint+=(_,e)=>PaintGlyph(e.Graphics,closeWindow.ClientRectangle,Glyph.Close,ink:closeHot?Color.White:null);
         foreach(var button in new[]{windowSize,pinWindow,closeWindow}){button.AutoSize=false;button.Size=new(30,25);button.Margin=new Padding(2,0,1,0);button.FlatAppearance.BorderSize=0;button.FlatAppearance.MouseOverBackColor=Palette.Hover;button.FlatAppearance.MouseDownBackColor=Palette.LineSoft;button.TabStop=false;}
+        closeWindow.FlatAppearance.MouseOverBackColor=Palette.Danger;closeWindow.FlatAppearance.MouseDownBackColor=ControlPaint.Dark(Palette.Danger,0.1f);
+        badge.Paint+=(_,e)=>{
+            e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            float cy=badge.Padding.Top+badge.Font.Height/2f;
+            using var dot=new SolidBrush(StateTone());e.Graphics.FillEllipse(dot,10.5f,cy-3.5f,7,7);
+        };
         windowHints.SetToolTip(windowSize,UiText.HintResize);windowHints.SetToolTip(pinWindow,UiText.HintPin);windowHints.SetToolTip(closeWindow,UiText.HintClose);
         tools.Controls.AddRange([windowSize,pinWindow,closeWindow]);top.Controls.Add(badge);top.Controls.Add(tools);
         Controls.Add(canvas);Controls.Add(top);canvas.Controls.Add(notice);
@@ -308,7 +317,8 @@ sealed class DesktopWindow : Form
             surface.MouseMove+=(_,_)=>{if(dragOrigin is Point origin){var cursor=Cursor.Position;Location=new(windowOrigin.X+cursor.X-origin.X,windowOrigin.Y+cursor.Y-origin.Y);}};
             surface.MouseUp+=(_,_)=>{dragOrigin=null;surface.Capture=false;};
         }
-        Paint+=(_,e)=>{using var border=new Pen(Palette.Line);e.Graphics.DrawRectangle(border,0,0,Width-1,Height-1);};
+        Paint+=(_,e)=>{if(dwmFrame)return;using var border=new Pen(Palette.Line);e.Graphics.DrawRectangle(border,0,0,Width-1,Height-1);};
+        top.Paint+=(_,e)=>{using var rule=new Pen(Palette.LineSoft);e.Graphics.DrawLine(rule,0,top.Height-1,top.Width,top.Height-1);};
         Deactivate+=(_,_)=>view?.ReleaseUserInputTracking();
         notice.Font=new Font(Font.FontFamily,10);
         notice.Text=previewOnly?UiText.PreviewCanvas:UiText.WaitConnecting;
@@ -319,6 +329,23 @@ sealed class DesktopWindow : Form
         Disposed+=(_,_)=>{windowMenu.Dispose();windowHints.Dispose();};
     }
     protected override bool ShowWithoutActivation=>previewOnly;
+    // Windows 11 rounds and outlines a borderless window when asked; older builds
+    // reject the attributes and keep the painted 1px frame.
+    bool dwmFrame;
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd,int attribute,ref int value,int size);
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        int round=2,border=Palette.Line.R|Palette.Line.G<<8|Palette.Line.B<<16;
+        dwmFrame=DwmSetWindowAttribute(Handle,33,ref round,4)==0&&DwmSetWindowAttribute(Handle,34,ref border,4)==0;
+    }
+    Color StateTone()=>previewOnly?Palette.InkFaint:state switch{
+        "running" => Palette.Accent,
+        "ready" when !paused => Palette.Accent,
+        "pausing" or "takeover" or "ready" or "needs_preparation" or "login_settings" => Palette.Amber,
+        "error" or "disconnected" => Palette.Danger,
+        _ => Palette.InkFaint,
+    };
     void ToggleWindowSize()
     {
         var work=Screen.FromControl(this).WorkingArea;
@@ -345,12 +372,12 @@ sealed class DesktopWindow : Form
     // and looks nothing like the rest of the product; these are fixed 20x20
     // strokes on a 1.4px grid in the same ink as the labels.
     enum Glyph { Expand, Restore, Pin, Close }
-    static void PaintGlyph(Graphics g,Rectangle bounds,Glyph glyph,bool active=false)
+    static void PaintGlyph(Graphics g,Rectangle bounds,Glyph glyph,bool active=false,Color? ink=null)
     {
         g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         g.PixelOffsetMode=System.Drawing.Drawing2D.PixelOffsetMode.Half;
         float cx=bounds.Width/2f, cy=bounds.Height/2f;
-        using var pen=new Pen(Palette.Ink,1.4f){StartCap=System.Drawing.Drawing2D.LineCap.Round,EndCap=System.Drawing.Drawing2D.LineCap.Round,LineJoin=System.Drawing.Drawing2D.LineJoin.Round};
+        using var pen=new Pen(ink??Palette.Ink,1.4f){StartCap=System.Drawing.Drawing2D.LineCap.Round,EndCap=System.Drawing.Drawing2D.LineCap.Round,LineJoin=System.Drawing.Drawing2D.LineJoin.Round};
         switch(glyph){
             case Glyph.Expand:
                 // Two opposing corners: the conventional "make bigger" mark.
@@ -392,6 +419,7 @@ sealed class DesktopWindow : Form
     {
         badge.Text=UiText.Badge(state,paused);
         if(previewOnly)badge.Text=UiText.PreviewBadge;
+        badge.Invalidate();
         loginSettings.Enabled=!previewOnly&&!opening;
         if(view!=null)view.AllowUserInput=expanded&&(takeover||(connected&&!loginCompleted.Task.IsCompletedSuccessfully&&!workerAuthenticated));
         Program.Emit(new{ @event="state",state=Snapshot()});

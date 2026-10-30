@@ -22,7 +22,13 @@ for (const request of [{ action: 'list_windows' }, { action: 'wait', duration_s:
     const cli = spawn(process.execPath, ['bin/win-pilot.js', 'request', '--payload',
       JSON.stringify(request), '--json'], { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     let response = ''
-    cli.stdout.on('data', data => { response += data })
+    // The action is over once its result is printed. Mark that moment rather
+    // than the exit event: the renderer shares the CLI's kill-on-close job, so
+    // its window can vanish a few milliseconds before 'exit' is delivered here.
+    cli.stdout.on('data', data => {
+      response += data
+      try { JSON.parse(response); fs.writeFileSync(done, 'done') } catch { /* partial output */ }
+    })
     assert.equal((await once(cli, 'exit'))[0], 0, response)
     assert.equal(JSON.parse(response).ok, true)
     fs.writeFileSync(done, 'done')

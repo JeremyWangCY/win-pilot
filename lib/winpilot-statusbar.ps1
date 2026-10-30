@@ -163,8 +163,50 @@ public static class DshStatusPill
     ? "Win-Pilot \u8fd0\u884c\u4e2d"
     : "Win-Pilot running";
   static string activityLabel = null;
+  static string tone = "running";
   public static void SetLabel(string value) { activityLabel = value; }
+  // Dot colour by state: running is the accent and breathes; attention states
+  // hold still in amber or red so they read at a glance.
+  public static void SetTone(string value) { tone = string.IsNullOrEmpty(value) ? "running" : value; }
   static string PillLabel() { return activityLabel ?? Label; }
+  static Color ToneColor()
+  {
+    switch (tone)
+    {
+      case "paused": case "pausing": case "takeover": return Color.FromArgb(245, 176, 66);
+      case "error": case "disconnected": return Color.FromArgb(244, 98, 92);
+      case "connecting": case "preparing": case "needs_preparation": case "login_settings":
+      case "awaiting_login": case "awaiting_windows_login": return Color.FromArgb(160, 164, 176);
+      default: return Color.FromArgb(86, 134, 254);
+    }
+  }
+
+  // The product mark without its tile: a white window frame and the accent
+  // pointer, outlined in the pill colour so it cuts the frame like the icon.
+  static void DrawMark(Graphics g, float x, float y, float size, Color ink)
+  {
+    var state = g.Save();
+    g.TranslateTransform(x, y);
+    g.ScaleTransform(size / 400f, size / 400f);
+    g.TranslateTransform(-70f, -84f);
+    using (GraphicsPath frame = RoundedRect(new RectangleF(92, 104, 292, 248), 80))
+    using (var pen = new Pen(Color.FromArgb(240, 255, 255, 255), 30f))
+    {
+      g.DrawPath(pen, frame);
+      g.DrawLine(pen, 92, 178, 384, 178);
+    }
+    var pointer = new PointF[] { new PointF(276, 236), new PointF(276, 424), new PointF(322, 380), new PointF(354, 450),
+      new PointF(398, 430), new PointF(366, 362), new PointF(430, 362) };
+    using (var path = new GraphicsPath())
+    {
+      path.AddPolygon(pointer);
+      using (var outline = new Pen(ink, 40f)) { outline.LineJoin = LineJoin.Round; g.DrawPath(outline, path); }
+      using (var fill = new LinearGradientBrush(new PointF(276, 236), new PointF(350, 450),
+        Color.FromArgb(143, 176, 255), Color.FromArgb(77, 107, 254))) g.FillPath(fill, path);
+    }
+    g.Restore(state);
+  }
+
   static Bitmap RenderBitmap(double breath)
   {
     Bitmap bmp = new Bitmap(W, H, PixelFormat.Format32bppPArgb);
@@ -173,46 +215,67 @@ public static class DshStatusPill
       g.SmoothingMode = SmoothingMode.AntiAlias;
       g.PixelOffsetMode = PixelOffsetMode.HighQuality;
       g.Clear(Color.Transparent);
+      bool compact = activityLabel == null;
+      var ink = Color.FromArgb(21, 21, 23);
 
       var rect = new RectangleF(0.5f, 0.5f, W - 1.0f, H - 1.0f);
-      var radius = activityLabel == null ? (float)(H - 1.0) : 40f;
+      var radius = compact ? (float)(H - 1.0) : 36f;
       using (GraphicsPath pill = RoundedRect(rect, radius))
       {
-        // Harness dark surface (neutral-bluish-950) with a hairline edge. The old
-        // gradient plus a white sheen read as glossy chrome, which is a different
-        // product language from the flat, near-black harness surfaces.
-        using (var fill = new SolidBrush(Color.FromArgb(activityLabel == null ? 242 : 255, 21, 21, 23)))
+        // Flat near-black harness surface; a faint top-lit hairline gives the
+        // edge definition on dark wallpapers without a glossy sheen.
+        using (var fill = new SolidBrush(Color.FromArgb(compact ? 244 : 255, ink.R, ink.G, ink.B))) g.FillPath(fill, pill);
+        using (var edge = new LinearGradientBrush(new PointF(0, 0), new PointF(0, H),
+          Color.FromArgb(46, 255, 255, 255), Color.FromArgb(18, 255, 255, 255)))
+        using (var pen = new Pen(edge, 1.0f))
         {
-          g.FillPath(fill, pill);
-        }
-        using (var edge = new Pen(Color.FromArgb(31, 255, 255, 255), 1.0f))
-        {
-          edge.Alignment = PenAlignment.Inset;
-          g.DrawPath(edge, pill);
+          pen.Alignment = PenAlignment.Inset;
+          g.DrawPath(pen, pill);
         }
       }
 
-      using (var font = new Font("Segoe UI", activityLabel == null ? 13f : 11f, FontStyle.Regular, GraphicsUnit.Point))
+      float row = compact ? H / 2f : 22f;
+      float markSize = compact ? 20f : 18f;
+      DrawMark(g, 18f, row - markSize / 2f, markSize, ink);
+
+      // Grayscale anti-aliasing: ClearType assumes an opaque destination and
+      // leaves coloured fringes on a per-pixel-alpha layered window.
+      g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+      string label = PillLabel();
+      string head = label, tail = "";
+      int split = label.IndexOf(" · ", StringComparison.Ordinal);
+      if (split < 0) split = label.IndexOf(' ');
+      if (split > 0) { head = label.Substring(0, split); tail = label.Substring(split).Trim(); }
+      float size = compact ? 11.5f : 10.5f;
+      using (var strong = new Font("Segoe UI Semibold", size, FontStyle.Regular, GraphicsUnit.Point))
+      using (var regular = new Font("Segoe UI", size, FontStyle.Regular, GraphicsUnit.Point))
+      using (var fmt = new StringFormat(StringFormat.GenericTypographic))
+      using (var primary = new SolidBrush(Color.FromArgb(250, 249, 250, 251)))
+      using (var secondary = new SolidBrush(Color.FromArgb(255, 160, 164, 176)))
       {
-        var fmt = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center,
-          Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
-        var textRect = new RectangleF(20, 0, W - 70, activityLabel == null ? H : 44);
-        using (var brush = new SolidBrush(Color.FromArgb(242, 249, 250, 251)))
-        {
-          g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-          g.DrawString(PillLabel(), font, brush, textRect, fmt);
-        }
+        // GenericTypographic sets LineLimit, which drops a CJK fallback line
+        // taller than the box instead of drawing it.
+        fmt.FormatFlags = (fmt.FormatFlags & ~StringFormatFlags.LineLimit) | StringFormatFlags.NoWrap;
+        fmt.Trimming = StringTrimming.EllipsisCharacter;
+        fmt.LineAlignment = StringAlignment.Center;
+        float x = 18f + markSize + 10f, limit = W - 48f;
+        float headWidth = Math.Min(g.MeasureString(head, strong, 1000, fmt).Width, limit - x);
+        g.DrawString(head, strong, primary, new RectangleF(x, row - 16f, headWidth + 1f, 32f), fmt);
+        if (tail.Length > 0 && x + headWidth < limit)
+          g.DrawString(tail, regular, secondary, new RectangleF(x + headWidth + 7f, row - 16f, limit - x - headWidth - 7f, 32f), fmt);
       }
 
-      // A single soft dot marks the live session. The previous version layered a
-      // pulsing halo over a saturated green; this keeps one low-contrast tone so
-      // the pill cannot compete with the user's own windows.
-      float cx = W - 30f, cy = activityLabel == null ? H / 2f : 22f;
-      float alpha = (float)(0.45 + 0.55 * (0.5 + 0.5 * Math.Sin(breath)));
-      using (SolidBrush dot = new SolidBrush(Color.FromArgb((int)(255 * alpha), 86, 134, 254)))
-      {
-        g.FillEllipse(dot, cx - 4, cy - 4, 8, 8);
-      }
+      // One status dot. Running breathes softly with a faint halo; attention
+      // states stay solid so they never look like progress.
+      Color dot = ToneColor();
+      bool live = tone == "running";
+      float cx = W - 26f, cy = row;
+      float pulse = live ? (float)(0.5 + 0.5 * Math.Sin(breath)) : 0f;
+      if (live)
+        using (var halo = new SolidBrush(Color.FromArgb((int)(28 + 40 * pulse), dot.R, dot.G, dot.B)))
+          g.FillEllipse(halo, cx - 8, cy - 8, 16, 16);
+      using (var core = new SolidBrush(Color.FromArgb(live ? (int)(190 + 65 * pulse) : 255, dot.R, dot.G, dot.B)))
+        g.FillEllipse(core, cx - 4, cy - 4, 8, 8);
     }
     return bmp;
   }
@@ -435,6 +498,11 @@ foreach ($button in @($selector, $pauseButton, $endButton)) {
   $button.Region = New-Object Drawing.Region($shape)
   $shape.Dispose()
 }
+# Ending control is the one destructive action, so it carries a muted red.
+$endButton.ForeColor = [Drawing.Color]::FromArgb(255, 150, 146)
+$endButton.BackColor = [Drawing.Color]::FromArgb(48, 30, 31)
+$endButton.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(64, 36, 37)
+$endButton.FlatAppearance.MouseDownBackColor = [Drawing.Color]::FromArgb(78, 42, 43)
 $controls.Controls.AddRange(@($selector, $pauseButton, $endButton))
 $tooltip = New-Object Windows.Forms.ToolTip
 $script:controlBusy = $false
@@ -530,6 +598,9 @@ if ($RenderSample -and $SampleActivity) {
 
 $lastActive = [DateTime]::Now
 $visible = $false
+# Parsed records keyed by path and write time: the loop runs every 80 ms and
+# ConvertFrom-Json on every file each tick is most of the renderer's CPU.
+$recordCache = @{}
 $readyFile = Join-Path $dir 'renderer.ready'
 [IO.File]::WriteAllText($readyFile, (@{pid=$PID;version=$rendererVersion} | ConvertTo-Json -Compress))
 try {
@@ -542,13 +613,32 @@ try {
     $now = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
     $records = @()
     if (Test-Path -LiteralPath $activityDir) {
+      $seen = @{}
       foreach ($file in Get-ChildItem -LiteralPath $activityDir -Filter '*.json' -File | Sort-Object Name) {
         try {
-          $record = [IO.File]::ReadAllText($file.FullName) | ConvertFrom-Json
+          $stamp = $file.LastWriteTimeUtc.Ticks.ToString() + ':' + $file.Length
+          $cached = $recordCache[$file.FullName]
+          # A rewrite inside one timestamp tick can keep the stamp, and a cached
+          # record only ever carries an older expiry; so anything that looks
+          # expired is read again before it may be deleted.
+          if ($cached -and $cached.Stamp -eq $stamp -and $cached.Record.expires -gt $now) { $record = $cached.Record }
+          else {
+            try {
+              $record = [IO.File]::ReadAllText($file.FullName) | ConvertFrom-Json
+              $recordCache[$file.FullName] = @{ Stamp=$stamp; Record=$record }
+            } catch {
+              # A record caught mid-write (the owner's final lease is written in
+              # place) keeps its last good value instead of hiding the pill.
+              if (-not $cached -or $cached.Record.expires -le $now) { throw }
+              $record = $cached.Record
+            }
+          }
+          $seen[$file.FullName] = $true
           if ($record.expires -gt $now -and $record.expires -lt ($now + 30000)) { $records += $record }
           elseif ($record.expires -le $now) { Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue }
         } catch { }
       }
+      foreach ($key in @($recordCache.Keys)) { if (-not $seen.ContainsKey($key)) { $recordCache.Remove($key) } }
     }
     $legacy = $false
     if ($records.Count -eq 0) {
@@ -577,12 +667,12 @@ try {
         $record = $selector.SelectedItem.Record
         $label = 'Win-Pilot · ' + (Environment-Label $record.environment) + ' · ' + (State-Label $record.state)
         if ($records.Count -gt 1) { $label += ' (+' + ($records.Count - 1) + ')' }
-        [DshStatusPill]::SetLabel($label)
+        [DshStatusPill]::SetLabel($label); [DshStatusPill]::SetTone([string]$record.state)
         $x = [int](([Windows.Forms.Screen]::PrimaryScreen.Bounds.Width - [DshStatusPill]::W) / 2)
         $controls.Location = New-Object Drawing.Point(($x + 16), 58)
         if (-not $controls.Visible) { $controls.Show() }
       } else {
-        [DshStatusPill]::SetLabel($null); $controls.Hide()
+        [DshStatusPill]::SetLabel($null); [DshStatusPill]::SetTone('running'); $controls.Hide()
         $x = [int](([Windows.Forms.Screen]::PrimaryScreen.Bounds.Width - [DshStatusPill]::W) / 2)
       }
       $breath = $now / 1000.0 * (2 * [Math]::PI / 1.8)
