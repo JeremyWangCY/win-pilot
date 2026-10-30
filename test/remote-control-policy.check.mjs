@@ -62,4 +62,12 @@ import {validateHostSettings} from '../lib/host-context.js'
   assert.equal(assessRemoteConflict(disconnected).allow,true)
 }
 
+// A fallback result ran on the current desktop, so the outer labelling must not
+// overwrite it with the selected task environment.
+{
+  const source=(await import('node:fs')).readFileSync(new URL('../lib/index.js',import.meta.url),'utf8')
+  assert.ok(source.includes("desktop_environment:raw?.remote_control_fallback ? 'current' : desktopEnvironment"),
+    'a remote-control fallback must stay labelled as the current desktop')
+}
+
 console.log('remote control policy check PASSED')

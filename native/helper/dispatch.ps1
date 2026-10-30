@@ -646,7 +646,9 @@ function Invoke-ActionRequest {
       [WinPilotInputMonitor]::BeginAction()
       $guardStarted = $true
     }
-    if ($Action -eq 'get_window_state') {
+    # A fresh screenshot is as much an observation as a state read: it shows the
+    # caller what the user's input changed before more input is sent.
+    if ($Action -eq 'get_window_state' -or $Action -eq 'screenshot') {
       try { $observationTicket = [WinPilotInputMonitor]::BeginObservation() }
       catch { $result.input_monitor_available = $false }
     }
@@ -859,6 +861,20 @@ function Invoke-ActionRequest {
         }
         $result.clicked = @{ x = $sx; y = $sy }
       } else {
+        # SendInput lands on whatever is under the point, so a named coordinate
+        # target is validated here exactly as the background path does.
+        if ($expectedName -and $null -eq $el) {
+          if ($win) {
+            Assert-ClickTarget -Element (Find-TargetHitsAt -Hwnd $win.Hwnd -X $sx -Y $sy).best -Hwnd $win.Hwnd -X $sx -Y $sy -ExpectedName $expectedName
+          } else {
+            $hitEl = [System.Windows.Automation.AutomationElement]::FromPoint((New-Object System.Windows.Point($sx, $sy)))
+            $found = if ($hitEl) { [string]$hitEl.Current.Name } else { '' }
+            if (-not [string]::Equals($found, $expectedName, [StringComparison]::Ordinal)) {
+              if ($found.Length -gt 80) { $found = $found.Substring(0, 80) + '...' }
+              throw ("target_validation_failed: expected_name mismatch; the element at this point is named '{0}'. Refresh get_window_state and use click with element_index" -f $found)
+            }
+          }
+        }
         Notify-Cursor -X $sx -Y $sy -Label $label
         if ($rawMods) { [DshWin32]::MouseClickExWithModifiers($sx, $sy, $clickCount, $button, $rawMods) }
         else { [DshWin32]::MouseClickEx($sx, $sy, $clickCount, $button) }
@@ -2018,10 +2034,26 @@ function Invoke-ActionRequest {
         }
       }
       if ($disp -le 0) { $disp = 1 }
+      # A window target crops to that window on whichever display holds it, so the
+      # returned rect is the origin for window-local click coordinates.
+      $shotHwnd = [IntPtr]::Zero
+      $rawHwnd = Get-PayloadValue 'hwnd'
+      if ($null -ne $rawHwnd -and [int64]$rawHwnd -ne 0) {
+        $shotHwnd = [IntPtr][int64]$rawHwnd
+        if (-not [DshWin32]::IsWindow($shotHwnd)) { throw 'screenshot: hwnd is not a window' }
+        $hostScreen = [System.Windows.Forms.Screen]::FromHandle($shotHwnd)
+        $disp = [Array]::IndexOf($screens, $hostScreen) + 1
+        if ($disp -le 0) { $disp = 1 }
+      }
       if ($disp -gt $screens.Length) { throw "display index out of range: $disp (1..$($screens.Length))" }
       $bounds = $screens[$disp - 1].Bounds
       $rx = [int]$bounds.X; $ry = [int]$bounds.Y
       $rw = [int]$bounds.Width; $rh = [int]$bounds.Height
+      if ($shotHwnd -ne [IntPtr]::Zero) {
+        # Same DWM bounds that window-local click coordinates are measured from.
+        $wr = [DshWin32]::GetDwmRect($shotHwnd)
+        if ($wr.Right -gt $wr.Left -and $wr.Bottom -gt $wr.Top) { $rx = $wr.Left; $ry = $wr.Top; $rw = $wr.Right - $wr.Left; $rh = $wr.Bottom - $wr.Top }
+      }
       $rawX = Get-PayloadValue 'x'
       $rawY = Get-PayloadValue 'y'
       $rawW = Get-PayloadValue 'width'

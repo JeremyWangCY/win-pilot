@@ -35,6 +35,7 @@ static class Program
             catch(Exception e) { WriteLine(new JsonObject { ["ok"]=false,["error"]=e.Message }.ToJsonString()); Environment.ExitCode=1; }
             return;
         }
+        if(args.Length==2&&args[0]=="--restore-display-scale") { try{DisplayScale.Watch(args[1]);}catch{} return; }
         ApplicationConfiguration.Initialize();
         // The host process is per-monitor DPI aware, but a WinForms entry point
         // launched by itself (--setup-login) starts at system DPI without this, so
@@ -224,7 +225,7 @@ sealed class DesktopWindow : Form
     readonly string pipeName, configPath, helperPath;
     readonly Panel canvas=new(){Dock=DockStyle.Fill,BackColor=Palette.PaperTile};
     readonly Label notice=new(){Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleCenter,ForeColor=Palette.InkFaint,Font=new Font("Microsoft YaHei UI",13)};
-    readonly Label badge=new(){AutoSize=false,Dock=DockStyle.Fill,ForeColor=Palette.InkSoft,Padding=new Padding(9,6,0,0)};
+    readonly Label badge=new(){AutoSize=false,Dock=DockStyle.Fill,ForeColor=Palette.Ink,Padding=new Padding(24,7,0,0),AutoEllipsis=true};
     readonly CancellationTokenSource lifetime=new();
     readonly CancellationTokenSource startupCancellation=new();
     readonly Dictionary<string,TaskCompletionSource<JsonObject>> pending=new();
@@ -297,8 +298,17 @@ sealed class DesktopWindow : Form
         pinWindow=Button("",()=>{TopMost=!TopMost;pinWindow!.Invalidate();return Task.CompletedTask;});pinWindow.Name="task-window-pin";pinWindow.AccessibleName=UiText.PinToggle;
         pinWindow.Paint+=(_,e)=>PaintGlyph(e.Graphics,pinWindow.ClientRectangle,Glyph.Pin,TopMost);
         var closeWindow=Button("",()=>{Close();return Task.CompletedTask;});closeWindow.AccessibleName=UiText.CloseWindow;
-        closeWindow.Paint+=(_,e)=>PaintGlyph(e.Graphics,closeWindow.ClientRectangle,Glyph.Close);
+        bool closeHot=false;
+        closeWindow.MouseEnter+=(_,_)=>{closeHot=true;closeWindow.Invalidate();};
+        closeWindow.MouseLeave+=(_,_)=>{closeHot=false;closeWindow.Invalidate();};
+        closeWindow.Paint+=(_,e)=>PaintGlyph(e.Graphics,closeWindow.ClientRectangle,Glyph.Close,ink:closeHot?Color.White:null);
         foreach(var button in new[]{windowSize,pinWindow,closeWindow}){button.AutoSize=false;button.Size=new(30,25);button.Margin=new Padding(2,0,1,0);button.FlatAppearance.BorderSize=0;button.FlatAppearance.MouseOverBackColor=Palette.Hover;button.FlatAppearance.MouseDownBackColor=Palette.LineSoft;button.TabStop=false;}
+        closeWindow.FlatAppearance.MouseOverBackColor=Palette.Danger;closeWindow.FlatAppearance.MouseDownBackColor=ControlPaint.Dark(Palette.Danger,0.1f);
+        badge.Paint+=(_,e)=>{
+            e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            float cy=badge.Padding.Top+badge.Font.Height/2f;
+            using var dot=new SolidBrush(StateTone());e.Graphics.FillEllipse(dot,10.5f,cy-3.5f,7,7);
+        };
         windowHints.SetToolTip(windowSize,UiText.HintResize);windowHints.SetToolTip(pinWindow,UiText.HintPin);windowHints.SetToolTip(closeWindow,UiText.HintClose);
         tools.Controls.AddRange([windowSize,pinWindow,closeWindow]);top.Controls.Add(badge);top.Controls.Add(tools);
         Controls.Add(canvas);Controls.Add(top);canvas.Controls.Add(notice);
@@ -308,7 +318,8 @@ sealed class DesktopWindow : Form
             surface.MouseMove+=(_,_)=>{if(dragOrigin is Point origin){var cursor=Cursor.Position;Location=new(windowOrigin.X+cursor.X-origin.X,windowOrigin.Y+cursor.Y-origin.Y);}};
             surface.MouseUp+=(_,_)=>{dragOrigin=null;surface.Capture=false;};
         }
-        Paint+=(_,e)=>{using var border=new Pen(Palette.Line);e.Graphics.DrawRectangle(border,0,0,Width-1,Height-1);};
+        Paint+=(_,e)=>{if(dwmFrame)return;using var border=new Pen(Palette.Line);e.Graphics.DrawRectangle(border,0,0,Width-1,Height-1);};
+        top.Paint+=(_,e)=>{using var rule=new Pen(Palette.LineSoft);e.Graphics.DrawLine(rule,0,top.Height-1,top.Width,top.Height-1);};
         Deactivate+=(_,_)=>view?.ReleaseUserInputTracking();
         notice.Font=new Font(Font.FontFamily,10);
         notice.Text=previewOnly?UiText.PreviewCanvas:UiText.WaitConnecting;
@@ -319,6 +330,23 @@ sealed class DesktopWindow : Form
         Disposed+=(_,_)=>{windowMenu.Dispose();windowHints.Dispose();};
     }
     protected override bool ShowWithoutActivation=>previewOnly;
+    // Windows 11 rounds and outlines a borderless window when asked; older builds
+    // reject the attributes and keep the painted 1px frame.
+    bool dwmFrame;
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd,int attribute,ref int value,int size);
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        int round=2,border=Palette.Line.R|Palette.Line.G<<8|Palette.Line.B<<16;
+        dwmFrame=DwmSetWindowAttribute(Handle,33,ref round,4)==0&&DwmSetWindowAttribute(Handle,34,ref border,4)==0;
+    }
+    Color StateTone()=>previewOnly?Palette.InkFaint:state switch{
+        "running" => Palette.Accent,
+        "ready" when !paused => Palette.Accent,
+        "pausing" or "takeover" or "ready" or "needs_preparation" or "login_settings" => Palette.Amber,
+        "error" or "disconnected" => Palette.Danger,
+        _ => Palette.InkFaint,
+    };
     void ToggleWindowSize()
     {
         var work=Screen.FromControl(this).WorkingArea;
@@ -345,12 +373,12 @@ sealed class DesktopWindow : Form
     // and looks nothing like the rest of the product; these are fixed 20x20
     // strokes on a 1.4px grid in the same ink as the labels.
     enum Glyph { Expand, Restore, Pin, Close }
-    static void PaintGlyph(Graphics g,Rectangle bounds,Glyph glyph,bool active=false)
+    static void PaintGlyph(Graphics g,Rectangle bounds,Glyph glyph,bool active=false,Color? ink=null)
     {
         g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         g.PixelOffsetMode=System.Drawing.Drawing2D.PixelOffsetMode.Half;
         float cx=bounds.Width/2f, cy=bounds.Height/2f;
-        using var pen=new Pen(Palette.Ink,1.4f){StartCap=System.Drawing.Drawing2D.LineCap.Round,EndCap=System.Drawing.Drawing2D.LineCap.Round,LineJoin=System.Drawing.Drawing2D.LineJoin.Round};
+        using var pen=new Pen(ink??Palette.Ink,1.4f){StartCap=System.Drawing.Drawing2D.LineCap.Round,EndCap=System.Drawing.Drawing2D.LineCap.Round,LineJoin=System.Drawing.Drawing2D.LineJoin.Round};
         switch(glyph){
             case Glyph.Expand:
                 // Two opposing corners: the conventional "make bigger" mark.
@@ -392,6 +420,7 @@ sealed class DesktopWindow : Form
     {
         badge.Text=UiText.Badge(state,paused);
         if(previewOnly)badge.Text=UiText.PreviewBadge;
+        badge.Invalidate();
         loginSettings.Enabled=!previewOnly&&!opening;
         if(view!=null)view.AllowUserInput=expanded&&(takeover||(connected&&!loginCompleted.Task.IsCompletedSuccessfully&&!workerAuthenticated));
         Program.Emit(new{ @event="state",state=Snapshot()});
@@ -538,7 +567,12 @@ sealed class DesktopWindow : Form
             Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
             var hostIdentity=ProcessIdentity.Capture((uint)Environment.ProcessId);
             File.WriteAllText(configPath,new JsonObject(){["pipe"]=pipeName,["token"]=token,["helper"]=helperPath,["parent_session"]=parentSession,["host_pid"]=Environment.ProcessId,["host_created"]=hostIdentity.Created,["instance_id"]=instance}.ToJsonString(),new UTF8Encoding(false));
-            pipe=new NamedPipeServerStream(pipeName,PipeDirection.InOut,1,PipeTransmissionMode.Byte,PipeOptions.Asynchronous|PipeOptions.CurrentUserOnly);
+            // Grant the user SID alone rather than relying on the token's default owner,
+            // which is BUILTIN\Administrators for an elevated host.
+            var user=System.Security.Principal.WindowsIdentity.GetCurrent().User!;
+            var security=new PipeSecurity();security.SetOwner(user);security.SetAccessRuleProtection(true,false);
+            security.AddAccessRule(new PipeAccessRule(user,PipeAccessRights.FullControl,System.Security.AccessControl.AccessControlType.Allow));
+            pipe=NamedPipeServerStreamAcl.Create(pipeName,PipeDirection.InOut,1,PipeTransmissionMode.Byte,PipeOptions.Asynchronous,0,0,security);
             acceptWorkerTask=AcceptWorker();
             view=new RdpView(){Dock=DockStyle.Fill};view.UserActivity=()=>lastManualInput=Environment.TickCount64;ConfigureManualInput(); ((System.ComponentModel.ISupportInitialize)view).BeginInit();canvas.Controls.Add(view);((System.ComponentModel.ISupportInitialize)view).EndInit();notice.Visible=false;view.BringToFront();view.CreateControl();
             // Match the child desktop to the user's own: same pixel size and same
@@ -767,6 +801,7 @@ sealed class DesktopWindow : Form
         if(File.Exists(Path.Combine(AppContext.BaseDirectory,"safety-hold.json"))) {
             if(!cleanupConfirmed)lastError="安全拦截生效，未注销本次会话。";
         } else if(owned.Count>0)try {
+            string scales=DisplayScale.Capture();
             foreach(uint id in owned) {
                 // Re-verify the authenticated worker when there is one; otherwise the
                 // baseline diff is the ownership evidence for this exact session.
@@ -778,6 +813,7 @@ sealed class DesktopWindow : Form
                 if(!ChildSessionQuery.CanCleanup(live,sessionBaseline,(uint)parentSession,id,reported,accountSid,parentUserSid))throw new InvalidOperationException("Windows 父子会话关联或用户身份已改变，未执行注销。");
                 if(!Native.WTSLogoffSession(IntPtr.Zero,id,false))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             }
+            DisplayScale.WatchDetached(scales);
             var deadline=DateTime.UtcNow.AddSeconds(20);
             do {
                 var remaining=deadline-DateTime.UtcNow;
@@ -801,13 +837,31 @@ sealed class DesktopWindow : Form
 
 static class Worker
 {
+    // Tray clients that a Run key starts at logon and that never stream. UU's
+    // streamer, GameViewerServer, is injected by its SYSTEM service instead; it
+    // cannot be closed from here and is judged by its traffic in SessionProbe.
+    static readonly string[] AutorunRemoteClients={"GameViewer"};
+
+    static void CloseAutorunRemoteClients(int session)
+    {
+        foreach(var name in AutorunRemoteClients)
+            foreach(var process in Process.GetProcessesByName(name)) {
+                try { if(process.SessionId==session)process.Kill(); } catch(Exception) { }
+                finally { process.Dispose(); }
+            }
+    }
+
     public static async Task Run(string configPath)
     {
         if(File.Exists(Path.Combine(AppContext.BaseDirectory,"safety-hold.json")))throw new InvalidOperationException("独立桌面启动安全拦截生效，未启动任何程序。");
         var config=JsonNode.Parse(await File.ReadAllTextAsync(configPath))!.AsObject();int session=Process.GetCurrentProcess().SessionId;
         File.WriteAllText(configPath+".worker-entry",new JsonObject(){["stage"]="entry",["pid"]=Environment.ProcessId,["session"]=session,["parent_session"]=config["parent_session"]!.DeepClone(),["timestamp"]=DateTime.UtcNow.ToString("O")}.ToJsonString());
         if(session==config["parent_session"]!.GetValue<int>())throw new InvalidOperationException("执行程序被 Windows 启动到了宿主会话，已拒绝启动操控工具。");
-        using var pipe=new NamedPipeClientStream(".",config["pipe"]!.GetValue<string>(),PipeDirection.InOut,PipeOptions.Asynchronous|PipeOptions.CurrentUserOnly);
+        // No CurrentUserOnly: it compares the pipe owner with this token's default
+        // owner, which differs between an elevated host and the highest-run-level
+        // worker even for the same user. PipeIdentity.Server below pins the server
+        // to the host's pid, creation time, image, session and user instead.
+        using var pipe=new NamedPipeClientStream(".",config["pipe"]!.GetValue<string>(),PipeDirection.InOut,PipeOptions.Asynchronous);
         await pipe.ConnectAsync(30000);using var reader=new StreamReader(pipe,Encoding.UTF8,false,65536,true);using var writer=new StreamWriter(pipe,new UTF8Encoding(false),65536,true){AutoFlush=true};
         var server=PipeIdentity.Server(pipe,config["host_pid"]!.GetValue<uint>(),(uint)config["parent_session"]!.GetValue<int>(),Environment.ProcessPath!,config["host_created"]!.GetValue<long>());
         var self=ProcessIdentity.Capture((uint)Environment.ProcessId);
@@ -819,6 +873,10 @@ static class Worker
         var psi=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe")){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8};
         foreach(string arg in new[]{"-NoProfile","-ExecutionPolicy","Bypass","-File",config["helper"]!.GetValue<string>(),"-Server"})psi.ArgumentList.Add(arg);
         using var helper=Process.Start(psi)!;_=helper.StandardError.ReadToEndAsync();
+        // The child session logs on as this user, so HKCU\Run starts the user's
+        // remote-control tray clients here too. Close this session's copies for as
+        // long as the worker runs; the user's own session keeps its client.
+        using var autorunSweep=new System.Threading.Timer(_=>CloseAutorunRemoteClients(session),null,0,5000);
         var gate=new SemaphoreSlim(1,1);var write=new SemaphoreSlim(1,1);string? activeCancel=null;bool paused=false,draining=false;var operations=new List<Task>();
         var helperProtocol=new HelperProtocol(helper.StandardInput,helper.StandardOutput);
         async Task Reply(string id,JsonObject result){await write.WaitAsync();try{await writer.WriteLineAsync(new JsonObject(){["id"]=id,["result"]=result}.ToJsonString());}finally{write.Release();}}

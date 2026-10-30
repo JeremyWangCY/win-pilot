@@ -53,6 +53,10 @@ The child session inherits the primary display's pixel size and scale factor, so
 
 Measured on 2026-10-29: a 1920x1080 @125% main desktop produced a child session reporting 1920x1080 with `desktop_geometry` = `1920x1080@125%`.
 
+Closing the task desktop also protects the main desktop's scale. Logging off the child session sends a remote-control streamer that follows the newest session (UU's GameViewerServer) back to the user's session, and on 2026-10-30 UU's privacy screen then dropped the laptop panel from 125% to 100% two seconds after logoff. The host records each active monitor's scale before logoff, and a detached `--restore-display-scale` watcher puts back any recorded monitor whose scale changes in the next 60 seconds, at most three times per monitor.
+
+关闭独立桌面时同时保护主桌面的缩放。注销子会话会让跟随最新会话的远程推流进程（UU 的 GameViewerServer）回到用户会话；2026-10-30 实测，UU 的隐私屏随后在注销 2 秒后把笔记本屏幕从 125% 改成了 100%。宿主在注销前记录每块活动显示器的缩放，并启动独立的 `--restore-display-scale` 守护进程：之后 60 秒内被改动的已记录显示器会被恢复，每块最多 3 次。
+
 2026-10-29 实测：主桌面 1920x1080 @125%，子会话报告 1920x1080，`desktop_geometry` = `1920x1080@125%`。
 
 ## Remote-control conflict / 远程控制冲突

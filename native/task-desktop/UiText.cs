@@ -17,12 +17,12 @@ static class UiText
     internal static string MenuLoginSettings => T("登录设置…", "Sign-in settings…");
     internal static string PreviewCanvas => T("任务画面", "Task view");
     internal static string WaitConnecting => T("等待连接…", "Waiting to connect…");
-    internal static string PreviewBadge => T("○ 窗口预览", "○ Window preview");
+    internal static string PreviewBadge => T("窗口预览", "Window preview");
     internal static string CloseWindow => T("关闭任务窗口", "Close the task window");
     internal static string PinToggle => T("切换置顶", "Toggle always-on-top");
     internal static string ResizeToggle => T("放大任务窗口", "Expand the task window");
     internal static string ResizeCollapse => T("收回悬浮窗", "Collapse the task window");
-    internal static string HintResize => T("放大 / 收回 · 放大后可直接操作，空闲10秒交还 AI", "Expand / collapse · when expanded you can operate it; it hands back to the AI after 10 idle seconds");
+    internal static string HintResize => T("放大后可接管，空闲 10 秒交还", "Expand to take over · hands back after 10s idle");
     internal static string HintPin => T("置顶 / 取消置顶", "Always on top / normal");
     internal static string HintClose => T("关闭任务窗口", "Close the task window");
 
@@ -30,24 +30,23 @@ static class UiText
     // fall through to the raw state key.
     internal static string Badge(string state, bool paused) => state switch
     {
-        "running" => T("● 执行中", "● Running"),
-        "preparing" => T("● 等待系统授权", "● Waiting for system permission"),
-        "awaiting_login" => T("● 等待登录", "● Waiting for sign-in"),
-        "pausing" => T("● 正在暂停", "● Pausing"),
-        "ready" => paused ? T("● 已暂停", "● Paused") : T("● 运行就绪", "● Ready"),
-        "login_settings" => T("● 首次登录设置", "● Sign-in setup needed"),
-        "awaiting_windows_login" => T("● 请登录 Windows", "● Sign in to Windows"),
-        "connecting" => T("● 正在连接", "● Connecting"),
-        "takeover" => T("● 人工接管", "● You have control"),
-        "needs_preparation" => T("● 需要准备", "● Preparation needed"),
-        "error" => T("● 连接失败", "● Connection failed"),
-        "disconnected" => T("● 已断开", "● Disconnected"),
-        _ => T("● 待连接", "● Not connected"),
+        "running" => T("执行中", "Running"),
+        "preparing" => T("等待系统授权", "Waiting for system permission"),
+        "awaiting_login" => T("等待登录", "Waiting for sign-in"),
+        "pausing" => T("正在暂停", "Pausing"),
+        "ready" => paused ? T("已暂停", "Paused") : T("运行就绪", "Ready"),
+        "login_settings" => T("首次登录设置", "Sign-in setup needed"),
+        "awaiting_windows_login" => T("请登录 Windows", "Sign in to Windows"),
+        "connecting" => T("正在连接", "Connecting"),
+        "takeover" => T("人工接管", "You have control"),
+        "needs_preparation" => T("需要准备", "Preparation needed"),
+        "error" => T("连接失败", "Connection failed"),
+        "disconnected" => T("已断开", "Disconnected"),
+        _ => T("待连接", "Not connected"),
     };
 
     internal static string NoticeUnavailable(string message) =>
-        T("暂时无法连接独立桌面\n\n", "The separate desktop is not available yet\n\n") + message +
-        T("\n\n不会切换到你的主桌面执行操作。", "\n\nNothing will be run on your main desktop instead.");
+        T("独立桌面不可用\n\n", "Task desktop unavailable\n\n") + message;
 
     internal static string TaskDesktopTitle => T("Win-Pilot · 独立桌面登录设置", "Win-Pilot · Task desktop sign-in");
     internal static string LoginHeading => T("首次设置 Windows 登录信息", "Set up Windows sign-in");

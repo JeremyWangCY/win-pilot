@@ -18,5 +18,6 @@
     <Compile Include="../task-desktop/UiText.cs" Link="UiText.cs" />
     <Compile Include="../task-desktop/LoginSettingsDialog.cs" Link="LoginSettingsDialog.cs" />
     <Compile Include="../task-desktop/DesktopReadiness.cs" Link="DesktopReadiness.cs" />
+    <Compile Include="../task-desktop/DisplayScale.cs" Link="DisplayScale.cs" />
   </ItemGroup>
 </Project>

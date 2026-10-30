@@ -47,22 +47,82 @@ static class SessionProbe
         return false;
     }
 
+    [DllImport("iphlpapi.dll")] static extern uint GetExtendedTcpTable(IntPtr table,ref int size,bool order,int family,int tableClass,uint reserved);
+    [DllImport("iphlpapi.dll")] static extern uint GetExtendedUdpTable(IntPtr table,ref int size,bool order,int family,int tableClass,uint reserved);
+    const int AfInet=2, AfInet6=23, TcpOwnerPidAll=5, UdpOwnerPid=1, TcpEstablished=5;
+
+    // A streamer's own network use is the only sign of whether a viewer is
+    // attached. An idle UU streamer talks HTTPS only (one to five connections
+    // to port 443 after a restart, settling to one) and holds no UDP; media
+    // needs other sockets. Returns null when a table cannot be read, so the
+    // caller treats the traffic as unknown rather than idle.
+    static Dictionary<int,(int Established,int NonHttps,int Udp)>? NetworkUse()
+    {
+        var use=new Dictionary<int,(int Established,int NonHttps,int Udp)>();
+        // Row layouts: MIB_TCPROW_OWNER_PID is 6 DWORDs (state first, pid last);
+        // MIB_TCP6ROW_OWNER_PID is 56 bytes (state at 48, pid at 52); the UDP
+        // rows are 12 and 28 bytes with the pid last.
+        foreach(var (family,rowSize,stateOffset,pidOffset,remoteOffset,remoteLength,portOffset) in new[]{(AfInet,24,0,20,12,4,16),(AfInet6,56,48,52,24,16,44)}) {
+            if(!ReadTable(true,family,out var buffer,out int rows))return null;
+            try {
+                for(int i=0;i<rows;i++) {
+                    var row=IntPtr.Add(buffer,4+i*rowSize);
+                    if(Marshal.ReadInt32(row,stateOffset)!=TcpEstablished)continue;
+                    var remote=new byte[remoteLength];Marshal.Copy(IntPtr.Add(row,remoteOffset),remote,0,remoteLength);
+                    if(System.Net.IPAddress.IsLoopback(new System.Net.IPAddress(remote)))continue;
+                    // The port is stored in network byte order in the low word.
+                    int port=((Marshal.ReadByte(row,portOffset)<<8)|Marshal.ReadByte(row,portOffset+1));
+                    int pid=Marshal.ReadInt32(row,pidOffset);use.TryGetValue(pid,out var c);use[pid]=(c.Established+1,c.NonHttps+(port==443?0:1),c.Udp);
+                }
+            } finally { Marshal.FreeHGlobal(buffer); }
+        }
+        foreach(var (family,rowSize) in new[]{(AfInet,12),(AfInet6,28)}) {
+            if(!ReadTable(false,family,out var buffer,out int rows))return null;
+            try {
+                for(int i=0;i<rows;i++) {
+                    int pid=Marshal.ReadInt32(IntPtr.Add(buffer,4+i*rowSize),rowSize-4);use.TryGetValue(pid,out var c);use[pid]=(c.Established,c.NonHttps,c.Udp+1);
+                }
+            } finally { Marshal.FreeHGlobal(buffer); }
+        }
+        return use;
+    }
+
+    static bool ReadTable(bool tcp,int family,out IntPtr buffer,out int rows)
+    {
+        buffer=IntPtr.Zero;rows=0;int size=0;
+        for(int attempt=0;attempt<4;attempt++) {
+            uint status=tcp?GetExtendedTcpTable(buffer,ref size,false,family,TcpOwnerPidAll,0):GetExtendedUdpTable(buffer,ref size,false,family,UdpOwnerPid,0);
+            if(status==0){rows=Marshal.ReadInt32(buffer);return true;}
+            if(buffer!=IntPtr.Zero){Marshal.FreeHGlobal(buffer);buffer=IntPtr.Zero;}
+            if(status!=122)return false;
+            buffer=Marshal.AllocHGlobal(size);
+        }
+        if(buffer!=IntPtr.Zero){Marshal.FreeHGlobal(buffer);buffer=IntPtr.Zero;}
+        return false;
+    }
+
     // Returns the remote-control processes this account can see. Anything that
     // cannot be read is skipped rather than guessed, so an unreadable entry can
     // never fabricate an exposure.
     internal static JsonArray RemoteControlProcesses()
     {
         var found=new JsonArray();
+        var network=NetworkUse();
         Process[] all;
         try { all=Process.GetProcesses(); } catch(Exception) { return found; }
         foreach(var process in all) {
             try {
                 if(!IsRemoteControl(process.ProcessName))continue;
-                found.Add(new JsonObject {
+                var row=new JsonObject {
                     ["name"]=process.ProcessName,
                     ["process_id"]=process.Id,
                     ["session_id"]=process.SessionId
-                });
+                };
+                if(network!=null) {
+                    network.TryGetValue(process.Id,out var use);
+                    row["established"]=use.Established;row["non_https"]=use.NonHttps;row["udp"]=use.Udp;
+                }
+                found.Add(row);
             } catch(Exception) { }
             finally { process.Dispose(); }
         }

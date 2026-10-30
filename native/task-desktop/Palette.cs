@@ -15,8 +15,9 @@ static class Palette
     internal static readonly System.Drawing.Color InkFaint  = System.Drawing.Color.FromArgb(0x97,0x9D,0xA6); // neutral-bluish-500
     internal static readonly System.Drawing.Color Line      = System.Drawing.Color.FromArgb(0xE1,0xE5,0xEE); // neutral-bluish-200
     internal static readonly System.Drawing.Color LineSoft  = System.Drawing.Color.FromArgb(0xEB,0xEE,0xF2); // neutral-bluish-100
-    // The accent (#5686fe, deepseek-450) is drawn by the status pill in PowerShell
-    // and by icon.svg; no C# surface paints it, so it is not a field here.
+    // State dot tones, shared with the status pill so both surfaces read the same.
+    internal static readonly System.Drawing.Color Accent    = System.Drawing.Color.FromArgb(0x56,0x86,0xFE); // deepseek-450
+    internal static readonly System.Drawing.Color Amber     = System.Drawing.Color.FromArgb(0xF5,0xB0,0x42);
     internal static readonly System.Drawing.Color Hover     = System.Drawing.Color.FromArgb(0xF1,0xF3,0xF5); // neutral-bluish-75
     internal static readonly System.Drawing.Color Danger    = System.Drawing.Color.FromArgb(0xEF,0x44,0x44); // static-red-500
     internal static readonly System.Drawing.Color Shadow    = System.Drawing.Color.FromArgb(0x1A,0x00,0x00,0x00); // border-l2

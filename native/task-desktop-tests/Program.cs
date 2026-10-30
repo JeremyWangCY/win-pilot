@@ -9,6 +9,15 @@ Check(!ChildSessionQuery.IsKnown(false,uint.MaxValue,5),"access denied must rema
 Check(!ChildSessionQuery.IsKnown(false,3,1168),"not-found with a populated ID must remain unknown");
 Check(!ChildSessionQuery.IsKnown(false,0,1168),"uninitialized output must remain unknown");
 Check(!ChildSessionQuery.IsKnown(false,uint.MaxValue,1722),"RPC failure must remain unknown");
+{
+    // The scale guard only puts back a monitor it recorded, matched by device
+    // path whatever the source, and leaves new or unchanged monitors alone.
+    var recorded=new[]{new DisplayScale.Monitor(@"\\?\DISPLAY#SHP1523#a",-1),new DisplayScale.Monitor(@"\\?\DISPLAY#DELD0E6#b",0)};
+    var current=new[]{new DisplayScale.Monitor(@"\\?\display#shp1523#A",-2),new DisplayScale.Monitor(@"\\?\DISPLAY#DELD0E6#b",0),new DisplayScale.Monitor(@"\\?\DISPLAY#MTT1337#c",1)};
+    var changed=DisplayScale.Changed(recorded,current).ToArray();
+    Check(changed.Length==1&&changed[0].Path==@"\\?\display#shp1523#A"&&changed[0].Scale==-1,"only the changed recorded monitor is restored to its recorded scale");
+    Check(!DisplayScale.Changed(recorded,recorded).Any(),"unchanged scales are left alone");
+}
 
 // Live-session resolution. The stale-id case is the confirmed real-world failure:
 // WTSGetChildSessionId reported 3 while no session 3 existed at all.

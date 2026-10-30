@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { copyTree } from '../lib/fs-copy.js'
+import { copyTree, syncTree } from '../lib/fs-copy.js'
 
 // Regression guard for a Windows-only process abort: `fs.cpSync` terminates the
 // host with 0xC0000409 when the source path contains non-ASCII characters, so the
@@ -42,7 +42,35 @@ try {
   fs.rmSync(workspace, { recursive: true, force: true })
 }
 
-// 2. Nothing in the shipped code may call the aborting API again.
+// 2. syncTree copies once, skips an unchanged source, and recopies on a change
+//    of content or of the caller key (the package version).
+const syncWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'win-pilot-同步-' + randomUUID().slice(0, 8) + '-'))
+try {
+  const source = path.join(syncWorkspace, '源')
+  const target = path.join(syncWorkspace, '目标')
+  fs.mkdirSync(path.join(source, '子目录'), { recursive: true })
+  fs.writeFileSync(path.join(source, 'tool.exe'), 'v1')
+  fs.writeFileSync(path.join(source, '子目录', 'lib.dll'), 'dll')
+  assert.equal(syncTree(source, target, '1.0.0'), true, 'the first sync copies')
+  assert.equal(fs.readFileSync(path.join(target, 'tool.exe'), 'utf8'), 'v1')
+  assert.equal(syncTree(source, target, '1.0.0'), false, 'an unchanged source is not copied again')
+
+  // A same-size, same-mtime file (npm extracts with a fixed mtime) is caught by the key.
+  const stat = fs.statSync(path.join(source, 'tool.exe'))
+  fs.writeFileSync(path.join(source, 'tool.exe'), 'v2')
+  fs.utimesSync(path.join(source, 'tool.exe'), stat.atime, stat.mtime)
+  assert.equal(syncTree(source, target, '1.0.1'), true, 'a new package version recopies')
+  assert.equal(fs.readFileSync(path.join(target, 'tool.exe'), 'utf8'), 'v2')
+
+  // A target file removed behind our back is restored even with a matching stamp.
+  fs.unlinkSync(path.join(target, '子目录', 'lib.dll'))
+  assert.equal(syncTree(source, target, '1.0.1'), true, 'a missing target file forces a copy')
+  assert.equal(fs.readFileSync(path.join(target, '子目录', 'lib.dll'), 'utf8'), 'dll')
+} finally {
+  fs.rmSync(syncWorkspace, { recursive: true, force: true })
+}
+
+// 3. Nothing in the shipped code may call the aborting API again.
 const offenders = []
 for (const directory of ['lib', 'scripts']) {
   const walk = where => {
