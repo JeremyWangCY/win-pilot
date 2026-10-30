@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-本版预期版本为 `0.5.0`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
+本版预期版本为 `0.6.0`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
 
 ### 更新
 
@@ -104,6 +104,8 @@ DSH profile 需要单独重启。需要刷新 Win-Pilot 管理的 Skill 副本�
 如果沙箱会在每条命令结束后回收子进程，应由宿主的常驻插件或 MCP supervisor 启动 `win-pilot mcp`，不要从一次性命令中强行脱离进程。仅支持 shell 的 Agent 可以调用一次性的 `win-pilot request`。
 
 ## 使用方法
+
+0.6.0 把设置页重做为一屏放得下的紧凑面板，并换上新的产品图标。辅助进程启动更快：WGC 组件未变化时不再重复复制，大尺寸截图回包的分帧改为线性耗时。独立任务桌面方面：前台坐标点击会校验 `expected_name`，截图会清除 `observation_required`；空闲的 UU（网易 GameViewer）不再阻止独立桌面，有人通过 UU 接入时仍会拦截；关闭独立桌面时，若远程控制软件在注销期间改动了主桌面的显示缩放，会自动恢复。
 
 0.5.0 让独立任务桌面采用与主显示器相同的像素尺寸与缩放比例，并在检测到远程控制接入时拒绝打开：默认改在当前桌面执行，选择 `remoteControlPolicy: refuse` 则直接停止。本版同时合入贡献者的修复——技能提供者返回 thenable、控制类动作结果保持无损 JSON；并停止用 `fs.cpSync` 复制随包文件，该调用在非 ASCII 安装路径（如 `C:\Users\<中文名>\.dsh`）下会直接终止宿主进程。
 

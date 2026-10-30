@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected for this release: version `0.5.0`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
+Expected for this release: version `0.6.0`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
 
 ### Settings
 
@@ -125,6 +125,8 @@ DSH profiles must be restarted separately. Re-run `win-pilot install` when you w
 When a sandbox reaps children after every command, configure `win-pilot mcp` in the host's persistent plugin or MCP supervisor. Do not detach a process from an ephemeral command. Shell-only agents can use one-shot `win-pilot request` calls.
 
 ## Usage
+
+Version 0.6.0 rebuilds the settings card as one compact panel and ships a new product icon. The helper starts faster: the WGC bridge is no longer re-copied when unchanged, and large screenshot replies are framed in linear time. On the task desktop, foreground coordinate clicks now validate `expected_name`, a screenshot clears `observation_required`, an idle UU (NetEase GameViewer) no longer blocks it while an attached UU viewer still does, and closing it restores any main-desktop display scale a remote-control product changed during logoff.
 
 Version 0.5.0 makes the task desktop use the same pixel size and scale factor as the primary display, and refuses to open it while a remote-control product is attached: by default the action runs on the current desktop instead, and `remoteControlPolicy: refuse` stops instead. It also merges the contributor fix that returns thenables from the skill provider and keeps control-action results lossless JSON, and stops copying bundles with `fs.cpSync`, which terminates the host on a non-ASCII install path such as `C:\Users\<中文名>\.dsh`.
 
