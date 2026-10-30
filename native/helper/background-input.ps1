@@ -468,7 +468,7 @@ function Assert-ClickTarget {
   if ($null -eq $Element -or -not (Test-ElementInWindow -Element $Element -Hwnd $Hwnd)) { throw 'target_validation_failed: element is not in target window' }
   $current = $Element.Current
   if ($ExpectedName -and -not [string]::Equals($current.Name, $ExpectedName, [StringComparison]::Ordinal)) {
-    $found = [string]$current.Name; if ($found.Length -gt 80) { $found = $found.Substring(0, 80) + '…' }
+    $found = [string]$current.Name; if ($found.Length -gt 80) { $found = $found.Substring(0, 80) + '...' }
     throw ("target_validation_failed: expected_name mismatch; the element at this point is named '{0}'. Refresh get_window_state and use click with element_index" -f $found)
   }
   $r = $current.BoundingRectangle

@@ -2792,7 +2792,7 @@ function Assert-ClickTarget {
   if ($null -eq $Element -or -not (Test-ElementInWindow -Element $Element -Hwnd $Hwnd)) { throw 'target_validation_failed: element is not in target window' }
   $current = $Element.Current
   if ($ExpectedName -and -not [string]::Equals($current.Name, $ExpectedName, [StringComparison]::Ordinal)) {
-    $found = [string]$current.Name; if ($found.Length -gt 80) { $found = $found.Substring(0, 80) + '…' }
+    $found = [string]$current.Name; if ($found.Length -gt 80) { $found = $found.Substring(0, 80) + '...' }
     throw ("target_validation_failed: expected_name mismatch; the element at this point is named '{0}'. Refresh get_window_state and use click with element_index" -f $found)
   }
   $r = $current.BoundingRectangle
@@ -3968,7 +3968,9 @@ function Invoke-ActionRequest {
       [WinPilotInputMonitor]::BeginAction()
       $guardStarted = $true
     }
-    if ($Action -eq 'get_window_state') {
+    # A fresh screenshot is as much an observation as a state read: it shows the
+    # caller what the user's input changed before more input is sent.
+    if ($Action -eq 'get_window_state' -or $Action -eq 'screenshot') {
       try { $observationTicket = [WinPilotInputMonitor]::BeginObservation() }
       catch { $result.input_monitor_available = $false }
     }
@@ -4181,6 +4183,20 @@ function Invoke-ActionRequest {
         }
         $result.clicked = @{ x = $sx; y = $sy }
       } else {
+        # SendInput lands on whatever is under the point, so a named coordinate
+        # target is validated here exactly as the background path does.
+        if ($expectedName -and $null -eq $el) {
+          if ($win) {
+            Assert-ClickTarget -Element (Find-TargetHitsAt -Hwnd $win.Hwnd -X $sx -Y $sy).best -Hwnd $win.Hwnd -X $sx -Y $sy -ExpectedName $expectedName
+          } else {
+            $hitEl = [System.Windows.Automation.AutomationElement]::FromPoint((New-Object System.Windows.Point($sx, $sy)))
+            $found = if ($hitEl) { [string]$hitEl.Current.Name } else { '' }
+            if (-not [string]::Equals($found, $expectedName, [StringComparison]::Ordinal)) {
+              if ($found.Length -gt 80) { $found = $found.Substring(0, 80) + '...' }
+              throw ("target_validation_failed: expected_name mismatch; the element at this point is named '{0}'. Refresh get_window_state and use click with element_index" -f $found)
+            }
+          }
+        }
         Notify-Cursor -X $sx -Y $sy -Label $label
         if ($rawMods) { [DshWin32]::MouseClickExWithModifiers($sx, $sy, $clickCount, $button, $rawMods) }
         else { [DshWin32]::MouseClickEx($sx, $sy, $clickCount, $button) }

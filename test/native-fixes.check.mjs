@@ -409,4 +409,14 @@ const testScript = `
 `
 execFileSync(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', testScript], { stdio: 'inherit', windowsHide: true })
 
+// A foreground coordinate click (the task desktop's only dispatch) must honour
+// expected_name, and a screenshot must count as a fresh observation.
+{
+  const foreground = helperContent.slice(helperContent.indexOf('SendInput lands on whatever is under the point'))
+  assert.ok(foreground.indexOf('-ExpectedName $expectedName') < foreground.indexOf('MouseClickEx('),
+    'foreground click must validate expected_name before SendInput')
+  assert.ok(helperContent.includes("if ($Action -eq 'get_window_state' -or $Action -eq 'screenshot') {"),
+    'screenshot must take an observation ticket')
+}
+
 console.log('native-fixes check PASSED')
