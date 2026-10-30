@@ -184,7 +184,7 @@ for(const command of ['login','open']){
 {
   const idle={name:'GameViewerServer',process_id:4242,session_id:5,established:5,non_https:0,udp:0}
   const tray={name:'GameViewer',process_id:4243,session_id:5,established:3,non_https:3,udp:0}
-  assert.equal(assessRemoteConflict({...ownedHealthy,child_session_streamers:[idle,tray]}).allow,true,
+  assert.equal(assessRemoteConflict({...ownedHealthy,child_session_streamers:[{...idle,udp:1},tray]}).allow,true,
     'an idle UU streamer in the child session must not block')
   for(const live of [{...idle,udp:2},{...idle,non_https:1},{name:'GameViewerServer',process_id:4242,session_id:5}]){
     const verdict=assessRemoteConflict({...ownedHealthy,child_session_streamers:[live]})
