@@ -32,7 +32,7 @@
       "List the open Windows applications without changing anything.",
       "Open an isolated browser and inspect the requested page."
     ],
-    "brandColor": "#5686FE",
+    "brandColor": "#4D6BFE",
     "composerIcon": "./assets/composer-icon.png",
     "logo": "./assets/logo.png",
     "screenshots": [

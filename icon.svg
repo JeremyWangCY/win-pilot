@@ -1,31 +1,44 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Win-Pilot">
   <title>Win-Pilot</title>
   <!--
-    DeepSeek design language, taken from the harness's own design tokens rather
-    than guessed: its brand-primary alias resolves to neutral-bluish-1000, i.e.
-    a near black, while the blue ramp is reserved for accents such as progress
-    and links. So the mark is monochrome ink on a paper square.
+    A deep ink tile with a cool highlight, a white application window and a
+    DeepSeek-blue pointer that breaks out of the window's corner: "an agent
+    operating a Windows app". The pointer carries an ink outline the same
+    colour as the tile, so where it overlaps the frame it cuts a clean gap and
+    stays legible down to 16 px. The tile is self-contained, so the mark reads
+    on light and dark surfaces alike.
 
-      ink    neutral-bluish-1000   #0f1115
-      paper  neutral-bluish-00     #ffffff
-      accent deepseek-450          #5686fe   (the pointer only)
-
-    The paper square supplies the contrast, so the icon reads on both light and
-    dark surfaces without a second dark-mode variant. Corner radius 58/512 is
-    about 11.3%, matching the harness app icon's proportion.
+      tile     #1C2333 -> #0A0D14
+      window   #FFFFFF (title bar dots at reduced opacity)
+      pointer  #8FB0FF -> #4D6BFE
   -->
-  <rect width="512" height="512" rx="58" fill="#FFFFFF"/>
+  <defs>
+    <linearGradient id="wp-tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1C2333"/>
+      <stop offset="1" stop-color="#0A0D14"/>
+    </linearGradient>
+    <radialGradient id="wp-glow" cx="0.72" cy="0.78" r="0.55">
+      <stop offset="0" stop-color="#4D6BFE" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#4D6BFE" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="wp-pointer" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#8FB0FF"/>
+      <stop offset="1" stop-color="#4D6BFE"/>
+    </linearGradient>
+  </defs>
 
-  <g fill="none" stroke="#0F1115" stroke-width="24" stroke-linejoin="round">
-    <!-- Window frame -->
-    <rect x="98" y="114" width="316" height="284" rx="34"/>
-    <!-- Rule under the title bar -->
-    <path d="M122 176 H390" stroke-linecap="round"/>
-  </g>
+  <rect width="512" height="512" rx="112" fill="url(#wp-tile)"/>
+  <rect width="512" height="512" rx="112" fill="url(#wp-glow)"/>
+  <rect x="6" y="6" width="500" height="500" rx="106" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="4"/>
 
-  <!-- Title bar dot -->
-  <circle cx="368" cy="145" r="15" fill="#0F1115"/>
+  <!-- Application window -->
+  <rect x="92" y="104" width="292" height="248" rx="40" fill="none" stroke="#FFFFFF" stroke-width="28"/>
+  <path d="M92 178 H384" stroke="#FFFFFF" stroke-width="22"/>
+  <circle cx="140" cy="141" r="11" fill="#FFFFFF"/>
+  <circle cx="176" cy="141" r="11" fill="#FFFFFF" fill-opacity="0.55"/>
+  <circle cx="212" cy="141" r="11" fill="#FFFFFF" fill-opacity="0.3"/>
 
-  <!-- Pointer: the single blue accent, as in the harness accent usage. -->
-  <path d="M200 216 L200 349 L244 306 L273 366 L315 348 L286 289 L343 289 Z" fill="#5686FE"/>
+  <!-- Pointer, outlined in tile ink so it cuts through the frame -->
+  <path d="M276 236 L276 424 L322 380 L354 450 L398 430 L366 362 L430 362 Z"
+        fill="url(#wp-pointer)" stroke="#0A0D14" stroke-width="26" stroke-linejoin="round" paint-order="stroke"/>
 </svg>
