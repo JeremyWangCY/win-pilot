@@ -160,9 +160,15 @@ public static class WinPilotInputMonitor
       throw Unavailable(failure ?? (stopped ? "monitor stopped" : "hook thread is unavailable"));
   }
 
+  // The ignoreUserInput setting, carried on every request. While it is on, the
+  // user's input is not recorded, so turning it off never leaves a stale demand
+  // for an observation behind.
+  private static volatile bool ignoreUserInput;
+  public static void SetIgnoreUserInput(bool value) { ignoreUserInput = value; }
+
   private static void RecordInput(IntPtr extraInfo)
   {
-    if (extraInfo == SelfTag) return;
+    if (extraInfo == SelfTag || ignoreUserInput) return;
     lock (State)
     {
       // Injected flags do not reveal the sender. Other applications count too.

@@ -14,7 +14,11 @@ const first = createActivityReporter({ directory, launch:async () => {}, stateFo
 const second = createActivityReporter({ directory, launch:async () => {}, handleControl:async () => ({ ok:true }) })
 const read = () => fs.readdirSync(directory).filter(name => name.endsWith('.json')).map(name => JSON.parse(fs.readFileSync(path.join(directory, name))))
 try {
-  await first.begin('first', 'task')
+  await first.begin('first', 'task', { action:'click', detail:'Save' })
+  first.finish('first', false)
+  await first.begin('first', 'task', { action:'press_key', detail:'ctrl+s' })
+  const steps = read().find(value => value.id === 'first').steps
+  assert.deepEqual(steps.map(step => [step.action, step.state]), [['click', 'failed'], ['press_key', 'running']], 'finished steps stay in the log')
   await second.begin('second', 'current')
   assert.equal(read().length, 2, 'concurrent owners must not overwrite each other')
   const record = read().find(value => value.id === 'first')
@@ -22,6 +26,7 @@ try {
   assert.equal(read().find(value => value.id === 'first').state, 'paused')
   assert.deepEqual(controls, [{ command:'pause', id:'first' }])
   first.finish('first')
+  assert.equal(read().find(value => value.id === 'first').steps.at(-1).state, 'done')
   assert.equal(read().find(value => value.id === 'first').state, 'paused', 'pausing keeps the control surface visible')
   assert.equal((await requestLocalControl(record, { command:'resume', session_id:'first' })).ok, true)
   assert.equal((await requestLocalControl(record, { command:'end', session_id:'first' })).ok, true)

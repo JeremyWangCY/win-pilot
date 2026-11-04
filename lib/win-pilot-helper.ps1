@@ -207,9 +207,15 @@ public static class WinPilotInputMonitor
       throw Unavailable(failure ?? (stopped ? "monitor stopped" : "hook thread is unavailable"));
   }
 
+  // The ignoreUserInput setting, carried on every request. While it is on, the
+  // user's input is not recorded, so turning it off never leaves a stale demand
+  // for an observation behind.
+  private static volatile bool ignoreUserInput;
+  public static void SetIgnoreUserInput(bool value) { ignoreUserInput = value; }
+
   private static void RecordInput(IntPtr extraInfo)
   {
-    if (extraInfo == SelfTag) return;
+    if (extraInfo == SelfTag || ignoreUserInput) return;
     lock (State)
     {
       // Injected flags do not reveal the sender. Other applications count too.
@@ -3962,6 +3968,7 @@ function Invoke-ActionRequest {
   try {
     if (('WinPilotInputMonitor' -as [type]) -and [WinPilotInputMonitor].GetMethod('ConfigureCancellation')) {
       [WinPilotInputMonitor]::ConfigureCancellation([string](Get-PayloadValue 'cancellation_path'))
+      if ([WinPilotInputMonitor].GetMethod('SetIgnoreUserInput')) { [WinPilotInputMonitor]::SetIgnoreUserInput((Get-PayloadValue 'ignore_user_input') -eq $true) }
       if ($Action -ne 'stop') { [WinPilotInputMonitor]::Check() }
     }
     if ($guardedInput) {

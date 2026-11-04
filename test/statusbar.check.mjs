@@ -6,6 +6,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { once } from 'node:events'
 import { defineComputerTool, stopDaemon } from '../lib/index.js'
+import { setSettingsForTest } from '../lib/settings.js'
+// The shipped linger keeps the step log up between model turns; this check
+// only needs to see the pill go away once the lease expires.
+setSettingsForTest({ statusPillIdleGraceMs:3000 })
 const root = fileURLToPath(new URL('../', import.meta.url))
 const preferences = execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'test/fixtures/settings-status.ps1')], { encoding: 'utf8', windowsHide: true, timeout: 10000 })
 assert.match(preferences, /SETTINGS_STATUS_OK/, 'cursor and status pill preferences must work independently')
