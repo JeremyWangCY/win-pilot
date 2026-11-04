@@ -127,8 +127,12 @@ public static class DshStatusPill
     public uint biClrUsed; public uint biClrImportant;
   }
 
+  // Activity layout: a 44 px header, the recent-step log, then the 44 px strip
+  // the controls form sits on.
+  const int HeaderH = 44, RowH = 24;
   public static int W { get { return activityLabel == null ? 320 : 400; } }
-  public static int H { get { return activityLabel == null ? 56 : 88; } }
+  public static int H { get { return activityLabel == null ? 56 : FooterTop + 44; } }
+  public static int FooterTop { get { return HeaderH + (stepText.Length > 0 ? stepText.Length * RowH + 6 : 0); } }
   static IntPtr hwnd = IntPtr.Zero;
   static IntPtr hdcMem = IntPtr.Zero;
   static IntPtr hbm = IntPtr.Zero;
@@ -164,6 +168,14 @@ public static class DshStatusPill
     : "Win-Pilot running";
   static string activityLabel = null;
   static string tone = "running";
+  static string[] stepText = new string[0], stepDetail = new string[0], stepState = new string[0], stepMeta = new string[0];
+  // Newest first. A step stays listed after it finishes so the trail reads
+  // like a log rather than flashing the current action only.
+  public static void SetSteps(string[] text, string[] detail, string[] state, string[] meta)
+  {
+    stepText = text ?? new string[0]; stepDetail = detail ?? new string[0];
+    stepState = state ?? new string[0]; stepMeta = meta ?? new string[0];
+  }
   public static void SetLabel(string value) { activityLabel = value; }
   // Dot colour by state: running is the accent and breathes; attention states
   // hold still in amber or red so they read at a glance.
@@ -175,7 +187,7 @@ public static class DshStatusPill
     {
       case "paused": case "pausing": case "takeover": return Color.FromArgb(245, 176, 66);
       case "error": case "disconnected": return Color.FromArgb(244, 98, 92);
-      case "connecting": case "preparing": case "needs_preparation": case "login_settings":
+      case "idle": case "connecting": case "preparing": case "needs_preparation": case "login_settings":
       case "awaiting_login": case "awaiting_windows_login": return Color.FromArgb(160, 164, 176);
       default: return Color.FromArgb(86, 134, 254);
     }
@@ -265,6 +277,8 @@ public static class DshStatusPill
           g.DrawString(tail, regular, secondary, new RectangleF(x + headWidth + 7f, row - 16f, limit - x - headWidth - 7f, 32f), fmt);
       }
 
+      if (!compact && stepText.Length > 0) DrawSteps(g, breath);
+
       // One status dot. Running breathes softly with a faint halo; attention
       // states stay solid so they never look like progress.
       Color dot = ToneColor();
@@ -280,10 +294,62 @@ public static class DshStatusPill
     return bmp;
   }
 
+  static void DrawSteps(Graphics g, double breath)
+  {
+    using (var rule = new Pen(Color.FromArgb(16, 255, 255, 255), 1f)) g.DrawLine(rule, 16, HeaderH - 0.5f, W - 16, HeaderH - 0.5f);
+    var accent = Color.FromArgb(86, 134, 254);
+    using (var verbFont = new Font("Segoe UI Semibold", 9f, FontStyle.Regular, GraphicsUnit.Point))
+    using (var textFont = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point))
+    using (var fmt = new StringFormat(StringFormat.GenericTypographic))
+    {
+      fmt.FormatFlags = (fmt.FormatFlags & ~StringFormatFlags.LineLimit) | StringFormatFlags.NoWrap;
+      fmt.Trimming = StringTrimming.EllipsisCharacter;
+      fmt.LineAlignment = StringAlignment.Center;
+      for (int i = 0; i < stepText.Length; i++)
+      {
+        // Older steps recede instead of disappearing.
+        float fade = Math.Max(0.38f, 1f - i * 0.16f);
+        float cy = HeaderH + 3 + i * RowH + RowH / 2f;
+        string state = i < stepState.Length ? stepState[i] : "done";
+        float gx = 27f;
+        if (state == "running")
+        {
+          using (var track = new Pen(Color.FromArgb(50, accent.R, accent.G, accent.B), 1.6f)) g.DrawEllipse(track, gx - 5, cy - 5, 10, 10);
+          using (var arc = new Pen(accent, 1.6f)) { arc.StartCap = LineCap.Round; arc.EndCap = LineCap.Round; g.DrawArc(arc, gx - 5, cy - 5, 10, 10, (float)(breath * 120 % 360), 100); }
+        }
+        else if (state == "failed")
+          using (var x = new Pen(Color.FromArgb((int)(255 * fade), 244, 98, 92), 1.6f))
+          { x.StartCap = LineCap.Round; x.EndCap = LineCap.Round; g.DrawLine(x, gx - 3.5f, cy - 3.5f, gx + 3.5f, cy + 3.5f); g.DrawLine(x, gx + 3.5f, cy - 3.5f, gx - 3.5f, cy + 3.5f); }
+        else
+          using (var tick = new Pen(Color.FromArgb((int)(200 * fade), 132, 196, 140), 1.6f))
+          { tick.StartCap = LineCap.Round; tick.EndCap = LineCap.Round; tick.LineJoin = LineJoin.Round;
+            g.DrawLines(tick, new PointF[] { new PointF(gx - 4, cy), new PointF(gx - 1.2f, cy + 3), new PointF(gx + 4.2f, cy - 3.2f) }); }
+
+        string meta = i < stepMeta.Length ? stepMeta[i] : "";
+        float metaW = meta.Length > 0 ? g.MeasureString(meta, textFont, 200, fmt).Width : 0;
+        if (meta.Length > 0)
+          using (var metaBrush = new SolidBrush(Color.FromArgb((int)(170 * fade), 160, 164, 176)))
+            g.DrawString(meta, textFont, metaBrush, new RectangleF(W - 20 - metaW, cy - 12, metaW + 2, 24), fmt);
+
+        float x0 = 46f, limit = W - 30 - metaW;
+        using (var verbBrush = new SolidBrush(Color.FromArgb((int)(240 * fade), 236, 237, 240)))
+        using (var detailBrush = new SolidBrush(Color.FromArgb((int)(220 * fade), 160, 164, 176)))
+        {
+          string verb = stepText[i];
+          float vw = Math.Min(g.MeasureString(verb, verbFont, 1000, fmt).Width, limit - x0);
+          g.DrawString(verb, verbFont, verbBrush, new RectangleF(x0, cy - 12, vw + 1, 24), fmt);
+          string detail = i < stepDetail.Length ? stepDetail[i] : "";
+          if (detail.Length > 0 && x0 + vw + 6 < limit)
+            g.DrawString(detail, textFont, detailBrush, new RectangleF(x0 + vw + 6, cy - 12, limit - x0 - vw - 6, 24), fmt);
+        }
+      }
+    }
+  }
+
   static void RenderSurface(double breath)
   {
     // Legacy and activity layouts can alternate within the same renderer.
-    if (hbm != IntPtr.Zero && surfaceHeight != H) {
+    if (hbm != IntPtr.Zero && (surfaceHeight != H || surfaceWidth != W)) {
       SelectObject(hdcMem, hbmOld); DeleteObject(hbm); DeleteDC(hdcMem);
       hbm = hdcMem = hbmOld = IntPtr.Zero;
     }
@@ -303,7 +369,7 @@ public static class DshStatusPill
         hdcMem = CreateCompatibleDC(dc);
         hbm = CreateDIBSection(hdcMem, ref bmi, 0, out bitsAt, IntPtr.Zero, 0);
         hbmOld = SelectObject(hdcMem, hbm);
-        surfaceHeight = H;
+        surfaceHeight = H; surfaceWidth = W;
       }
       BitmapData data = bmp.LockBits(new Rectangle(0, 0, W, H), ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb);
       try
@@ -317,7 +383,7 @@ public static class DshStatusPill
       ReleaseDC(IntPtr.Zero, dc);
     }
   }
-  static int surfaceHeight;
+  static int surfaceHeight, surfaceWidth;
 
   static void EnsureWindow()
   {
@@ -520,12 +586,49 @@ function State-Label([string]$State) {
     'error' { if ($zh) { return '连接失败' }; return 'Connection failed' }
     'disconnected' { if ($zh) { return '已断开' }; return 'Disconnected' }
     'ended' { if ($zh) { return '已结束' }; return 'Ended' }
+    'idle' { if ($zh) { return '待命' }; return 'Idle' }
     default { if ($zh) { return '已完成' }; return 'Complete' }
   }
 }
 function Environment-Label([string]$Environment) {
   if ($Environment -eq 'task') { if ($zh) { return '独立桌面' }; return 'Task' }
   if ($zh) { return '当前桌面' }; return 'Current'
+}
+$stepVerbs = @{
+  click=@('点击','Click'); double_click=@('双击','Double-click'); type_text=@('输入','Type'); type=@('输入','Type'); paste=@('粘贴','Paste')
+  press_key=@('按键','Key'); keypress=@('按键','Key'); hold_key=@('按住','Hold'); scroll=@('滚动','Scroll'); drag=@('拖动','Drag')
+  set_value=@('设置值','Set value'); select_text=@('选择文本','Select text'); move=@('移动','Move'); mouse_move=@('移动','Move')
+  mouse_down=@('按下','Press'); mouse_up=@('松开','Release'); perform_secondary_action=@('操作','Action')
+  screenshot=@('截图','Screenshot'); zoom=@('放大查看','Zoom'); get_window_state=@('读取窗口','Read window'); elements=@('读取元素','Elements')
+  list_apps=@('列出应用','List apps'); list_windows=@('列出窗口','List windows'); get_window=@('查找窗口','Find window')
+  launch_app=@('启动','Launch'); activate_window=@('切换窗口','Activate'); minimize_window=@('最小化','Minimize'); close_window=@('关闭窗口','Close window')
+  wait=@('等待','Wait'); read_clipboard=@('读剪贴板','Read clipboard'); write_clipboard=@('写剪贴板','Write clipboard'); batch=@('批量','Batch')
+  browser_open=@('打开网页','Open'); browser_navigate=@('打开网页','Navigate'); browser_click=@('点击','Click'); browser_click_point=@('点击','Click')
+  browser_click_text=@('点击','Click'); browser_type=@('输入','Type'); browser_replace=@('输入','Type'); browser_key=@('按键','Key')
+  browser_scroll=@('滚动','Scroll'); browser_scroll_to_text=@('滚动到','Scroll to'); browser_state=@('读取网页','Read page'); browser_observe=@('读取网页','Read page')
+  browser_read=@('读取网页','Read page'); browser_wait=@('等待网页','Wait'); browser_back=@('后退','Back'); browser_forward=@('前进','Forward'); browser_reload=@('刷新','Reload')
+}
+function Step-Verb([string]$Action) {
+  $pair = $stepVerbs[$Action]
+  if ($pair) { if ($zh) { return $pair[0] }; return $pair[1] }
+  return (($Action -replace '^browser_', '') -replace '_', ' ')
+}
+function Step-Duration([double]$Ms) {
+  if ($Ms -lt 0) { $Ms = 0 }
+  if ($Ms -lt 10000) { return ('{0:0.0}s' -f ($Ms / 1000)) }
+  if ($Ms -lt 60000) { return ([string][int][Math]::Floor($Ms / 1000) + 's') }
+  return ([string][int][Math]::Floor($Ms / 60000) + 'm')
+}
+# Newest step first, at most five rows so the card stays a glance.
+function Set-PillSteps($Steps, [double]$Now) {
+  $list = @($Steps | Where-Object { $_ -and $_.action })
+  [array]::Reverse($list)
+  $list = @($list | Select-Object -First 5)
+  $verbs = [string[]]@($list | ForEach-Object { Step-Verb ([string]$_.action) })
+  $details = [string[]]@($list | ForEach-Object { [string]$_.detail })
+  $states = [string[]]@($list | ForEach-Object { [string]$_.state })
+  $meta = [string[]]@($list | ForEach-Object { if ($_.end) { Step-Duration ([double]$_.end - [double]$_.at) } else { Step-Duration ($Now - [double]$_.at) } })
+  [DshStatusPill]::SetSteps($verbs, $details, $states, $meta)
 }
 function Update-ControlButtons {
   $entry = $selector.SelectedItem
@@ -577,6 +680,12 @@ $endButton.Add_Click({ Invoke-ActivityControl 'end' })
 
 if ($RenderSample -and $SampleActivity) {
   [DshStatusPill]::SetLabel(('Win-Pilot · ' + (Environment-Label 'task') + ' · ' + (State-Label 'running')))
+  Set-PillSteps @(
+    @{ action='launch_app'; detail='notepad'; at=88000; end=89400; state='done' },
+    @{ action='type_text'; detail='notepad'; at=91000; end=91600; state='done' },
+    @{ action='press_key'; detail='ctrl+s'; at=93000; end=93300; state='failed' },
+    @{ action='click'; detail='Save as'; at=97600; state='running' }
+  ) 100000
   $selector.Items.Add((New-Object WinPilotChoiceItem -Property @{ Name=((Environment-Label 'task') + ' 1 · ' + (State-Label 'running')); Record=@{ state='running'; endpoint='sample' } }))
   $selector.SelectedIndex = 0
   Update-ControlButtons
@@ -588,7 +697,7 @@ if ($RenderSample -and $SampleActivity) {
   [Windows.Forms.Application]::DoEvents()
   $controls.DrawToBitmap($footer, (New-Object Drawing.Rectangle(0, 0, 368, 32)))
   $graphics = [Drawing.Graphics]::FromImage($image)
-  $graphics.DrawImageUnscaled($footer, 16, 44)
+  $graphics.DrawImageUnscaled($footer, 16, [DshStatusPill]::FooterTop)
   $temporary = $RenderSample + '.tmp.png'
   $image.Save($temporary, [Drawing.Imaging.ImageFormat]::Png)
   $graphics.Dispose(); $footer.Dispose(); $image.Dispose(); $controls.Dispose(); $tooltip.Dispose()
@@ -653,11 +762,15 @@ try {
         $signature = ($records | ForEach-Object { $_.owner + ':' + $_.id + ':' + $_.state }) -join '|'
         if ($signature -ne $script:activitySignature -and -not $selector.DroppedDown -and -not $script:controlBusy) {
           $selectedId = if ($selector.SelectedItem) { $selector.SelectedItem.Record.id } else { '' }
-          $selector.BeginUpdate(); $selector.Items.Clear(); $index = 0; $selectedIndex = 0
+          # Without a kept selection, lingering ended or idle leases must not
+          # take the controls from a session that is still acting.
+          $selectedIndex = [Math]::Max(0, [array]::FindIndex([object[]]$records, [Predicate[object]]{ param($r) $r.state -notin @('ended','idle') }))
+          $selector.BeginUpdate(); $selector.Items.Clear(); $index = 0
           foreach ($item in $records) {
             $name = (Environment-Label $item.environment) + ' ' + ($index + 1) + ' · ' + (State-Label $item.state)
             $selector.Items.Add((New-Object WinPilotChoiceItem -Property @{ Name=$name; Record=$item }))
-            if ($item.id -eq $selectedId) { $selectedIndex = $index }
+            # An ended or idle choice yields to a live one; it has no controls left.
+            if ($item.id -eq $selectedId -and ($item.state -notin @('ended','idle') -or $records[$selectedIndex].state -in @('ended','idle'))) { $selectedIndex = $index }
             $index++
           }
           $selector.SelectedIndex = $selectedIndex; $selector.EndUpdate()
@@ -668,11 +781,12 @@ try {
         $label = 'Win-Pilot · ' + (Environment-Label $record.environment) + ' · ' + (State-Label $record.state)
         if ($records.Count -gt 1) { $label += ' (+' + ($records.Count - 1) + ')' }
         [DshStatusPill]::SetLabel($label); [DshStatusPill]::SetTone([string]$record.state)
+        Set-PillSteps $record.steps $now
         $x = [int](([Windows.Forms.Screen]::PrimaryScreen.Bounds.Width - [DshStatusPill]::W) / 2)
-        $controls.Location = New-Object Drawing.Point(($x + 16), 58)
+        $controls.Location = New-Object Drawing.Point(($x + 16), (14 + [DshStatusPill]::FooterTop))
         if (-not $controls.Visible) { $controls.Show() }
       } else {
-        [DshStatusPill]::SetLabel($null); [DshStatusPill]::SetTone('running'); $controls.Hide()
+        [DshStatusPill]::SetLabel($null); [DshStatusPill]::SetTone('running'); [DshStatusPill]::SetSteps($null, $null, $null, $null); $controls.Hide()
         $x = [int](([Windows.Forms.Screen]::PrimaryScreen.Bounds.Width - [DshStatusPill]::W) / 2)
       }
       $breath = $now / 1000.0 * (2 * [Math]::PI / 1.8)

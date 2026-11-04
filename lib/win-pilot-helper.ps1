@@ -207,9 +207,13 @@ public static class WinPilotInputMonitor
       throw Unavailable(failure ?? (stopped ? "monitor stopped" : "hook thread is unavailable"));
   }
 
+  // Set only by the test scripts, so a developer using the machine while the
+  // end-to-end checks run does not turn their input into test failures.
+  private static readonly bool IgnoreUserInput = Environment.GetEnvironmentVariable("WIN_PILOT_IGNORE_USER_INPUT") == "1";
+
   private static void RecordInput(IntPtr extraInfo)
   {
-    if (extraInfo == SelfTag) return;
+    if (extraInfo == SelfTag || IgnoreUserInput) return;
     lock (State)
     {
       // Injected flags do not reveal the sender. Other applications count too.

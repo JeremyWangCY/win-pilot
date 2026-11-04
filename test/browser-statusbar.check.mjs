@@ -4,6 +4,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { defineComputerTool, stopDaemon } from '../lib/index.js'
 import { activityDirectory } from '../lib/activity.js'
+import { setSettingsForTest } from '../lib/settings.js'
+
+// The shipped linger keeps the step log up between model turns; this check
+// only needs the lease to expire.
+setSettingsForTest({ statusPillIdleGraceMs:3000 })
 
 const before = new Set(fs.existsSync(activityDirectory()) ? fs.readdirSync(activityDirectory()) : [])
 const endpoint = 'ws://127.0.0.1:9/devtools/browser/win-pilot-status-test'

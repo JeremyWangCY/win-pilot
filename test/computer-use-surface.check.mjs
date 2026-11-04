@@ -225,7 +225,9 @@ assert.ok(parameters.dispatch, 'dispatch must remain model-callable')
   const stale = []
   for (const name of ['bootstrap', 'observation', 'background-input', 'capture', 'dispatch']) {
     const part = readFileSync(new URL(`../native/helper/${name}.ps1`, import.meta.url), 'utf8').replace(/^\uFEFF/, '')
-    if (!helperSource.includes(part.slice(0, 200))) stale.push(name)
+    // core.autocrlf checkouts give the sources CRLF while the bundle keeps LF.
+    const lf = value => value.replace(/\r\n/g, '\n')
+    if (!lf(helperSource).includes(lf(part).slice(0, 200))) stale.push(name)
   }
   assert.deepEqual(stale, [], 'lib/win-pilot-helper.ps1 must be rebuilt from native/helper sources')
 }
