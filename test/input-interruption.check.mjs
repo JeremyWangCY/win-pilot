@@ -15,18 +15,15 @@ assert.match(source, /CallNextHookEx\(IntPtr\.Zero, code, message, data\)/)
 assert.match(source, /ProcessExit/)
 
 if (process.platform === 'win32') {
-  // These fixtures exercise the real hooks, so they must see foreign input.
-  const env = { ...process.env }
-  delete env.WIN_PILOT_IGNORE_USER_INPUT
   const output = execFileSync('powershell.exe', [
     '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
     path.join(root, 'test/fixtures/input-interruption.ps1'),
-  ], { encoding: 'utf8', windowsHide: true, timeout: 20000, env })
+  ], { encoding: 'utf8', windowsHide: true, timeout: 20000 })
   assert.match(output, /INPUT_INTERRUPTION_OK/, output)
   const cleanup = execFileSync('powershell.exe', [
     '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
     path.join(root, 'test/fixtures/input-owned-cleanup.ps1'),
-  ], { encoding: 'utf8', windowsHide: true, timeout: 20000, env })
+  ], { encoding: 'utf8', windowsHide: true, timeout: 20000 })
   assert.match(cleanup, /INPUT_OWNED_CLEANUP_OK/, cleanup)
 }
 console.log('input interruption check PASSED')

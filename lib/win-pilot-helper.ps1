@@ -207,13 +207,15 @@ public static class WinPilotInputMonitor
       throw Unavailable(failure ?? (stopped ? "monitor stopped" : "hook thread is unavailable"));
   }
 
-  // Set only by the test scripts, so a developer using the machine while the
-  // end-to-end checks run does not turn their input into test failures.
-  private static readonly bool IgnoreUserInput = Environment.GetEnvironmentVariable("WIN_PILOT_IGNORE_USER_INPUT") == "1";
+  // The ignoreUserInput setting, carried on every request. While it is on, the
+  // user's input is not recorded, so turning it off never leaves a stale demand
+  // for an observation behind.
+  private static volatile bool ignoreUserInput;
+  public static void SetIgnoreUserInput(bool value) { ignoreUserInput = value; }
 
   private static void RecordInput(IntPtr extraInfo)
   {
-    if (extraInfo == SelfTag || IgnoreUserInput) return;
+    if (extraInfo == SelfTag || ignoreUserInput) return;
     lock (State)
     {
       // Injected flags do not reveal the sender. Other applications count too.
@@ -3966,6 +3968,7 @@ function Invoke-ActionRequest {
   try {
     if (('WinPilotInputMonitor' -as [type]) -and [WinPilotInputMonitor].GetMethod('ConfigureCancellation')) {
       [WinPilotInputMonitor]::ConfigureCancellation([string](Get-PayloadValue 'cancellation_path'))
+      if ([WinPilotInputMonitor].GetMethod('SetIgnoreUserInput')) { [WinPilotInputMonitor]::SetIgnoreUserInput((Get-PayloadValue 'ignore_user_input') -eq $true) }
       if ($Action -ne 'stop') { [WinPilotInputMonitor]::Check() }
     }
     if ($guardedInput) {

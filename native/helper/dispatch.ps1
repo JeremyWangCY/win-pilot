@@ -640,6 +640,7 @@ function Invoke-ActionRequest {
   try {
     if (('WinPilotInputMonitor' -as [type]) -and [WinPilotInputMonitor].GetMethod('ConfigureCancellation')) {
       [WinPilotInputMonitor]::ConfigureCancellation([string](Get-PayloadValue 'cancellation_path'))
+      if ([WinPilotInputMonitor].GetMethod('SetIgnoreUserInput')) { [WinPilotInputMonitor]::SetIgnoreUserInput((Get-PayloadValue 'ignore_user_input') -eq $true) }
       if ($Action -ne 'stop') { [WinPilotInputMonitor]::Check() }
     }
     if ($guardedInput) {
