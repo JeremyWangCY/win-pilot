@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-本版预期版本为 `0.6.0`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
+本版预期版本为 `0.6.1`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
 
 ### 更新
 
@@ -104,6 +104,8 @@ DSH profile 需要单独重启。需要刷新 Win-Pilot 管理的 Skill 副本�
 如果沙箱会在每条命令结束后回收子进程，应由宿主的常驻插件或 MCP supervisor 启动 `win-pilot mcp`，不要从一次性命令中强行脱离进程。仅支持 shell 的 Agent 可以调用一次性的 `win-pilot request`。
 
 ## 使用方法
+
+0.6.1 把顶部状态窗改成步骤记录：列出最近 5 步操作，标出进行中、完成或失败及耗时；旧步骤逐渐变淡而不是立刻清空，两次操作之间保留 20 秒，模型思考时不再闪退。输入的文字和剪贴板内容不会显示。多个会话同时存在时，控制按钮跟随仍在操作的那个。新增设置 `ignoreUserInput`（默认关闭），开启后你使用键鼠时 Win-Pilot 不会因此暂停。
 
 0.6.0 把设置页重做为一屏放得下的紧凑面板，并换上新的产品图标。辅助进程启动更快：WGC 组件未变化时不再重复复制，大尺寸截图回包的分帧改为线性耗时。独立任务桌面方面：前台坐标点击会校验 `expected_name`，截图会清除 `observation_required`；空闲的 UU（网易 GameViewer）不再阻止独立桌面，有人通过 UU 接入时仍会拦截；关闭独立桌面时，若远程控制软件在注销期间改动了主桌面的显示缩放，会自动恢复。
 
@@ -150,6 +152,7 @@ MCP `tools/list` 返回的实时 Schema 是完整参数和默认值的权威定�
 | `overlay` | `true` | 显示操作光标 |
 | `statusPill` | `true` | 显示运行状态提示 |
 | `browserHeadlessDefault` | `false` | 浏览器在后台运行，不显示窗口 |
+| `ignoreUserInput` | `false` | 你操作键鼠时继续执行，不停下来重新观察 |
 | `desktopEnvironment` | `current` | 电脑动作的执行位置：当前桌面或独立任务窗口 |
 | `remoteControlPolicy` | `fallback` | 远程控制接入时：改在当前桌面执行，或停止并提示 |
 

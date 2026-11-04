@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected for this release: version `0.6.0`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
+Expected for this release: version `0.6.1`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
 
 ### Settings
 
@@ -97,6 +97,7 @@ In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or 
 | `overlay` | `true` | Show the operation cursor |
 | `statusPill` | `true` | Show the running status pill |
 | `browserHeadlessDefault` | `false` | Run browsers without a visible window |
+| `ignoreUserInput` | `false` | Keep acting while you use the mouse or keyboard instead of stopping to re-observe |
 | `desktopEnvironment` | `current` | Where computer actions run: this desktop or the separate task window |
 | `remoteControlPolicy` | `fallback` | When remote control is attached: run on the current desktop instead, or stop and report |
 
@@ -128,6 +129,8 @@ DSH profiles must be restarted separately. Re-run `win-pilot install` when you w
 When a sandbox reaps children after every command, configure `win-pilot mcp` in the host's persistent plugin or MCP supervisor. Do not detach a process from an ephemeral command. Shell-only agents can use one-shot `win-pilot request` calls.
 
 ## Usage
+
+Version 0.6.1 turns the status pill into a step log: the newest five actions are listed with a running, done or failed mark and their duration, older steps fade instead of vanishing, and the card stays up for 20 seconds between actions so it no longer blinks out while the model is thinking. Typed text and clipboard contents are never shown. When several sessions overlap, the controls follow the one that is still acting. A new `ignoreUserInput` setting (off by default) lets Win-Pilot keep going while you use the mouse or keyboard.
 
 Version 0.6.0 rebuilds the settings card as one compact panel and ships a new product icon. The helper starts faster: the WGC bridge is no longer re-copied when unchanged, and large screenshot replies are framed in linear time. On the task desktop, foreground coordinate clicks now validate `expected_name`, a screenshot clears `observation_required`, an idle UU (NetEase GameViewer) no longer blocks it while an attached UU viewer still does, and closing it restores any main-desktop display scale a remote-control product changed during logoff.
 
