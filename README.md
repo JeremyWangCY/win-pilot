@@ -86,20 +86,23 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected for this release: version `0.6.1`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
+Expected for this release: version `0.6.2`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
 
 ### Settings
 
-In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or the plugin detail page. The host projects the plugin's `Config`. Display preferences apply immediately. Changing the desktop environment applies to the next computer operation, including an existing chat.
+In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or the plugin detail page. The host projects the plugin's `Config`. Display preferences apply immediately. Turning browser control off refuses browser actions from the next computer operation without a restart. Changing the desktop environment applies to the next computer operation, including an existing chat.
 
 | Preference | Default | Effect |
 |---|---|---|
 | `overlay` | `true` | Show the operation cursor |
 | `statusPill` | `true` | Show the running status pill |
 | `browserHeadlessDefault` | `false` | Run browsers without a visible window |
+| `browserControl` | `true` | Let the AI drive Win-Pilot-owned browsers; when off, browser actions are refused while desktop actions keep working |
 | `ignoreUserInput` | `false` | Keep acting while you use the mouse or keyboard instead of stopping to re-observe |
 | `desktopEnvironment` | `current` | Where computer actions run: this desktop or the separate task window |
 | `remoteControlPolicy` | `fallback` | When remote control is attached: run on the current desktop instead, or stop and report |
+
+`browserControl` defaults to `true`. When off, every `browser_*` action and every browser `when` / `expect` precondition or postcondition is refused before dispatch with `outcome: not_executed` and `error_code: browser_control_disabled`; a `launch_app` with `headless: true` (which exists only to feed that channel) is refused too. Desktop actions keep working, and the change takes effect on the next computer operation without a restart.
 
 `desktopEnvironment` defaults to `current`; `task` selects the separate task window. Save the setting to switch on the next computer operation. Win-Pilot cancels and cleans up the old control session before changing desktops, releases old browser claims, and requires a fresh window list or desktop screenshot before input. Old targets cannot carry over; failed cleanup blocks the switch. With the option off, model schemas, runtime skills and diagnostics do not advertise the task-desktop option. With it on, native actions, observations, clipboard and recovery stay in that task desktop; failure never redirects work to the main desktop. Browser actions require a browser launched by the same task.
 
@@ -107,7 +110,7 @@ The light, frameless window defaults to 432×300. A coloured dot shows its state
 
 The task desktop is never shown to a remote viewer. While remote control is attached it does not open, and if a viewer attaches while it is open, actions move to the current desktop; `remoteControlPolicy: refuse` stops instead. UU (NetEase GameViewer) is judged by its traffic, so an idle UU does not block it, and UU's tray client is closed inside the task desktop. Closing the task desktop restores any main-desktop display scale a remote-control product changes during logoff.
 
-The settings card is one compact panel: three switches and two icon segmented controls, with a per-field reset for overridden values. Its footer shows the running version on the left and unsaved changes with discard and save on the right; Ctrl+S saves and Esc discards. When a new managed release is installed, use Safely reload to wait for active operations, release control and load that release. An in-place update or an older running plugin may require restarting DeepSeek Harness. See [task desktop](./docs/task-desktop.md) for behavior and verification limits.
+The settings card is one compact panel: five switches and two icon segmented controls, with a per-field reset for overridden values. Its footer shows the running version on the left and unsaved changes with discard and save on the right; Ctrl+S saves and Esc discards. When a new managed release is installed, use Safely reload to wait for active operations, release control and load that release. An in-place update or an older running plugin may require restarting DeepSeek Harness. See [task desktop](./docs/task-desktop.md) for behavior and verification limits.
 
 Use `win-pilot desktop --preview` to view the native window without creating a session or running computer actions. `win-pilot desktop` is the normal connection entry and respects the connection hold. Source builds use `npm run build:desktop`; checks without Windows sessions use `npm run test:desktop`.
 
@@ -129,6 +132,8 @@ DSH profiles must be restarted separately. Re-run `win-pilot install` when you w
 When a sandbox reaps children after every command, configure `win-pilot mcp` in the host's persistent plugin or MCP supervisor. Do not detach a process from an ephemeral command. Shell-only agents can use one-shot `win-pilot request` calls.
 
 ## Usage
+
+Version 0.6.2 adds a `browserControl` setting (on by default) in the same one-screen settings panel as the other switches. When it is off, browser actions and browser pre/postconditions are refused before dispatch with `error_code: browser_control_disabled`, and headless launches are refused; desktop actions are unaffected. The change takes effect on the next computer operation without a restart.
 
 Version 0.6.1 turns the status pill into a step log: the newest five actions are listed with a running, done or failed mark and their duration, older steps fade instead of vanishing, and the card stays up for 20 seconds between actions so it no longer blinks out while the model is thinking. Typed text and clipboard contents are never shown. When several sessions overlap, the controls follow the one that is still acting. A new `ignoreUserInput` setting (off by default) lets Win-Pilot keep going while you use the mouse or keyboard.
 
