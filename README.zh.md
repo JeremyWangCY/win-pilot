@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-本版预期版本为 `0.6.1`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
+本版预期版本为 `0.6.2`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
 
 ### 更新
 
@@ -104,6 +104,8 @@ DSH profile 需要单独重启。需要刷新 Win-Pilot 管理的 Skill 副本�
 如果沙箱会在每条命令结束后回收子进程，应由宿主的常驻插件或 MCP supervisor 启动 `win-pilot mcp`，不要从一次性命令中强行脱离进程。仅支持 shell 的 Agent 可以调用一次性的 `win-pilot request`。
 
 ## 使用方法
+
+0.6.2 新增设置 `browserControl`（默认开启），与其余开关同处一屏放得下的设置面板。关闭后，浏览器动作和浏览器的前置/后置条件在派发前被拒绝，返回 `error_code: browser_control_disabled`；`headless: true` 的启动也被拒绝，桌面动作不受影响。改动在下次电脑操作时生效，无需重启。
 
 0.6.1 把顶部状态窗改成步骤记录：列出最近 5 步操作，标出进行中、完成或失败及耗时；旧步骤逐渐变淡而不是立刻清空，两次操作之间保留 20 秒，模型思考时不再闪退。输入的文字和剪贴板内容不会显示。多个会话同时存在时，控制按钮跟随仍在操作的那个。新增设置 `ignoreUserInput`（默认关闭），开启后你使用键鼠时 Win-Pilot 不会因此暂停。
 
@@ -145,16 +147,19 @@ MCP `tools/list` 返回的实时 Schema 是完整参数和默认值的权威定�
 
 ## 设置
 
-在 DeepSeek Harness **0.2.0-rc.2 或更新版本**中，打开「设置 → Win-Pilot」或插件详情页。当前宿主直接投射插件的 `Config`。显示偏好实时生效；电脑操作环境从下一次电脑操作起生效，同一聊天也会切换。
+在 DeepSeek Harness **0.2.0-rc.2 或更新版本**中，打开「设置 → Win-Pilot」或插件详情页。当前宿主直接投射插件的 `Config`。显示偏好实时生效；关闭浏览器操控后，下一次电脑操作即拒绝浏览器动作，无需重启；电脑操作环境从下一次电脑操作起生效，同一聊天也会切换。
 
 | 偏好 | 默认值 | 作用 |
 |---|---|---|
 | `overlay` | `true` | 显示操作光标 |
 | `statusPill` | `true` | 显示运行状态提示 |
 | `browserHeadlessDefault` | `false` | 浏览器在后台运行，不显示窗口 |
+| `browserControl` | `true` | 允许 AI 操控 Win-Pilot 自有的浏览器；关闭后浏览器动作会被拒绝，桌面动作照常 |
 | `ignoreUserInput` | `false` | 你操作键鼠时继续执行，不停下来重新观察 |
 | `desktopEnvironment` | `current` | 电脑动作的执行位置：当前桌面或独立任务窗口 |
 | `remoteControlPolicy` | `fallback` | 远程控制接入时：改在当前桌面执行，或停止并提示 |
+
+`browserControl` 默认 `true`。关闭后，所有 `browser_*` 动作以及浏览器的 `when` / `expect` 前置/后置条件都在派发前被拒绝，返回 `outcome: not_executed` 和 `error_code: browser_control_disabled`；`launch_app` 的 `headless: true`（只为浏览器通道存在）同样被拒绝。桌面动作不受影响，改动在下次电脑操作时生效，无需重启。
 
 `desktopEnvironment` 默认 `current`（当前桌面），可选 `task`（独立任务窗口）。保存后从下一次电脑操作起切换，同一聊天也生效。切换前先取消并清理旧控制会话，释放旧浏览器控制权，再要求重新列出窗口或截取桌面后才能输入；旧目标不可沿用，清理失败则停止切换。关闭时，模型工具定义、运行时技能和诊断不宣传独立桌面选项。开启后，电脑动作、观察、剪贴板和恢复都使用同一任务桌面；连接失败不会转到主桌面。浏览器动作只能使用同一任务启动的浏览器。
 
@@ -162,7 +167,7 @@ MCP `tools/list` 返回的实时 Schema 是完整参数和默认值的权威定�
 
 独立桌面不会出现在远程画面里：远程控制接入时不会打开；打开后才有人接入，动作会改在当前桌面执行，选 `remoteControlPolicy: refuse` 则直接停止。UU（网易 GameViewer）按流量判断是否有人接入，空闲的 UU 不会阻止独立桌面，独立桌面内自启的 UU 托盘会被关闭。关闭独立桌面时，若远程控制软件在注销期间改动了主桌面的显示缩放，会自动恢复。
 
-设置页是一屏放得下的紧凑面板：三个开关和两个图标分段控件，已改动的项可单独恢复默认。底部左侧显示运行版本，右侧是未保存数量、放弃和保存；Ctrl+S 保存，Esc 放弃。安装新的托管版本后，可安全等待当前操作完成并释放控制，再重新加载；旧运行版本或原地更新可能仍需重启 DeepSeek Harness。行为和验证限制见[独立任务桌面](./docs/task-desktop.md)。
+设置页是一屏放得下的紧凑面板：五个开关和两个图标分段控件，已改动的项可单独恢复默认。底部左侧显示运行版本，右侧是未保存数量、放弃和保存；Ctrl+S 保存，Esc 放弃。安装新的托管版本后，可安全等待当前操作完成并释放控制，再重新加载；旧运行版本或原地更新可能仍需重启 DeepSeek Harness。行为和验证限制见[独立任务桌面](./docs/task-desktop.md)。
 
 查看原生窗口：`win-pilot desktop --preview`。预览不能连接会话或执行电脑动作。正常连接入口为 `win-pilot desktop`，受启动拦截约束。源码构建使用 `npm run build:desktop`，无会话测试使用 `npm run test:desktop`。
 
