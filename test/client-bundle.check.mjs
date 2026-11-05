@@ -159,6 +159,16 @@ const { WIN_PILOT_SETTINGS_FIELDS: SCHEMA } = await import(new URL('../lib/setti
     SCHEMA.map((f) => f.type),
     'the client field table must agree with the host schema on every field type')
 }
+// Icons are looked up by name, so a field naming an undeclared glyph would
+// render an empty tile instead of the intended line icon.
+{
+  const declaredGlyphs = new Set([...source.matchAll(/^      ([A-Za-z]+): \[\[/gm)].map((match) => match[1]))
+  const declaredIcons = [...source.matchAll(/icon:\s*'([A-Za-z]+)'/g)].map((match) => match[1])
+  assert.ok(declaredIcons.length > 0, 'the card must declare icons for its fields and options')
+  for (const icon of declaredIcons) {
+    assert.ok(declaredGlyphs.has(icon), 'every icon must name a declared glyph: ' + icon)
+  }
+}
 
 /**
  * The React instance the plugin closes over. `captured.factory()` calls
@@ -474,6 +484,69 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   await save.props.onClick()
   assert.deepEqual(scope.writes, [['overlay', true]],
     'save must write the chosen switch value once')
+}
+
+// Every boolean field in the schema gets exactly one switch, wired to its own
+// label id, and its checked state follows the stored value — so a new field can
+// never render a stray or mis-labelled control.
+{
+  const scope = scopeDouble({ value: Object.fromEntries(SCHEMA.filter((f) => f.type === 'boolean').map((f) => [f.key, true])) })
+  const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
+  const tree = pluginReact.mount(Card, { scope, locale: 'en' })
+  const switches = flatten(tree).filter((node) => node.props && node.props.role === 'switch')
+  const labels = flatten(tree).filter((node) => node.type === 'label')
+  assert.deepEqual(
+    switches.map((node) => node.props.id).sort(),
+    SCHEMA.filter((f) => f.type === 'boolean').map((f) => 'wp-' + f.key).sort(),
+    'each boolean field must render exactly one switch with a stable id')
+  assert.equal(new Set(switches.map((node) => node.props.id)).size, switches.length,
+    'switch ids must be unique')
+  for (const control of switches) {
+    const own = labels.find((node) => node.props.htmlFor === control.props.id)
+    assert.ok(own, 'every switch must have its own visible label')
+    assert.equal(typeof control.props['aria-label'], 'string', 'every switch needs an aria-label')
+    assert.equal(control.props['aria-label'], texts(own)[0],
+      'the switch aria-label must match its visible label')
+    // The card falls back to the raw key when copy is missing.
+    assert.doesNotMatch(control.props['aria-label'], /^field[A-Z]/,
+      'every switch must carry translated copy, not a raw copy key')
+  }
+  for (const control of switches) {
+    assert.equal(control.props['aria-checked'], true,
+      'a stored boolean of true must render as on: ' + control.props.id)
+  }
+}
+
+// The browser-control preference is its own switch, on by default and off on save.
+{
+  const scope = scopeDouble({ value: { browserControl: true } })
+  const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
+  let tree = pluginReact.mount(Card, { scope, locale: 'en' })
+  const control = find(tree, (node) => node.props && node.props.id === 'wp-browserControl')
+  assert.ok(control, 'the card must render a switch for browserControl')
+  assert.equal(control.props.role, 'switch')
+  assert.equal(control.props['aria-label'], 'Control Win-Pilot browsers',
+    'the English label must be the shipped copy')
+  assert.equal(control.props['aria-checked'], true, 'browserControl is on by default')
+  control.props.onClick()
+  tree = pluginReact.tree
+  assert.equal(find(tree, (node) => node.props.id === 'wp-browserControl').props['aria-checked'], false,
+    'clicking the switch stages the opposite state')
+  await find(tree, (node) => node.type === 'button' && node.props.className === 'wp-save').props.onClick()
+  assert.deepEqual(scope.writes, [['browserControl', false]],
+    'save must write browserControl exactly once')
+}
+
+// Both locales ship real copy for the new field instead of the key fallback.
+{
+  for (const [locale, label] of [['zh', '允许操控浏览器'], ['en', 'Control Win-Pilot browsers']]) {
+    const scope = scopeDouble({ value: { browserControl: true } })
+    const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
+    const tree = pluginReact.mount(Card, { scope, locale })
+    const control = find(tree, (node) => node.props && node.props.id === 'wp-browserControl')
+    assert.ok(control, 'the card must render browserControl in ' + locale)
+    assert.equal(control.props['aria-label'], label, 'the ' + locale + ' label must be the shipped copy')
+  }
 }
 
 // Freeze edits while a write is in flight so later drafts cannot be erased.
