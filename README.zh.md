@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-本版预期版本为 `0.6.2`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
+本版预期版本为 `0.6.3`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
 
 ### 更新
 
@@ -104,6 +104,8 @@ DSH profile 需要单独重启。需要刷新 Win-Pilot 管理的 Skill 副本�
 如果沙箱会在每条命令结束后回收子进程，应由宿主的常驻插件或 MCP supervisor 启动 `win-pilot mcp`，不要从一次性命令中强行脱离进程。仅支持 shell 的 Agent 可以调用一次性的 `win-pilot request`。
 
 ## 使用方法
+
+0.6.3 让浏览器通道只报告"点击真正能落到"的控件：不可见或被遮挡的元素会被标记或拒绝，而不是静默点到别处；按键覆盖完整命名集合；原生对话框会被报告而不是让页面卡死；新增 hover、下拉选择与截图。同时给虚拟桌面加上可恢复的生命周期：桌面进程死亡或留下孤儿会话时返回 `task_desktop_closed`、`task_desktop_host_lost`、`task_desktop_cleanup_unconfirmed` 或 `task_desktop_orphan_session` 并给出恢复步骤，`task_desktop`（`status` / `restart`）可重建桌面且不重放输入。
 
 0.6.2 新增设置 `browserControl`（默认开启），与其余开关同处一屏放得下的设置面板。关闭后，浏览器动作和浏览器的前置/后置条件在派发前被拒绝，返回 `error_code: browser_control_disabled`；`headless: true` 的启动也被拒绝，桌面动作不受影响。改动在下次电脑操作时生效，无需重启。
 
@@ -123,6 +125,8 @@ DSH profile 需要单独重启。需要刷新 Win-Pilot 管理的 Skill 副本�
 
 浏览器新增 `browser_frames`、`browser_filechooser`、`browser_claim_tab` 和 `browser_finalize`。同源子框架使用 `frame_id` 及语义引用；跨域框架和 OOPIF 明确拒绝。标签认领绑定当前控制会话，修改时传回 `claim_id`，完成后交付释放控制，不主动切换标签。先开启文件选择器监听，再打开选择器、读取事件，随后在 60 秒内将单次 `filechooser_id` 及明确的绝对文件路径传给 `browser_upload`。当前仍使用显式本机 CDP 连接，尚未提供用户浏览器扩展。
 
+浏览器通道现在只报告"点击真正能落到"的控件：`opacity: 0` 或没有布局盒子的控件不会进入快照，被蒙层盖住的元素会带 `covered_by`；对这类目标发真实点击时不再假成功，而是返回 `error_code: click_intercepted` 与 `intercepted_by`，需要时用 `force_click: true` 强制派发。`browser_click` 支持 `button`（左/右/中）与 `click_count`（1-3）；`browser_hover` 可先展开 hover 才出现的菜单；`browser_select` 按标签文字、值或序号选择原生下拉项并回读结果；`browser_scroll` 双轴都生效，无法移动时返回 `scroll_no_effect` 而不是假成功；`browser_screenshot` 支持视口、`selector` 单元素与 `full_page: true` 整页。原生 JavaScript 对话框不再让动作卡到超时，而是报 `javascript_dialog_open`，用 `browser_dialog`（`accept`、`prompt_text`）应答。`browser_wait` 新增 CSS `selector` 条件；跨域导航与请求必须显式列在 `allowed_origins` 中，不再内置任何站点特例。
+
 原生取消在系统调用之间检查；阻塞的系统/UIA 调用可能需要限时结束子进程，并返回结果不确定，此时应先观察。剪贴板恢复无法提供操作系统级的原子比较交换保证。
 
 插件和 MCP 宿主会获得 `computer` 工具。仅支持 shell 的宿主使用相同的 JSON 接口：
@@ -140,7 +144,7 @@ win-pilot request --payload '{"action":"click","hwnd":12345,"element_index":7,"s
 | 指针 | `click`、`double_click`、`mouse_move`、`drag`、`scroll` | `x`、`y`、`element_index`、`snapshot_id` |
 | 键盘 | `type_text`、`press_key`、`hold_key`、`set_value` | `text`、`key`、`keys`、`duration_ms` |
 | 窗口 | `launch_app`、`activate_window`、`minimize_window`、`close_window` | `name`、`hwnd`、`foreground` |
-| 浏览器 | `browser_state`、`browser_observe`、`browser_open`、`browser_click`、`browser_click_text`、`browser_click_point`、`browser_type`、`browser_replace`、`browser_key`、`browser_upload` | `browser`、`tab_id`、`browser_element`、`screenshot_id`、`url` |
+| 浏览器 | `browser_state`、`browser_observe`、`browser_open`、`browser_click`、`browser_click_text`、`browser_click_point`、`browser_hover`、`browser_select`、`browser_type`、`browser_replace`、`browser_key`、`browser_upload`、`browser_scroll`、`browser_screenshot`、`browser_dialog` | `browser`、`tab_id`、`browser_element`、`screenshot_id`、`url` |
 | 顺序执行 | `wait`、批量 `actions` | `seconds`、`when`、`expect` |
 
 MCP `tools/list` 返回的实时 Schema 是完整参数和默认值的权威定义。
@@ -166,6 +170,8 @@ MCP `tools/list` 返回的实时 Schema 是完整参数和默认值的权威定�
 小窗采用浅色、无原生标题栏的样式，默认432×300，用彩色圆点显示状态，工具栏只留放大收回、置顶和关闭。放大后直接点击、拖动或输入即可接管；AI 停止输入确认后才交付第一个手势。空闲10秒后交还 AI，按住鼠标或按键期间不会自动交还。缩小后为只读预览；右键工具栏可打开本机登录设置。首次完成 Windows 功能准备与本机登录，可选择通过当前用户 DPAPI 和凭据管理器记住登录，密码只在本机窗口输入。需要 .NET 8 Windows Desktop Runtime 及可用的 Windows 子会话功能；更换 Windows 用户、密码或系统策略后可能需要重新设置。
 
 独立桌面不会出现在远程画面里：远程控制接入时不会打开；打开后才有人接入，动作会改在当前桌面执行，选 `remoteControlPolicy: refuse` 则直接停止。UU（网易 GameViewer）按流量判断是否有人接入，空闲的 UU 不会阻止独立桌面，独立桌面内自启的 UU 托盘会被关闭。关闭独立桌面时，若远程控制软件在注销期间改动了主桌面的显示缩放，会自动恢复。
+
+独立桌面可能比打开它的进程活得更久。若那个进程没确认清理就退出，Windows 子会话会残留下来，阻塞之后所有尝试——过去这表现为永久的 `task_desktop_unavailable`。现在失败会说清原因：`task_desktop_cleanup_unconfirmed` 或 `task_desktop_orphan_session`，并给出子会话 ID 和 `how_to_recover`；`task_desktop`（`task_desktop_command: "status"` / `"restart"`）用于查看状态和重建桌面，且绝不重放输入。报出孤儿会话时，先结束该会话（例如 `logoff 6`）再调用 `restart`；只要它还在，新桌面就起不来。
 
 设置页是一屏放得下的紧凑面板：五个开关和两个图标分段控件，已改动的项可单独恢复默认。底部左侧显示运行版本，右侧是未保存数量、放弃和保存；Ctrl+S 保存，Esc 放弃。安装新的托管版本后，可安全等待当前操作完成并释放控制，再重新加载；旧运行版本或原地更新可能仍需重启 DeepSeek Harness。行为和验证限制见[独立任务桌面](./docs/task-desktop.md)。
 

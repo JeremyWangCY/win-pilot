@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected for this release: version `0.6.2`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
+Expected for this release: version `0.6.3`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
 
 ### Settings
 
@@ -109,6 +109,8 @@ In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or 
 The light, frameless window defaults to 432×300. A coloured dot shows its state, and the toolbar contains expand/restore, pin and close. In the expanded view, click, drag or type to take over: AI input stops before your first gesture is delivered. After 10 seconds without manual input, control returns to the AI; a held button or key prevents that return. The compact view is read-only. Right-click the toolbar for local sign-in settings. Complete Windows feature setup and local sign-in once; optionally remember credentials using the current Windows user's DPAPI and Credential Manager. Passwords stay in the local dialog. This mode requires .NET 8 Windows Desktop Runtime and working Windows child-session support. A Windows user change, credential change or system policy may require setup again; it is not a virtual machine.
 
 The task desktop is never shown to a remote viewer. While remote control is attached it does not open, and if a viewer attaches while it is open, actions move to the current desktop; `remoteControlPolicy: refuse` stops instead. UU (NetEase GameViewer) is judged by its traffic, so an idle UU does not block it, and UU's tray client is closed inside the task desktop. Closing the task desktop restores any main-desktop display scale a remote-control product changes during logoff.
+
+A task desktop can outlive the process that opened it. If that process dies without confirming shutdown, the Windows child session stays behind and blocks every later attempt, which used to surface as a permanent `task_desktop_unavailable`. The failure now names what happened: `task_desktop_cleanup_unconfirmed` or `task_desktop_orphan_session` together with the child session id and a `how_to_recover` step, and `task_desktop` (`task_desktop_command: "status"` or `"restart"`) inspects and rebuilds it without replaying input. When an orphan is reported, end that session (for example `logoff 6`) and call `restart` again; no new desktop can start while it exists.
 
 The settings card is one compact panel: five switches and two icon segmented controls, with a per-field reset for overridden values. Its footer shows the running version on the left and unsaved changes with discard and save on the right; Ctrl+S saves and Esc discards. When a new managed release is installed, use Safely reload to wait for active operations, release control and load that release. An in-place update or an older running plugin may require restarting DeepSeek Harness. See [task desktop](./docs/task-desktop.md) for behavior and verification limits.
 
@@ -133,6 +135,8 @@ When a sandbox reaps children after every command, configure `win-pilot mcp` in 
 
 ## Usage
 
+Version 0.6.3 makes the browser channel report what a click can actually reach: invisible and covered controls are marked or refused instead of silently clicking through, keys cover the full named set, native dialogs are reported instead of stalling the page, and hover/select/screenshot are available. It also gives the virtual desktop a recoverable lifecycle: a dead or orphaned task desktop reports `task_desktop_closed`, `task_desktop_host_lost`, `task_desktop_cleanup_unconfirmed` or `task_desktop_orphan_session` with a recovery step, and `task_desktop` (`status` / `restart`) rebuilds it without replaying input.
+
 Version 0.6.2 adds a `browserControl` setting (on by default) in the same one-screen settings panel as the other switches. When it is off, browser actions and browser pre/postconditions are refused before dispatch with `error_code: browser_control_disabled`, and headless launches are refused; desktop actions are unaffected. The change takes effect on the next computer operation without a restart.
 
 Version 0.6.1 turns the status pill into a step log: the newest five actions are listed with a running, done or failed mark and their duration, older steps fade instead of vanishing, and the card stays up for 20 seconds between actions so it no longer blinks out while the model is thinking. Typed text and clipboard contents are never shown. When several sessions overlap, the controls follow the one that is still acting. A new `ignoreUserInput` setting (off by default) lets Win-Pilot keep going while you use the mouse or keyboard.
@@ -151,6 +155,8 @@ Version 0.3.0 adds session-scoped `stop` / `resume`, queued and active request c
 
 Browser additions are `browser_frames`, `browser_filechooser`, `browser_claim_tab`, and `browser_finalize`. Same-origin child frames use `frame_id` and semantic references; cross-origin/OOPIF frames are explicitly rejected. Claims bind to the current control session: keep `claim_id` for mutations, then finalize to release without activating the tab. Arm a chooser before opening it, read its event, and pass the single-use `filechooser_id` plus explicit absolute paths to `browser_upload` within 60 seconds. The provider uses explicit loopback CDP and does not include a user-browser extension.
 
+The browser channel reports what a click can actually reach. Controls drawn with `opacity: 0` or without a layout box are omitted from a snapshot, an element under an overlay carries `covered_by`, and a real click on a covered target is refused with `error_code: click_intercepted` plus `intercepted_by` instead of reporting a success that landed somewhere else; `force_click: true` dispatches anyway. `browser_click` accepts `button` (left/right/middle) and `click_count` (1-3). `browser_hover` opens hover-only menus, `browser_select` chooses a native option by label, value or index and reports the result, `browser_scroll` moves both axes and answers `scroll_no_effect` instead of a false success, and `browser_screenshot` captures the viewport, one element via `selector`, or the whole page with `full_page: true`. A blocking native JavaScript dialog is reported as `javascript_dialog_open` and answered with `browser_dialog` (`accept`, `prompt_text`) rather than stalling the tab. `browser_wait` also accepts a CSS `selector`, and cross-origin navigation or requests need the target listed in `allowed_origins` — no site is special-cased.
+
 Native cancellation checks run between OS calls. A blocked UIA/system call may require bounded process termination and return an unknown outcome; inspect before further input. Clipboard restoration has no OS-level compare-and-swap guarantee.
 
 MCP and plugin hosts expose `computer`. Shell-only hosts use the identical JSON interface:
@@ -168,7 +174,7 @@ win-pilot request --payload '{"action":"click","hwnd":12345,"element_index":7,"s
 | Pointer | `click`, `double_click`, `mouse_move`, `drag`, `scroll` | `x`, `y`, `element_index`, `snapshot_id` |
 | Keyboard | `type_text`, `press_key`, `hold_key`, `set_value` | `text`, `key`, `keys`, `duration_ms` |
 | Windows | `launch_app`, `activate_window`, `minimize_window`, `close_window` | `name`, `hwnd`, `foreground` |
-| Browser | `browser_state`, `browser_observe`, `browser_open`, `browser_click`, `browser_click_text`, `browser_click_point`, `browser_type`, `browser_replace`, `browser_key`, `browser_upload` | `browser`, `tab_id`, `browser_element`, `screenshot_id`, `url` |
+| Browser | `browser_state`, `browser_observe`, `browser_open`, `browser_click`, `browser_click_text`, `browser_click_point`, `browser_hover`, `browser_select`, `browser_type`, `browser_replace`, `browser_key`, `browser_upload`, `browser_scroll`, `browser_screenshot`, `browser_dialog` | `browser`, `tab_id`, `browser_element`, `screenshot_id`, `url` |
 | Sequencing | `wait`, batched `actions` | `seconds`, `when`, `expect` |
 
 The live MCP `tools/list` result is authoritative for the complete parameter schema and defaults.
