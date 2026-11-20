@@ -21,7 +21,7 @@ try {
   assert.throws(() => resolveHostContext({ env:{ DSH_SHELL:'1' }, parentPid:-1, directory }), /not connected/)
   settings = { ...settings, desktopEnvironment: 'task' }
   const { stdout } = await promisify(execFile)(process.execPath, ['bin/win-pilot.js', 'status', '--json'], {
-    env:{ ...process.env, ...host.environment(), DSH_SHELL:'1' }, windowsHide:true,
+    env:{ ...process.env, ...host.environment(), DSH_SHELL:'1', WIN_PILOT_NO_HOST_CONTEXT:'0' }, windowsHide:true,
   })
   assert.equal(JSON.parse(stdout).desktop_environment, 'task', 'the actual CLI must use the DSH context')
   const implicit = resolveHostContext({ env:{}, parentPid:process.pid, directory })
