@@ -86,20 +86,23 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected for this release: version `0.6.1`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
+Expected for this release: version `0.6.3`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
 
 ### Settings
 
-In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or the plugin detail page. The host projects the plugin's `Config`. Display preferences apply immediately. Changing the desktop environment applies to the next computer operation, including an existing chat.
+In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or the plugin detail page. The host projects the plugin's `Config`. Display preferences apply immediately. Turning browser control off refuses browser actions from the next computer operation without a restart. Changing the desktop environment applies to the next computer operation, including an existing chat.
 
 | Preference | Default | Effect |
 |---|---|---|
 | `overlay` | `true` | Show the operation cursor |
 | `statusPill` | `true` | Show the running status pill |
 | `browserHeadlessDefault` | `false` | Run browsers without a visible window |
+| `browserControl` | `true` | Let the AI drive Win-Pilot-owned browsers; when off, browser actions are refused while desktop actions keep working |
 | `ignoreUserInput` | `false` | Keep acting while you use the mouse or keyboard instead of stopping to re-observe |
 | `desktopEnvironment` | `current` | Where computer actions run: this desktop or the separate task window |
 | `remoteControlPolicy` | `fallback` | When remote control is attached: run on the current desktop instead, or stop and report |
+
+`browserControl` defaults to `true`. When off, every `browser_*` action and every browser `when` / `expect` precondition or postcondition is refused before dispatch with `outcome: not_executed` and `error_code: browser_control_disabled`; a `launch_app` with `headless: true` (which exists only to feed that channel) is refused too. Desktop actions keep working, and the change takes effect on the next computer operation without a restart.
 
 `desktopEnvironment` defaults to `current`; `task` selects the separate task window. Save the setting to switch on the next computer operation. Win-Pilot cancels and cleans up the old control session before changing desktops, releases old browser claims, and requires a fresh window list or desktop screenshot before input. Old targets cannot carry over; failed cleanup blocks the switch. With the option off, model schemas, runtime skills and diagnostics do not advertise the task-desktop option. With it on, native actions, observations, clipboard and recovery stay in that task desktop; failure never redirects work to the main desktop. Browser actions require a browser launched by the same task.
 
@@ -107,7 +110,9 @@ The light, frameless window defaults to 432×300. A coloured dot shows its state
 
 The task desktop is never shown to a remote viewer. While remote control is attached it does not open, and if a viewer attaches while it is open, actions move to the current desktop; `remoteControlPolicy: refuse` stops instead. UU (NetEase GameViewer) is judged by its traffic, so an idle UU does not block it, and UU's tray client is closed inside the task desktop. Closing the task desktop restores any main-desktop display scale a remote-control product changes during logoff.
 
-The settings card is one compact panel: three switches and two icon segmented controls, with a per-field reset for overridden values. Its footer shows the running version on the left and unsaved changes with discard and save on the right; Ctrl+S saves and Esc discards. When a new managed release is installed, use Safely reload to wait for active operations, release control and load that release. An in-place update or an older running plugin may require restarting DeepSeek Harness. See [task desktop](./docs/task-desktop.md) for behavior and verification limits.
+A task desktop can outlive the process that opened it. If that process dies without confirming shutdown, the Windows child session stays behind and blocks every later attempt, which used to surface as a permanent `task_desktop_unavailable`. The failure now names what happened: `task_desktop_cleanup_unconfirmed` or `task_desktop_orphan_session` together with the child session id and a `how_to_recover` step, and `task_desktop` (`task_desktop_command: "status"` or `"restart"`) inspects and rebuilds it without replaying input. When an orphan is reported, end that session (for example `logoff 6`) and call `restart` again; no new desktop can start while it exists.
+
+The settings card is one compact panel: five switches and two icon segmented controls, with a per-field reset for overridden values. Its footer shows the running version on the left and unsaved changes with discard and save on the right; Ctrl+S saves and Esc discards. When a new managed release is installed, use Safely reload to wait for active operations, release control and load that release. An in-place update or an older running plugin may require restarting DeepSeek Harness. See [task desktop](./docs/task-desktop.md) for behavior and verification limits.
 
 Use `win-pilot desktop --preview` to view the native window without creating a session or running computer actions. `win-pilot desktop` is the normal connection entry and respects the connection hold. Source builds use `npm run build:desktop`; checks without Windows sessions use `npm run test:desktop`.
 
@@ -130,6 +135,10 @@ When a sandbox reaps children after every command, configure `win-pilot mcp` in 
 
 ## Usage
 
+Version 0.6.3 makes the browser channel report what a click can actually reach: invisible and covered controls are marked or refused instead of silently clicking through, keys cover the full named set, native dialogs are reported instead of stalling the page, and hover/select/screenshot are available. It also gives the virtual desktop a recoverable lifecycle: a dead or orphaned task desktop reports `task_desktop_closed`, `task_desktop_host_lost`, `task_desktop_cleanup_unconfirmed` or `task_desktop_orphan_session` with a recovery step, and `task_desktop` (`status` / `restart`) rebuilds it without replaying input.
+
+Version 0.6.2 adds a `browserControl` setting (on by default) in the same one-screen settings panel as the other switches. When it is off, browser actions and browser pre/postconditions are refused before dispatch with `error_code: browser_control_disabled`, and headless launches are refused; desktop actions are unaffected. The change takes effect on the next computer operation without a restart.
+
 Version 0.6.1 turns the status pill into a step log: the newest five actions are listed with a running, done or failed mark and their duration, older steps fade instead of vanishing, and the card stays up for 20 seconds between actions so it no longer blinks out while the model is thinking. Typed text and clipboard contents are never shown. When several sessions overlap, the controls follow the one that is still acting. A new `ignoreUserInput` setting (off by default) lets Win-Pilot keep going while you use the mouse or keyboard.
 
 Version 0.6.0 rebuilds the settings card as one compact panel and ships a new product icon. The helper starts faster: the WGC bridge is no longer re-copied when unchanged, and large screenshot replies are framed in linear time. On the task desktop, foreground coordinate clicks now validate `expected_name`, a screenshot clears `observation_required`, an idle UU (NetEase GameViewer) no longer blocks it while an attached UU viewer still does, and closing it restores any main-desktop display scale a remote-control product changed during logoff.
@@ -145,6 +154,8 @@ Version 0.3.1 applies desktop setting changes within existing chats and keeps th
 Version 0.3.0 adds session-scoped `stop` / `resume`, queued and active request cancellation, and atomic per-user control ownership. Observation remains available after stopping. Desktop accessibility uses stable sparse indexes and model-visible `full` / `delta` / `no_change` trees; hidden observations do not advance that baseline. Rich `paste` accepts `format: text | html | md` and restores supported original clipboard formats unless the user changes the clipboard meanwhile. Markdown conversion covers a limited subset.
 
 Browser additions are `browser_frames`, `browser_filechooser`, `browser_claim_tab`, and `browser_finalize`. Same-origin child frames use `frame_id` and semantic references; cross-origin/OOPIF frames are explicitly rejected. Claims bind to the current control session: keep `claim_id` for mutations, then finalize to release without activating the tab. Arm a chooser before opening it, read its event, and pass the single-use `filechooser_id` plus explicit absolute paths to `browser_upload` within 60 seconds. The provider uses explicit loopback CDP and does not include a user-browser extension.
+
+The browser channel reports what a click can actually reach. Controls drawn with `opacity: 0` or without a layout box are omitted from a snapshot, an element under an overlay carries `covered_by`, and a real click on a covered target is refused with `error_code: click_intercepted` plus `intercepted_by` instead of reporting a success that landed somewhere else; `force_click: true` dispatches anyway. `browser_click` accepts `button` (left/right/middle) and `click_count` (1-3). `browser_hover` opens hover-only menus, `browser_select` chooses a native option by label, value or index and reports the result, `browser_scroll` moves both axes and answers `scroll_no_effect` instead of a false success, and `browser_screenshot` captures the viewport, one element via `selector`, or the whole page with `full_page: true`. A blocking native JavaScript dialog is reported as `javascript_dialog_open` and answered with `browser_dialog` (`accept`, `prompt_text`) rather than stalling the tab. `browser_wait` also accepts a CSS `selector`, and cross-origin navigation or requests need the target listed in `allowed_origins` — no site is special-cased.
 
 Native cancellation checks run between OS calls. A blocked UIA/system call may require bounded process termination and return an unknown outcome; inspect before further input. Clipboard restoration has no OS-level compare-and-swap guarantee.
 
@@ -163,7 +174,7 @@ win-pilot request --payload '{"action":"click","hwnd":12345,"element_index":7,"s
 | Pointer | `click`, `double_click`, `mouse_move`, `drag`, `scroll` | `x`, `y`, `element_index`, `snapshot_id` |
 | Keyboard | `type_text`, `press_key`, `hold_key`, `set_value` | `text`, `key`, `keys`, `duration_ms` |
 | Windows | `launch_app`, `activate_window`, `minimize_window`, `close_window` | `name`, `hwnd`, `foreground` |
-| Browser | `browser_state`, `browser_observe`, `browser_open`, `browser_click`, `browser_click_text`, `browser_click_point`, `browser_type`, `browser_replace`, `browser_key`, `browser_upload` | `browser`, `tab_id`, `browser_element`, `screenshot_id`, `url` |
+| Browser | `browser_state`, `browser_observe`, `browser_open`, `browser_click`, `browser_click_text`, `browser_click_point`, `browser_hover`, `browser_select`, `browser_type`, `browser_replace`, `browser_key`, `browser_upload`, `browser_scroll`, `browser_screenshot`, `browser_dialog` | `browser`, `tab_id`, `browser_element`, `screenshot_id`, `url` |
 | Sequencing | `wait`, batched `actions` | `seconds`, `when`, `expect` |
 
 The live MCP `tools/list` result is authoritative for the complete parameter schema and defaults.

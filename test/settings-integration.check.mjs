@@ -50,19 +50,20 @@ const parse = (input) => {
   assert.equal(result.issues, undefined)
   return result.value
 }
-const initial = parse({ overlay: false, statusPill: true, browserHeadlessDefault: false,
+const initial = parse({ overlay: false, statusPill: true, browserHeadlessDefault: false, browserControl: true,
   maxBatchActions: 1, allowSystemKeys: false, lockGuard: false, defaultDispatch: 'foreground' })
 applyConfigSnapshot(initial)
 assert.deepEqual(getSettings(), { ...DEFAULTS, overlay: false })
-const edited = parse({ overlay: true, statusPill: false, browserHeadlessDefault: true })
+const edited = parse({ overlay: true, statusPill: false, browserHeadlessDefault: true, browserControl: false })
 for (const key of KEYS) {
   const reference = initial[key]
   updateVolatile(reference, edited[key])
   assert.equal(initial[key], reference, 'the host updates the existing reference')
 }
-assert.deepEqual(getSettings(), { ...DEFAULTS, statusPill: false, browserHeadlessDefault: true })
+assert.deepEqual(getSettings(), { ...DEFAULTS, statusPill: false, browserHeadlessDefault: true, browserControl: false })
 assert.ok(Config['~standard'].validate({ overlay: 'false' }).issues)
 assert.equal(getSettings().overlay, true, 'failed validation cannot commit a new value')
+assert.ok(Config['~standard'].validate({ browserControl: 'off' }).issues, 'browserControl only accepts a real boolean')
 resetSettingsForTest()
 assert.deepEqual(getSettings(), DEFAULTS)
 console.log('settings integration check PASSED (real Config + schemastery/cosmokit volatile references; Electron Loader/UI not exercised)')

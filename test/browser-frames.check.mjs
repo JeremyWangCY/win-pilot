@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -192,7 +192,8 @@ try {
   try {
     const opened=await runtimeA.act('browser_open',{browser_endpoint:endpoint,url:`http://127.0.0.1:${server.address().port}/close-check`})
     const target={browser_endpoint:endpoint,tab_id:opened.tab_id}
-    assert.equal((await runtimeA.act('browser_claim_tab',target)).ok,true)
+    const firstClaim=await runtimeA.act('browser_claim_tab',target)
+    assert.equal(firstClaim.ok,true,JSON.stringify(firstClaim))
     await runtimeA.close()
     const reclaim=await runtimeB.act('browser_claim_tab',target)
     assert.equal(reclaim.ok,true,JSON.stringify(reclaim))
@@ -201,7 +202,9 @@ try {
   console.log('browser frames, chooser, lifecycle and cancellation check PASSED')
 } finally {
   if (endpoint) { try { await browserAction('browser_shutdown',{browser_endpoint:endpoint}) } catch {} }
-  child?.kill()
+  // Edge starts a whole process tree; killing only the launcher leaves renderers
+  // running and starves later captures.
+  try { if (child?.pid) execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }) } catch { }
   for (const s of servers) { s.closeAllConnections?.(); s.close() }
   await delay(300)
   await rm(profile,{recursive:true,force:true,maxRetries:5,retryDelay:200}).catch(()=>{})

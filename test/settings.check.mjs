@@ -17,8 +17,8 @@ import {
 } from '../lib/settings.js'
 
 assert.match(SETTINGS_NAMESPACE, /^[a-z][a-z0-9-]*$/)
-assert.deepEqual(KEYS, ['overlay', 'statusPill', 'browserHeadlessDefault', 'ignoreUserInput', 'desktopEnvironment', 'remoteControlPolicy'])
-assert.deepEqual(FIELDS, [...KEYS.slice(0,4).map((key) => ({ key, type: 'boolean' })), {key:'desktopEnvironment',type:'enum',values:['current','task']}, {key:'remoteControlPolicy',type:'enum',values:['fallback','refuse']}])
+assert.deepEqual(KEYS, ['overlay', 'statusPill', 'browserHeadlessDefault', 'browserControl', 'ignoreUserInput', 'desktopEnvironment', 'remoteControlPolicy'])
+assert.deepEqual(FIELDS, [...KEYS.slice(0,5).map((key) => ({ key, type: 'boolean' })), {key:'desktopEnvironment',type:'enum',values:['current','task']}, {key:'remoteControlPolicy',type:'enum',values:['fallback','refuse']}])
 // A remote-control product attached to the machine must never silently take the
 // AI desktop with it, so the safe policy is on by default.
 assert.equal(DEFAULTS.remoteControlPolicy,'fallback')
@@ -26,6 +26,7 @@ assert.equal(DEFAULTS.desktopEnvironment,'current')
 assert.equal(DEFAULTS.overlay, true)
 assert.equal(DEFAULTS.statusPill, true)
 assert.equal(DEFAULTS.browserHeadlessDefault, false)
+assert.equal(DEFAULTS.browserControl, true, 'browser control stays available unless the user turns it off')
 assert.equal(DEFAULTS.ignoreUserInput, false, 'user input pauses Win-Pilot unless the user opts out')
 assert.equal(DEFAULTS.defaultDispatch, 'background')
 assert.equal(DEFAULTS.foregroundRecovery, false)
@@ -51,6 +52,12 @@ applyConfigSnapshot({ overlay: { get: () => current }, statusPill: 'false', brow
 assert.deepEqual(getSettings(), DEFAULTS, 'only boolean preferences may affect production settings')
 current = false
 assert.equal(getSettings().overlay, false)
+// Turning browser control off is a live preference, not a remount.
+let browserControl = true
+applyConfigSnapshot({ browserControl: { get: () => browserControl } })
+assert.equal(getSettings().browserControl, true)
+browserControl = false
+assert.equal(getSettings().browserControl, false, 'a volatile browserControl edit reaches the next request in place')
 let environment='task'
 applyConfigSnapshot({desktopEnvironment:{get:()=>environment}})
 assert.equal(getSettings().desktopEnvironment,'task')

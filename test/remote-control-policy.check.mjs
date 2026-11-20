@@ -24,11 +24,17 @@ import {validateHostSettings} from '../lib/host-context.js'
 
 // 3. Host-context validation accepts the field and rejects an unknown policy.
 {
-  const base={overlay:true,statusPill:true,browserHeadlessDefault:false,desktopEnvironment:'task'}
+  const base={overlay:true,statusPill:true,browserHeadlessDefault:false,browserControl:true,desktopEnvironment:'task'}
   assert.equal(validateHostSettings({...base,remoteControlPolicy:'fallback'}).remoteControlPolicy,'fallback')
   assert.equal(validateHostSettings({...base,remoteControlPolicy:'refuse'}).remoteControlPolicy,'refuse')
   // An older host payload without the key must still validate, defaulting safely.
   assert.equal(validateHostSettings({...base}).remoteControlPolicy,'fallback')
+  // Browser control is an optional key: an older payload defaults it on, and a
+  // corrupt non-boolean value is still rejected rather than silently coerced.
+  const withoutBrowserControl={overlay:true,statusPill:true,browserHeadlessDefault:false,desktopEnvironment:'task'}
+  assert.equal(validateHostSettings(withoutBrowserControl).browserControl,true,'an older payload keeps browser control available')
+  assert.equal(validateHostSettings({...base,browserControl:false}).browserControl,false)
+  assert.throws(()=>validateHostSettings({...base,browserControl:'off'}))
   assert.throws(()=>validateHostSettings({...base,remoteControlPolicy:'nonsense'}))
 }
 
