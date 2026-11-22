@@ -11,11 +11,13 @@ Use the `computer` tool when the host exposes it. Otherwise call the CLI with a 
 win-pilot request --payload '{"action":"list_apps"}' --json
 ```
 
-Observe before acting. Reuse returned window objects, browser targets, `snapshot_id`, `screenshot_id`, and element references only with the state that produced them. Prefer semantic elements and text actions over coordinates.
+Observe before acting. Reuse returned window objects, browser targets, `snapshot_id`, `screenshot_id`, and element references only with the state that produced them. Prefer semantic elements and text actions over coordinates. When `get_window_state` or `post_action_observation` returns `active_popup: { hwnd, title }`, target `active_popup.hwnd` directly to handle the modal dialog instead of calling `list_windows`.
 
 Desktop coordinates are window-local when a window target is supplied. Background dispatch never implies permission to foreground a window. Use foreground control only when the task permits it.
 
-For browser work, launch an isolated Edge session through `launch_app` before browser actions unless an existing Win-Pilot browser target was supplied. Keep its `{ endpoint, tab_id }` through the task.
+For browser work, note that Win-Pilot's `browserControl` is off by default (`error_code: "browser_control_disabled"`) so it does not compete with the host agent's built-in browser tool. Use the host's own browser tool when available, or ask the user to enable Win-Pilot browser control (`win-pilot config set browserControl true` or DSH settings); do not work around a refusal. When enabled, `launch_app` with `headless: true` and `url` returns `browser: { endpoint, tab_id }` directly when ready—reuse it without an extra `browser_tabs` call.
+
+All seven user preferences (`overlay`, `statusPill`, `browserHeadlessDefault`, `browserControl`, `ignoreUserInput`, `desktopEnvironment`, `remoteControlPolicy`) can be inspected or changed via `win-pilot config` (`~/.win-pilot/config.json`, or `WIN_PILOT_CONFIG`) and hot-reload on the next operation.
 
 Treat `outcome: "unknown"`, stale tokens, and `needs_observation` as recovery signals: inspect the same target before retrying. Never repeat a consequential mutation solely because its response was lost or timed out.
 
@@ -37,6 +39,6 @@ A snapshot reports what a click can actually reach: controls drawn with `opacity
 
 `browser_click` accepts `button` (left/right/middle) and `click_count` (1-3); a non-left button or a multi-click is dispatched as real CDP input. `browser_hover` reveals hover-only menus before you click. `browser_select` chooses a native `<option>` by `text` (label), `option_value`, or `option_index` and returns the resulting value; `option_not_found` lists the real options. `browser_scroll` honours both axes, so use `scroll_x` or `direction: left/right` for horizontal content; a delta that cannot move anything returns `scroll_no_effect` rather than a false success. `browser_screenshot` captures the viewport by default, or one element with `selector` / `full_page: true`.
 
-A native JavaScript dialog blocks the whole page: actions return `error_code: "javascript_dialog_open"` with the dialog type and message instead of hanging. Answer it with `browser_dialog` (`accept: true|false`, `prompt_text` for prompts) before continuing.
+A native JavaScript dialog blocks the whole page: `browser_click` returns `dialog_opened` immediately when a click opens one, and subsequent actions return `error_code: "javascript_dialog_open"` with the dialog type and message instead of hanging. Answer it with `browser_dialog` (`accept: true|false`, `prompt_text` for prompts) before continuing.
 
 `browser_wait` waits for document readiness, a text change, `url_change` against `expected_url`, or a CSS `selector`. Cross-origin navigation and requests are limited to the current frame's origin unless you pass the target in `allowed_origins`; there are no implicit site exceptions. `browser_request` sends form encoding by default and JSON with `json`, and copies a named cookie into a form field with `csrf_cookie`/`csrf_field`.

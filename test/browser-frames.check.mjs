@@ -8,8 +8,10 @@ import http from 'node:http'
 import { once } from 'node:events'
 import { browserAction, releaseBrowserSession } from '../lib/browser-session.js'
 import { createWinPilotRuntime } from '../lib/runtime.js'
+import { setSettingsForTest, resetSettingsForTest } from '../lib/settings.js'
 import { controlCoordinator, createControlCoordinator } from '../lib/control-session.js'
 import { randomUUID } from 'node:crypto'
+setSettingsForTest({ browserControl: true, overlay: false, statusPill: false })
 Object.assign(controlCoordinator,createControlCoordinator({lockName:`\\\\.\\pipe\\win-pilot-frames-test-${randomUUID()}`}))
 
 const edge = process.env.EDGE_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'

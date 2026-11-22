@@ -53,7 +53,7 @@ const parse = (input) => {
 const initial = parse({ overlay: false, statusPill: true, browserHeadlessDefault: false, browserControl: true,
   maxBatchActions: 1, allowSystemKeys: false, lockGuard: false, defaultDispatch: 'foreground' })
 applyConfigSnapshot(initial)
-assert.deepEqual(getSettings(), { ...DEFAULTS, overlay: false })
+assert.deepEqual(getSettings(), { ...DEFAULTS, overlay: false, browserControl: true })
 const edited = parse({ overlay: true, statusPill: false, browserHeadlessDefault: true, browserControl: false })
 for (const key of KEYS) {
   const reference = initial[key]

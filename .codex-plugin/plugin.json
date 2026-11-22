@@ -1,6 +1,6 @@
 {
   "name": "win-pilot",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Windows Computer Use for agents through one MCP tool and a shared operating skill.",
   "author": {
     "name": "JeremyWangCY",
@@ -30,7 +30,7 @@
     "websiteURL": "https://github.com/JeremyWangCY/win-pilot",
     "defaultPrompt": [
       "List the open Windows applications without changing anything.",
-      "Open an isolated browser and inspect the requested page."
+      "Inspect the active window and summarize its visible controls."
     ],
     "brandColor": "#4D6BFE",
     "composerIcon": "./assets/composer-icon.png",

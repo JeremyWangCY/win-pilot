@@ -7,7 +7,7 @@ import { applyConfigSnapshot } from '../lib/settings.js'
 import { randomUUID } from 'node:crypto'
 import { controlCoordinator, createControlCoordinator } from '../lib/control-session.js'
 Object.assign(controlCoordinator,createControlCoordinator({lockName:`\\\\.\\pipe\\win-pilot-mcp-test-${randomUUID()}`}))
-applyConfigSnapshot({overlay:false,statusPill:false})
+applyConfigSnapshot({overlay:false,statusPill:false,browserControl:true})
 
 let started
 const ready=new Promise(resolve=>{started=resolve})

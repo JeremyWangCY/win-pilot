@@ -6,6 +6,9 @@ import { once } from 'node:events'
 import http from 'node:http'
 import { execFileSync } from 'node:child_process'
 import { defineComputerTool, stopDaemon } from '../lib/index.js'
+import { setSettingsForTest } from '../lib/settings.js'
+
+setSettingsForTest({ browserControl: true })
 
 const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'win-pilot-launch-'))
 const edge = process.env.EDGE_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'

@@ -86,23 +86,36 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected for this release: version `0.6.3`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
+Expected for this release: version `0.6.4`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
 
 ### Settings
 
-In DeepSeek Harness **0.2.0-rc.2 or later**, open **Settings → Win-Pilot** or the plugin detail page. The host projects the plugin's `Config`. Display preferences apply immediately. Turning browser control off refuses browser actions from the next computer operation without a restart. Changing the desktop environment applies to the next computer operation, including an existing chat.
+All seven preferences work across **every agent** (Claude Code, Codex, Qoder, Pi, standalone CLI/MCP, and DeepSeek Harness).
+
+- **CLI / MCP / other agents**: settings are stored in `~/.win-pilot/config.json` (override the path with `WIN_PILOT_CONFIG`) and hot-reloaded on the next computer operation without restarting the MCP server or session:
+
+```powershell
+win-pilot config                          # show all settings and sources
+win-pilot config set browserControl true  # enable Win-Pilot browser control
+win-pilot config set desktopEnvironment task
+win-pilot config unset browserControl     # restore one setting to default
+win-pilot config reset                    # restore all settings to defaults
+win-pilot config path                     # show the active config file path
+```
+
+- **DeepSeek Harness (0.2.0-rc.2 or later)**: open **Settings → Win-Pilot** or the plugin detail page. The host projects the plugin's `Config` and takes precedence while running inside DSH.
 
 | Preference | Default | Effect |
 |---|---|---|
 | `overlay` | `true` | Show the operation cursor |
 | `statusPill` | `true` | Show the running status pill |
 | `browserHeadlessDefault` | `false` | Run browsers without a visible window |
-| `browserControl` | `true` | Let the AI drive Win-Pilot-owned browsers; when off, browser actions are refused while desktop actions keep working |
+| `browserControl` | `false` | Let the AI drive Win-Pilot-owned browsers; off by default because many agents ship their own browser control |
 | `ignoreUserInput` | `false` | Keep acting while you use the mouse or keyboard instead of stopping to re-observe |
 | `desktopEnvironment` | `current` | Where computer actions run: this desktop or the separate task window |
 | `remoteControlPolicy` | `fallback` | When remote control is attached: run on the current desktop instead, or stop and report |
 
-`browserControl` defaults to `true`. When off, every `browser_*` action and every browser `when` / `expect` precondition or postcondition is refused before dispatch with `outcome: not_executed` and `error_code: browser_control_disabled`; a `launch_app` with `headless: true` (which exists only to feed that channel) is refused too. Desktop actions keep working, and the change takes effect on the next computer operation without a restart.
+`browserControl` defaults to `false`. While off, every `browser_*` action and every browser `when` / `expect` precondition or postcondition is refused before dispatch with `outcome: not_executed` and `error_code: browser_control_disabled`; a `launch_app` with `headless: true` (which exists only to feed that channel) is refused too. Desktop actions keep working, and enabling or disabling it takes effect on the next computer operation without a restart.
 
 `desktopEnvironment` defaults to `current`; `task` selects the separate task window. Save the setting to switch on the next computer operation. Win-Pilot cancels and cleans up the old control session before changing desktops, releases old browser claims, and requires a fresh window list or desktop screenshot before input. Old targets cannot carry over; failed cleanup blocks the switch. With the option off, model schemas, runtime skills and diagnostics do not advertise the task-desktop option. With it on, native actions, observations, clipboard and recovery stay in that task desktop; failure never redirects work to the main desktop. Browser actions require a browser launched by the same task.
 
@@ -134,6 +147,8 @@ DSH profiles must be restarted separately. Re-run `win-pilot install` when you w
 When a sandbox reaps children after every command, configure `win-pilot mcp` in the host's persistent plugin or MCP supervisor. Do not detach a process from an ephemeral command. Shell-only agents can use one-shot `win-pilot request` calls.
 
 ## Usage
+
+Version 0.6.4 brings all seven DSH preferences to every agent via `~/.win-pilot/config.json` (`WIN_PILOT_CONFIG`) and `win-pilot config` with live hot-reload (DSH edits also mirror automatically), turns `browserControl` off by default so it does not compete with host-native browser tools, adds native Antigravity plugin manifests (`plugin.json` + `mcp_config.json`), unifies the settings card theme styling, and fixes real-world desktop/browser edge cases (non-blocking native JS dialogs on `browser_click`/`browser_dialog`, occlusion checks before DOM click, `active_popup` modal dialog hints, cached PowerShell helper DLLs, initial `tab_id` on headless `launch_app` with `url`, and non-interactive `open`-first task desktop startup).
 
 Version 0.6.3 makes the browser channel report what a click can actually reach: invisible and covered controls are marked or refused instead of silently clicking through, keys cover the full named set, native dialogs are reported instead of stalling the page, and hover/select/screenshot are available. It also gives the virtual desktop a recoverable lifecycle: a dead or orphaned task desktop reports `task_desktop_closed`, `task_desktop_host_lost`, `task_desktop_cleanup_unconfirmed` or `task_desktop_orphan_session` with a recovery step, and `task_desktop` (`status` / `restart`) rebuilds it without replaying input.
 

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { browserCapabilities, createBrowserProvider } from '../lib/browser-provider.js'
 import { createWinPilotRuntime } from '../lib/runtime.js'
+import { setSettingsForTest, resetSettingsForTest } from '../lib/settings.js'
+
+setSettingsForTest({ browserControl: true })
 
 const calls = []
 assert.equal(createBrowserProvider().capabilities.cross_origin_frames, false)

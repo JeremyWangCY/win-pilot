@@ -23,7 +23,7 @@ const consoleOnly={ok:true,remote_active:false,console_active:true,child_session
   sessions:[{session_id:1,user:'me',state:0,child_session:false,client_protocol_type:0,remote:false}],child_session_streamers:[]}
 const inspectSessions=()=>consoleOnly
 Object.assign(controlCoordinator,createControlCoordinator({lockName:`\\\\.\\pipe\\task-desktop-test-${randomUUID()}`}))
-function fixture({sid=3,holdExecute=false,holdLogin=false,closeOk=true,holdCommands=[],holdClose=false,exitBeforeAck=false,omitAck=false}={}) {
+function fixture({sid=3,holdExecute=false,holdLogin=false,openNeedsLogin=false,closeOk=true,holdCommands=[],holdClose=false,exitBeforeAck=false,omitAck=false}={}) {
   const seen=[];let proc,instance,paused=false,previewOnly=false,finishClose
   const emit=value=>proc.stdout.write(JSON.stringify(value)+'\n')
   const state=()=>({ok:true,instance_id:instance,preview_only:previewOnly,windows_session_id:previewOnly?null:sid,parent_windows_session_id:1,worker_ready:!previewOnly,paused,connected:!previewOnly})
@@ -35,7 +35,7 @@ function fixture({sid=3,holdExecute=false,holdLogin=false,closeOk=true,holdComma
       if(holdCommands.includes(req.command))continue
       if(req.command==='pause')paused=true
       if(req.command==='resume')paused=false
-      const result=req.command==='execute'?{ok:true,action:req.request.action,outcome:'completed'}:previewOnly&&['open','login','prepare'].includes(req.command)?{ok:false,error_code:'task_desktop_preview_only'}:state()
+      const result=req.command==='execute'?{ok:true,action:req.request.action,outcome:'completed'}:previewOnly&&['open','login','prepare'].includes(req.command)?{ok:false,error_code:'task_desktop_preview_only'}:req.command==='open'&&openNeedsLogin?{ok:true,instance_id:instance,state:'needs_preparation',worker_ready:false,connected:false,paused:true}:state()
       if(req.command==='close'){
         finishClose=()=>{
           const drain=()=>{emit({id:req.id,result});if(!omitAck)emit({event:'closed',instance_id:instance,result:{ok:closeOk,...(!closeOk?{message:'fixture cleanup unconfirmed'}:{})}});if(!exitBeforeAck)proc.emit('exit',0);proc.stdout.end();proc.emit('close',0)}
@@ -73,11 +73,11 @@ for(const command of ['login','open','prepare','retry']){
   f.finishClose();await closing
 }
 {
-  const f=fixture({holdLogin:true}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
+  const f=fixture({holdCommands:['open']}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
   const abort=new AbortController(),active=p.execute('type_text',{text:'never dispatched'},abort.signal)
   abort.abort();assert.equal((await active).error_code,'action_aborted')
   await p.close()
-  assert.deepEqual(f.seen.map(x=>x.command),['login','close'],'cancelling implicit login cannot send the original input')
+  assert.deepEqual(f.seen.map(x=>x.command),['open','close'],'cancelling implicit open cannot fall back to login or send the original input')
 }
 for(const closeOk of [true,false]){
   const f=fixture({exitBeforeAck:true,closeOk}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
@@ -147,11 +147,17 @@ for(const closeOk of [true,false]){
   assert.equal(f.proc,undefined,'status and pause may not create a task window')
   assert.equal((await p.execute('stop')).ok,true);assert.equal(f.seen.length,0,'stop must not create a replacement host')
   assert.equal((await p.execute('type_text',{text:'fixture'})).ok,true)
-  assert.equal(f.seen[0].command,'login','a selected task desktop must offer the system sign-in flow on first use')
+  assert.equal(f.seen[0].command,'open','implicit first use prefers non-interactive open when auto-logon works')
   assert.equal(f.seen.filter(x=>x.command==='execute').length,1)
   await p.command('pause')
   assert.equal((await p.execute('type_text',{text:'refused'})).error_code,'task_desktop_paused')
   assert.equal((await p.execute('screenshot')).ok,true,'observation remains available while paused')
+  await p.close()
+}
+{
+  const f=fixture({openNeedsLogin:true}),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
+  assert.equal((await p.execute('type_text',{text:'needs-login'})).ok,true)
+  assert.deepEqual(f.seen.slice(0,2).map(x=>x.command),['open','login'],'when non-interactive open needs preparation or credentials, implicit startup falls back to login')
   await p.close()
 }
 {
@@ -185,7 +191,7 @@ for(const closeOk of [true,false]){
   const seen=[],commands=[]
   const provider={execute:async(action,args)=>{seen.push({action,args});return {ok:true,action,outcome:'completed'}},command:async name=>{commands.push(name);return {ok:true}},close:async()=>{commands.push('close')}}
   setSettingsForTest({desktopEnvironment:'task'})
-  const runtime=createWinPilotRuntime({taskDesktopProvider:provider})
+  const runtime=createWinPilotRuntime({taskDesktopProvider:provider,desktopEnvironment:'task'})
   assert.equal((await runtime.act('type_text',{text:'task'})).ok,true)
   setSettingsForTest({desktopEnvironment:'current'})
   await runtime.act('get_window',{app:'fixture'})

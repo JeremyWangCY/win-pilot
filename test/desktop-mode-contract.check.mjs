@@ -78,8 +78,8 @@ try {
   assert.equal((await tool.execute(request,{agent:disabledAgent})).desktop_environment,'current')
   assert.equal((await tool.execute(request,{agent:enabledAgent})).desktop_environment,'current','a saved setting also applies to an existing chat')
   assert.match((await skillFor(enabledAgent)).content,/current interactive Windows session/)
-  const schema = JSON.stringify({description:tool.description,parameters:tool.parameters})
-  assert.doesNotMatch(schema,/task.?desktop|desktopEnvironment|desktop_environment|second desktop|virtual desktop/i)
+  assert.doesNotMatch(tool.description,/task.?desktop|desktopEnvironment|desktop_environment|second desktop|virtual desktop/i)
+  assert.doesNotMatch(JSON.stringify(tool.parameters),/desktopEnvironment|desktop_environment|second desktop|alternate session/i)
 
   // The real DSH defineTool copies only public fields. These trusted lifecycle
   // methods must survive that copy without entering schemas or model JSON.

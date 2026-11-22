@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-本版预期版本为 `0.6.3`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
+本版预期版本为 `0.6.4`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
 
 ### 更新
 
@@ -104,6 +104,8 @@ DSH profile 需要单独重启。需要刷新 Win-Pilot 管理的 Skill 副本�
 如果沙箱会在每条命令结束后回收子进程，应由宿主的常驻插件或 MCP supervisor 启动 `win-pilot mcp`，不要从一次性命令中强行脱离进程。仅支持 shell 的 Agent 可以调用一次性的 `win-pilot request`。
 
 ## 使用方法
+
+0.6.4 把原先仅限 DSH 的七项设置统一开放到 `~/.win-pilot/config.json`（支持 `WIN_PILOT_CONFIG`）与 `win-pilot config` 热更新命令，全 Agent 通用（DSH 修改也会自动镜像同步）；将 `browserControl` 改为默认关闭以避免与宿主自带浏览器控制冲突；新增 Antigravity 原生插件清单（`plugin.json` 与 `mcp_config.json`）并统一了设置面板视觉风格；同时修复了多项桌面与浏览器实战问题（点击触发原生 JS 弹窗不再卡死 12 秒、`browser_dialog` 不再误报失败、默认 DOM 点击前先做遮挡校验、`get_window_state` 自动提示 `active_popup` 弹窗、PowerShell Helper C# DLL 缓存加速、带 `url` 的无头 `launch_app` 直接返回初始 `tab_id`、以及独立桌面首次启动优先无弹窗 `open` 并在 35 秒内可靠确认注销）。
 
 0.6.3 让浏览器通道只报告"点击真正能落到"的控件：不可见或被遮挡的元素会被标记或拒绝，而不是静默点到别处；按键覆盖完整命名集合；原生对话框会被报告而不是让页面卡死；新增 hover、下拉选择与截图。同时给虚拟桌面加上可恢复的生命周期：桌面进程死亡或留下孤儿会话时返回 `task_desktop_closed`、`task_desktop_host_lost`、`task_desktop_cleanup_unconfirmed` 或 `task_desktop_orphan_session` 并给出恢复步骤，`task_desktop`（`status` / `restart`）可重建桌面且不重放输入。
 
@@ -151,19 +153,32 @@ MCP `tools/list` 返回的实时 Schema 是完整参数和默认值的权威定�
 
 ## 设置
 
-在 DeepSeek Harness **0.2.0-rc.2 或更新版本**中，打开「设置 → Win-Pilot」或插件详情页。当前宿主直接投射插件的 `Config`。显示偏好实时生效；关闭浏览器操控后，下一次电脑操作即拒绝浏览器动作，无需重启；电脑操作环境从下一次电脑操作起生效，同一聊天也会切换。
+七项常用偏好已支持**所有 Agent**（Claude Code、Codex、Qoder、Pi、独立 CLI/MCP 与 DeepSeek Harness）。
+
+- **CLI / MCP / 其他 Agent**：设置保存在 `~/.win-pilot/config.json`（可通过环境变量 `WIN_PILOT_CONFIG` 指定独立路径），修改后在下一次电脑操作时热更新生效，无需重启 MCP 服务或会话：
+
+```powershell
+win-pilot config                          # 查看全部设置与生效来源
+win-pilot config set browserControl true  # 开启 Win-Pilot 浏览器操控
+win-pilot config set desktopEnvironment task
+win-pilot config unset browserControl     # 恢复单项默认
+win-pilot config reset                    # 恢复全部默认
+win-pilot config path                     # 查看当前配置文件路径
+```
+
+- **DeepSeek Harness（0.2.0-rc.2 或更新版本）**：打开「设置 → Win-Pilot」或插件详情页，宿主直接投射插件 `Config` 并在 DSH 运行时优先生效。
 
 | 偏好 | 默认值 | 作用 |
 |---|---|---|
 | `overlay` | `true` | 显示操作光标 |
 | `statusPill` | `true` | 显示运行状态提示 |
 | `browserHeadlessDefault` | `false` | 浏览器在后台运行，不显示窗口 |
-| `browserControl` | `true` | 允许 AI 操控 Win-Pilot 自有的浏览器；关闭后浏览器动作会被拒绝，桌面动作照常 |
+| `browserControl` | `false` | 允许 AI 操控 Win-Pilot 自有的浏览器；因多数 Agent 自带浏览器控制，默认关闭 |
 | `ignoreUserInput` | `false` | 你操作键鼠时继续执行，不停下来重新观察 |
 | `desktopEnvironment` | `current` | 电脑动作的执行位置：当前桌面或独立任务窗口 |
 | `remoteControlPolicy` | `fallback` | 远程控制接入时：改在当前桌面执行，或停止并提示 |
 
-`browserControl` 默认 `true`。关闭后，所有 `browser_*` 动作以及浏览器的 `when` / `expect` 前置/后置条件都在派发前被拒绝，返回 `outcome: not_executed` 和 `error_code: browser_control_disabled`；`launch_app` 的 `headless: true`（只为浏览器通道存在）同样被拒绝。桌面动作不受影响，改动在下次电脑操作时生效，无需重启。
+`browserControl` 默认 `false`。关闭期间，所有 `browser_*` 动作以及浏览器的 `when` / `expect` 前置/后置条件都在派发前被拒绝，返回 `outcome: not_executed` 和 `error_code: browser_control_disabled`；`launch_app` 的 `headless: true`（只为浏览器通道存在）同样被拒绝。桌面动作不受影响，开启或关闭均在下次电脑操作时生效，无需重启。
 
 `desktopEnvironment` 默认 `current`（当前桌面），可选 `task`（独立任务窗口）。保存后从下一次电脑操作起切换，同一聊天也生效。切换前先取消并清理旧控制会话，释放旧浏览器控制权，再要求重新列出窗口或截取桌面后才能输入；旧目标不可沿用，清理失败则停止切换。关闭时，模型工具定义、运行时技能和诊断不宣传独立桌面选项。开启后，电脑动作、观察、剪贴板和恢复都使用同一任务桌面；连接失败不会转到主桌面。浏览器动作只能使用同一任务启动的浏览器。
 

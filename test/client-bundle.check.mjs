@@ -517,9 +517,9 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   }
 }
 
-// The browser-control preference is its own switch, on by default and off on save.
+// The browser-control preference is its own switch, off by default and on on save.
 {
-  const scope = scopeDouble({ value: { browserControl: true } })
+  const scope = scopeDouble({ value: { browserControl: false } })
   const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
   let tree = pluginReact.mount(Card, { scope, locale: 'en' })
   const control = find(tree, (node) => node.props && node.props.id === 'wp-browserControl')
@@ -527,13 +527,17 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   assert.equal(control.props.role, 'switch')
   assert.equal(control.props['aria-label'], 'Control Win-Pilot browsers',
     'the English label must be the shipped copy')
-  assert.equal(control.props['aria-checked'], true, 'browserControl is on by default')
+  assert.equal(control.props['aria-checked'], false, 'browserControl is off by default')
+  const headlessRow = flatten(tree).find((node) => typeof node.props?.className === 'string' && node.props.className.includes('is-subordinate'))
+  assert.ok(headlessRow, 'browserHeadlessDefault row is visually subordinated while browserControl is off')
   control.props.onClick()
   tree = pluginReact.tree
-  assert.equal(find(tree, (node) => node.props.id === 'wp-browserControl').props['aria-checked'], false,
+  assert.equal(find(tree, (node) => node.props.id === 'wp-browserControl').props['aria-checked'], true,
     'clicking the switch stages the opposite state')
+  assert.equal(flatten(tree).some((node) => typeof node.props?.className === 'string' && node.props.className.includes('is-subordinate')), false,
+    'enabling browserControl clears the subordinate state immediately')
   await find(tree, (node) => node.type === 'button' && node.props.className === 'wp-save').props.onClick()
-  assert.deepEqual(scope.writes, [['browserControl', false]],
+  assert.deepEqual(scope.writes, [['browserControl', true]],
     'save must write browserControl exactly once')
 }
 

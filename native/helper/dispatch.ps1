@@ -1,4 +1,4 @@
-$script:devtoolsHttpClient = $null
+﻿$script:devtoolsHttpClient = $null
 
 function Test-ChromiumProfileLocked {
   param([string]$ProfileDir)
@@ -314,7 +314,7 @@ function Copy-PasteClipboardDataObject {
 function Invoke-PasteClipboardOperation {
   param([string]$Operation, $Argument)
   if (-not ('WinPilotClipboardNative' -as [type])) {
-    Add-Type -TypeDefinition @'
+    Add-WinPilotCachedType -Name 'WinPilotClipboard' -TypeDefinition @'
 using System.Runtime.InteropServices;
 public static class WinPilotClipboardNative {
  [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
@@ -720,6 +720,7 @@ function Invoke-ActionRequest {
       if ($null -eq $treeShown) { $treeShown = $true }
       $st = Do-AppState -App $app -WindowIndex $idx -WithScreenshot ([bool]$shot) -WithText ([bool]$withText) -Dispatch (Get-Dispatch) -DisableDiffing ([bool]$disableDiffing) -TreeShownToModel ([bool]$treeShown)
       $result.window = $st.window
+      if ($null -ne $st.active_popup) { $result.active_popup = $st.active_popup }
       $result.snapshot_id = $st.snapshot_id
       $result.screenshot_id = $st.screenshot_id
       $result.observed_at = $st.observed_at

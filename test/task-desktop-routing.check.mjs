@@ -24,7 +24,7 @@ Object.assign(controlCoordinator, {
   close: async () => {},
   idle: () => false,
 })
-setSettingsForTest({desktopEnvironment:'task', statusPill:true, overlay:false})
+setSettingsForTest({desktopEnvironment:'task', browserControl:true, statusPill:true, overlay:false})
 
 const browserCalls = [], nativeCalls = []
 const endpoint = 'ws://127.0.0.1:9222/devtools/browser/task-owned'
@@ -49,10 +49,10 @@ const taskDesktopProvider = {
 }
 let runtime
 try {
-  runtime = createWinPilotRuntime({browserProvider,taskDesktopProvider,
+  runtime = createWinPilotRuntime({browserProvider,taskDesktopProvider,desktopEnvironment:'task',
     activityReporter:{begin:async()=>{},finish(){},remove(){},close:async()=>{}}})
-  setSettingsForTest({desktopEnvironment:'current',statusPill:true,overlay:false})
-  assert.equal(runtime.status().desktop_environment,'task','runtime captures its environment before its first action')
+  setSettingsForTest({desktopEnvironment:'current',browserControl:true,statusPill:true,overlay:false})
+  assert.equal(runtime.status().desktop_environment,'task','explicit desktopEnvironment keeps the runtime pinned')
   assert.equal(runtime.status().providers.desktop,process.platform === 'win32' ? 'windows-child-session' : 'unavailable')
   assert.deepEqual(runtime.status().task_desktop,getTaskDesktopAvailability())
   const diagnostic = await runtime.doctor({probe:true,desktopEnvironment:'current'})

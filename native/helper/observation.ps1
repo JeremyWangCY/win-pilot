@@ -1,4 +1,4 @@
-function Get-PayloadValue {
+﻿function Get-PayloadValue {
   param([string]$Name)
   if ($null -ne $script:payload -and $script:payload.PSObject.Properties[$Name]) {
     return $script:payload.$Name
@@ -67,7 +67,7 @@ if ($null -eq $script:elementIndexHistory) { $script:elementIndexHistory = @{} }
 function Get-WindowObservationFingerprint {
   param([IntPtr]$Hwnd)
   if (-not ('WinPilotObservationNative' -as [type])) {
-    Add-Type -TypeDefinition @'
+    Add-WinPilotCachedType -Name 'WinPilotObservation' -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public static class WinPilotObservationNative {

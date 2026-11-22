@@ -811,10 +811,14 @@ sealed class DesktopWindow : Form
                 var live=await Task.Run(()=>ChildSessionQuery.LiveSessions()).WaitAsync(TimeSpan.FromSeconds(6));
                 uint? reported=ChildSessionQuery.ReportedChild(out uint current)?current:null;
                 if(!ChildSessionQuery.CanCleanup(live,sessionBaseline,(uint)parentSession,id,reported,accountSid,parentUserSid))throw new InvalidOperationException("Windows 父子会话关联或用户身份已改变，未执行注销。");
-                if(!Native.WTSLogoffSession(IntPtr.Zero,id,false))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                if(!Native.WTSLogoffSession(IntPtr.Zero,id,false)){
+                    int err=Marshal.GetLastWin32Error();
+                    // 7022 (ERROR_CTX_WINSTATION_NOT_FOUND): session already logged off.
+                    if(err!=7022)throw new System.ComponentModel.Win32Exception(err);
+                }
             }
             DisplayScale.WatchDetached(scales);
-            var deadline=DateTime.UtcNow.AddSeconds(20);
+            var deadline=DateTime.UtcNow.AddSeconds(35);
             do {
                 var remaining=deadline-DateTime.UtcNow;
                 if(remaining<=TimeSpan.Zero)break;

@@ -69,12 +69,17 @@ const refuses = (result, action) => {
 const browserTarget = { browser: { endpoint: 'ws://127.0.0.1:9222/devtools/browser/mock', tab_id: 'tab-1' } }
 
 try {
-  // --- default true: the browser channel is unchanged ---------------------
+  // --- default false: browser control is off until enabled ----------------
   resetSettingsForTest()
-  assert.equal(getSettings().browserControl, true, 'the shipped default must leave browser control available')
-  assert.equal((await tool.execute({ action: 'browser_state', ...browserTarget }, {})).ok, true, 'browser_* must stay dispatchable by default')
+  assert.equal(getSettings().browserControl, false, 'the shipped default must keep browser control off')
+  refuses(await tool.execute({ action: 'browser_state', ...browserTarget }, {}), 'browser_state')
+  assert.equal(browserCalls.length, 0, 'default behavior must not reach the browser provider')
+
+  // --- true: enabling browser control opens the channel -------------------
+  setSettingsForTest({ browserControl: true, statusPill: false, overlay: false })
+  assert.equal((await tool.execute({ action: 'browser_state', ...browserTarget }, {})).ok, true, 'browser_* must dispatch when browserControl is enabled')
   assert.equal(browserCalls.at(-1).action, 'browser_state')
-  assert.equal(browserCalls.length, 1, 'default behavior must reach the provider')
+  assert.equal(browserCalls.length, 1, 'enabled browserControl must reach the provider')
 
   { // A browser postcondition still uses the provider while it is on.
     browserCalls.length = 0
@@ -183,15 +188,15 @@ try {
 
   // --- the model-facing skill follows the live setting --------------------
   {
-    resetSettingsForTest()
-    assert.equal(createWinPilotSkill('current').content, WIN_PILOT_SKILL.content, 'the default skill body must stay byte-identical')
+    setSettingsForTest({ browserControl: true, statusPill: false, overlay: false })
+    assert.equal(createWinPilotSkill('current').content, WIN_PILOT_SKILL.content, 'the enabled skill body must stay byte-identical')
     assert.equal(createWinPilotSkill('task', true).content,
       createWinPilotSkill('task').content, 'an enabled task skill must stay byte-identical')
     assert.equal(tool.skillForAgent({}).content, WIN_PILOT_SKILL.content, 'an enabled tool skill must stay byte-identical')
 
-    setSettingsForTest({ browserControl: false, statusPill: false, overlay: false })
+    resetSettingsForTest()
     const disabledSkill = tool.skillForAgent({})
-    assert.match(disabledSkill.content, /Browser control is turned off/, 'the disabled skill must say browser control is off')
+    assert.match(disabledSkill.content, /Browser control is turned off/, 'the default disabled skill must say browser control is off')
     assert.match(disabledSkill.content, /error_code: browser_control_disabled/, 'the disabled skill must name the refusal code')
     assert.match(disabledSkill.content, /Desktop actions still work/, 'the disabled skill must say desktop actions still work')
     assert.match(disabledSkill.content, /do not launch or connect a browser|do not work around the refusal/i, 'the disabled skill must forbid working around it')
@@ -204,25 +209,25 @@ try {
     assert.deepEqual(JSON.parse(JSON.stringify(taskDisabled)), taskDisabled, 'the task skill must stay lossless JSON')
     assert.match(createWinPilotSkill('task', false).content, /Never fall back to the main desktop/)
     assert.match(createWinPilotSkill('current', false).content, /current interactive Windows session/)
-    // Returning to the default restores the exact original body.
-    resetSettingsForTest()
+    // Enabling browserControl restores the exact original body.
+    setSettingsForTest({ browserControl: true })
     assert.equal(tool.skillForAgent({}).content, WIN_PILOT_SKILL.content)
   }
 
   // --- runtime status reports the channel state -------------------------
   {
     resetSettingsForTest()
-    const enabled = getRuntimeStatus()
-    assert.equal(enabled.browser_control, 'enabled', 'the default status must report browser control as enabled')
-    assert.equal(enabled.ok, true)
+    const disabled = getRuntimeStatus()
+    assert.equal(disabled.browser_control, 'disabled', 'the default status must report browser control as disabled')
+    assert.equal(disabled.ok, true)
     for (const key of ['name', 'version', 'platform', 'arch', 'node', 'desktop_environment', 'daemon', 'providers', 'capabilities']) {
-      assert.ok(key in enabled, `the status must keep its existing field: ${key}`)
+      assert.ok(key in disabled, `the status must keep its existing field: ${key}`)
     }
-    setSettingsForTest({ browserControl: false })
-    assert.equal(getRuntimeStatus().browser_control, 'disabled', 'a disabled setting must be reported by diagnostics')
-    assert.equal(getRuntimeStatus({ desktopEnvironment: 'task' }).browser_control, 'disabled', 'the field tracks the same resolved settings on any desktop')
+    setSettingsForTest({ browserControl: true })
+    assert.equal(getRuntimeStatus().browser_control, 'enabled', 'an enabled setting must be reported by diagnostics')
+    assert.equal(getRuntimeStatus({ desktopEnvironment: 'task' }).browser_control, 'enabled', 'the field tracks the same resolved settings on any desktop')
     resetSettingsForTest()
-    assert.equal(getRuntimeStatus().browser_control, 'enabled')
+    assert.equal(getRuntimeStatus().browser_control, 'disabled')
   }
 
   assert.equal(spawnAttempts, 0, 'no real process may start')

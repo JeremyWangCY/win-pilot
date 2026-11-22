@@ -23,7 +23,12 @@ apply({
   tools: { register(tool) { registeredTool = tool } },
   skills: { register(skill) { registeredSkill = skill } },
 })
-assert.equal(registeredSkill, WIN_PILOT_SKILL, 'apply registers the exact model-facing skill with DSH')
+assert.match(registeredSkill.content, /Browser control is turned off/, 'default apply registers the browser-control-off skill variant')
+apply({
+  tools: { register(tool) { registeredTool = tool } },
+  skills: { register(skill) { registeredSkill = skill } },
+}, { browserControl: true })
+assert.equal(registeredSkill, WIN_PILOT_SKILL, 'apply with browserControl=true registers the exact model-facing skill with DSH')
 assert.equal(registeredTool?.name, 'computer', 'apply registers the computer tool under DSH schema validation')
 // Scope-aware DSH hosts register a provider factory and await its results, so
 // list()/get() must return thenables. Returning plain arrays/objects makes the
@@ -49,7 +54,8 @@ const definition = await got
 assert.equal(definition.provider, 'win-pilot')
 assert.equal(typeof definition.content, 'string')
 assert.deepEqual(JSON.parse(JSON.stringify(definition)), definition, 'skill definition must be lossless JSON')
-assert.doesNotMatch(JSON.stringify({ skill:WIN_PILOT_SKILL, description:registered.description, parameters:registered.parameters }), /task.?desktop|second desktop|alternate session|independent.*desktop|virtual desktop/i)
+assert.doesNotMatch(JSON.stringify({ skill:WIN_PILOT_SKILL, description:registered.description }), /task.?desktop|second desktop|alternate session|independent.*desktop|virtual desktop/i)
+assert.doesNotMatch(JSON.stringify(registered.parameters), /desktopEnvironment|desktop_environment|second desktop|alternate session|independent.*desktop/i)
 const taskSkill = createWinPilotSkill('task')
 assert.match(taskSkill.content, /Never fall back to the main desktop/)
 assert.match(taskSkill.content, /Foreground input inside this task desktop is allowed/)

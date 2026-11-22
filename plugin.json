@@ -1,0 +1,21 @@
+{
+  "name": "win-pilot",
+  "displayName": "Win-Pilot",
+  "version": "0.6.4",
+  "description": "Windows computer-use plugin for AI agents: UI Automation, window-bound screenshots, background-first verified input, independent task desktop, and optional isolated Chromium control.",
+  "logo": "icon.svg",
+  "suggestedPrompts": [
+    "List the open Windows applications without changing anything",
+    "Inspect the active window and summarize its visible controls",
+    "Open the independent task desktop and verify it is ready"
+  ],
+  "author": {
+    "name": "JeremyWangCY",
+    "url": "https://github.com/JeremyWangCY"
+  },
+  "homepage": "https://github.com/JeremyWangCY/win-pilot",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JeremyWangCY/win-pilot.git"
+  }
+}

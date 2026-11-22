@@ -1,4 +1,4 @@
-function Test-BitmapBlank {
+﻿function Test-BitmapBlank {
   # True when the sampled quadrant points AND the border/title points are all pure
   # black — the PrintWindow / screen-DC signature of DirectComposition/UWP/
   # hardware-accelerated frames. Small bitmaps (<= 4px) are never flagged.
@@ -335,10 +335,20 @@ function Do-AppState {
     $shot.trusted = (-not $shot.error)
     if ($shot.path) { $script:lastScreenshot = @{ id = $shot.id; control_session_id = (Get-ControlSessionId); hwnd = $win.Hwnd; rect = $win.Rect; fingerprint = $fingerprint; width = $shot.width; height = $shot.height; trusted = $shot.trusted; created = $script:observation.created } }
   }
+  $popupInfo = [DshWin32]::GetEnabledPopupInfo($win.Hwnd)
+  $activePopup = if ($popupInfo.Hwnd -ne [IntPtr]::Zero) {
+    @{
+      hwnd = [int64]$popupInfo.Hwnd
+      pid = [int]$popupInfo.Pid
+      title = $popupInfo.Title
+      foreground = [bool]$popupInfo.Foreground
+    }
+  } else { $null }
   return @{
     snapshot_id = $script:observation.id
     observed_at = $script:observation.created.ToString('o')
     window = (Get-WindowInfo $win)
+    active_popup = $activePopup
     screenshot = $shot
     screenshot_id = if ($shot -and $shot.path) { $shot.id } else { $null }
     elements = $tree

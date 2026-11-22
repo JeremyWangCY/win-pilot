@@ -7,7 +7,7 @@ import { createWinPilotRuntime } from '../lib/runtime.js'
 import { createBrowserProvider } from '../lib/browser-provider.js'
 import { applyConfigSnapshot } from '../lib/settings.js'
 
-applyConfigSnapshot({ overlay:false, statusPill:false })
+applyConfigSnapshot({ overlay:false, statusPill:false, browserControl:true })
 const lockName = `\\\\.\\pipe\\win-pilot-control-test-${randomUUID()}`
 // Exercise real OS coordination in a unique namespace, without contending with
 // the user's running Win-Pilot instance or another independent test process.

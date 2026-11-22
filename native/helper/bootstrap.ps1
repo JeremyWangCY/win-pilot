@@ -1,4 +1,4 @@
-# dsh computer-use helper (Windows PowerShell 5.1)
+﻿# dsh computer-use helper (Windows PowerShell 5.1)
 # Background synthetic-cursor semantics per cua-driver's Windows recipe:
 #   dispatch=background (default): UIA patterns first, then pixel hit-test, then
 #   WM_CHAR/WM_KEY/WM_MOUSEWHEEL messages. Never steals foreground. Actions that
@@ -41,7 +41,48 @@ Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName WindowsBase
 
-Add-Type -TypeDefinition @'
+# Content-addressed DLL cache so repeated PowerShell helper and child-session
+# worker startups load the compiled C# types directly instead of invoking csc.exe
+# on every boot. Falls back to in-memory Add-Type if caching is unavailable.
+function Add-WinPilotCachedType {
+  param(
+    [Parameter(Mandatory = $true)][string]$Name,
+    [Parameter(Mandatory = $true)][string]$TypeDefinition
+  )
+  try {
+    $baseDir = [System.Environment]::GetFolderPath('LocalApplicationData')
+    if (-not $baseDir) { $baseDir = $env:TEMP }
+    $cacheDir = Join-Path $baseDir 'win-pilot\helper-cache'
+    if (-not (Test-Path -LiteralPath $cacheDir)) {
+      [System.IO.Directory]::CreateDirectory($cacheDir) | Out-Null
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      $keyText = ($PSVersionTable.CLRVersion.ToString() + '|' + $TypeDefinition)
+      $hashBytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($keyText))
+      $hash = ([System.BitConverter]::ToString($hashBytes)).Replace('-', '').Substring(0, 24).ToLowerInvariant()
+    } finally { $sha.Dispose() }
+    $dllPath = Join-Path $cacheDir ($Name + '-' + $hash + '.dll')
+    if (-not (Test-Path -LiteralPath $dllPath)) {
+      $tmpDll = Join-Path $cacheDir ($Name + '-' + $hash + '.' + $PID + '.' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.dll')
+      try {
+        Add-Type -TypeDefinition $TypeDefinition -OutputAssembly $tmpDll -IgnoreWarnings
+        if (-not (Test-Path -LiteralPath $dllPath)) {
+          try { [System.IO.File]::Move($tmpDll, $dllPath) } catch { }
+        }
+      } finally {
+        if (Test-Path -LiteralPath $tmpDll) { try { [System.IO.File]::Delete($tmpDll) } catch { } }
+      }
+    }
+    if (Test-Path -LiteralPath $dllPath) {
+      Add-Type -Path $dllPath
+      return
+    }
+  } catch { }
+  Add-Type -TypeDefinition $TypeDefinition
+}
+
+Add-WinPilotCachedType -Name 'WinPilotCore' -TypeDefinition @'
 using System;
 using System.Text;
 using System.IO;
@@ -107,6 +148,8 @@ public static class DshWin32
     }, IntPtr.Zero);
     return found;
   }
+  public const uint GW_ENABLEDPOPUP = 6;
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint uCmd);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder sb, int max);
@@ -451,6 +494,17 @@ public static class DshWin32
     InitDpiAwareness();
     // Graceful EOF/deadline exits release our own SendInput holds only.
     AppDomain.CurrentDomain.ProcessExit += delegate { try { ReleaseOwnedInput(); } catch { } };
+  }
+
+  public static WinInfo GetEnabledPopupInfo(IntPtr owner)
+  {
+    if (owner == IntPtr.Zero) return default(WinInfo);
+    IntPtr popup = GetWindow(owner, GW_ENABLEDPOPUP);
+    if (popup == IntPtr.Zero || popup == owner || !IsWindowVisible(popup)) return default(WinInfo);
+    uint pid; GetWindowThreadProcessId(popup, out pid);
+    var sb = new StringBuilder(512); GetWindowText(popup, sb, 512);
+    RECT r; GetWindowRect(popup, out r);
+    return new WinInfo { Hwnd = popup, Pid = pid, Title = sb.ToString(), Visible = true, Foreground = (popup == GetForegroundWindow()), Minimized = IsIconic(popup), Rect = r };
   }
 
   public static void InitDpiAwareness()

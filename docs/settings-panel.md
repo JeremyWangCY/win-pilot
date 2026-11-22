@@ -6,6 +6,6 @@
 
 参见 [桌面控制契约](desktop-control-contract.md) 和 [输入中断要求](input-interruption.md)：后台输入、锁屏检查、用户输入中断、焦点让路和默认读取窗口文字遵循本产品自己的契约。浏览器通道是独立能力，不假设它与其他产品的浏览器偏好存在对应关系。
 
-宿主的 schemastery 必须支持真实 volatile 引用（已核对 3.18.4）；3.18.2 上添加元数据不会带来热更新。独立 CLI/MCP 安装无需宿主依赖，仍可使用内部默认值。
+宿主的 schemastery 必须支持真实 volatile 引用（已核对 3.18.4）；3.18.2 上添加元数据不会带来热更新。独立 CLI/MCP 或其他 Agent 安装无需宿主依赖，可直接通过 `win-pilot config` 或 `~/.win-pilot/config.json`（可用 `WIN_PILOT_CONFIG` 指定路径）修改同样的七项偏好，并在下次请求时热加载生效；未配置时使用内部默认值（其中 `browserControl` 默认关闭）。
 
 `settings-integration.check.mjs` 使用真实 schemastery/cosmokit 验证 Config 投射形状和引用热更新；这不等同于完整桌面 Loader/表单集成。旧 APPDATA runtime 的 `settings.register` 不代表当前 Electron ASAR 中的宿主，因此不再作为当前集成通过的证据。
