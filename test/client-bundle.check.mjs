@@ -569,12 +569,15 @@ function scopeDouble({ value = {}, user = undefined, writable = true, status = '
   await saved
 }
 
-// A field present in the user layer shows the Overridden badge and a reset control.
+// A field present in the user layer offers a clean icon-only reset control
+// without a redundant "Overridden" pill, and an offline runtime renders no
+// noisy "Offline" chip.
 {
   const scope = scopeDouble({ value: { overlay: false }, user: { overlay: false } })
   const Card = registeredCard({ configForms: configFormsDouble(['win-pilot'], scope) })
   const tree = pluginReact.mount(Card, { scope, locale: 'en' })
-  assert.ok(texts(tree).includes('Overridden'), 'an overridden field must be badged')
+  assert.equal(texts(tree).includes('Overridden'), false, 'overridden fields must not render a redundant text badge')
+  assert.equal(texts(tree).includes('Offline'), false, 'an unconnected runtime must not render a noisy Offline chip')
   const reset = find(tree, (node) => node.type === 'button' && node.props.className === 'wp-reset')
   assert.ok(reset, 'an overridden field must offer a reset control')
   await reset.props.onClick()
