@@ -83,6 +83,7 @@ static class Native
     }
     [DllImport("user32.dll")] internal static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] internal static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll")] internal static extern bool ShowWindow(IntPtr hwnd,int command);
     [DllImport("user32.dll",SetLastError=true)]internal static extern bool PrintWindow(IntPtr window,IntPtr dc,uint flags);
     [DllImport("user32.dll",EntryPoint="SendMessageW")]internal static extern IntPtr SendWindowMessage(IntPtr window,int message,IntPtr wParam,IntPtr lParam);
     [DllImport("user32.dll",EntryPoint="PostMessageW")]internal static extern bool PostWindowMessage(IntPtr window,int message,IntPtr wParam,IntPtr lParam);
@@ -383,8 +384,9 @@ sealed class DesktopWindow : Form
     {
         if(closing||startupCancellation.IsCancellationRequested)return Program.Fail("task_desktop_closed","任务窗口正在结束，拒绝新操作。");
         if(previewOnly)return Program.Fail("task_desktop_preview_only","当前窗口仅供预览，不执行电脑动作。");
-        Show(); if(WindowState==FormWindowState.Minimized)WindowState=FormWindowState.Normal;
+        Show(); Native.ShowWindow(Handle,5); if(WindowState==FormWindowState.Minimized)WindowState=FormWindowState.Normal;
         if(!expanded)ToggleWindowSize();
+        Activate();
         var result=await Pause(false);
         if(result["ok"]?.GetValue<bool>()!=true)return result;
         takeover=false;awaitingHuman=true;state="awaiting_human";lastError="";UpdateState();
