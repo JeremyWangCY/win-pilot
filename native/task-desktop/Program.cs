@@ -245,7 +245,7 @@ sealed class DesktopWindow : Form
     readonly TaskCompletionSource<bool> rdpConnected=new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly TaskCompletionSource<bool> startupMarkersReady=new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly TaskCompletionSource<bool> loginCompleted=new(TaskCreationOptions.RunContinuationsAsynchronously);
-    uint childSession=uint.MaxValue; HashSet<uint> sessionBaseline=new(); bool paused=true, takeover, closing, shutdownComplete, opening, connected, bootstrapStarted,workerAuthenticated,sessionInvalidated;
+    uint childSession=uint.MaxValue; HashSet<uint> sessionBaseline=new(); bool paused=true, takeover, awaitingHuman, closing, shutdownComplete, opening, connected, bootstrapStarted,workerAuthenticated,sessionInvalidated;
     ProcessIdentity.Info? workerIdentity;
     string state="idle",lastError="";
     DateTime connectStarted,lastSessionWaitNotice;
@@ -280,7 +280,6 @@ sealed class DesktopWindow : Form
     readonly ToolTip windowHints=new(){ShowAlways=true};
     Rectangle compactBounds;
     bool expanded;
-    bool automaticTakeover;
     long lastManualInput;
     long manualInputVersion;
     bool windowsLoginRequested,connectionRequested;
@@ -351,6 +350,7 @@ sealed class DesktopWindow : Form
     Color StateTone()=>previewOnly?Palette.InkFaint:state switch{
         "running" => Palette.Accent,
         "ready" when !paused => Palette.Accent,
+        "awaiting_human" => Palette.Accent,
         "pausing" or "takeover" or "ready" or "needs_preparation" or "login_settings" => Palette.Amber,
         "error" or "disconnected" => Palette.Danger,
         _ => Palette.InkFaint,
@@ -363,28 +363,32 @@ sealed class DesktopWindow : Form
         expanded=!expanded;windowSize.AccessibleName=expanded?UiText.ResizeCollapse:UiText.ResizeToggle;windowSize.Invalidate();
         ConfigureManualInput();UpdateState();
     }
-    void ConfigureManualInput(){if(view!=null)view.AcquireUserInput=expanded?BeginManualInput:null;}
-    async Task<bool> BeginManualInput(){
-        if(!expanded||closing)return false;
-        var stopping=Pause(true);long version=manualInputVersion;
-        var result=await stopping;
-        if(result["ok"]?.GetValue<bool>()!=true||!expanded||closing||version!=manualInputVersion)return false;
-        view?.Focus();
-        automaticTakeover=true;lastManualInput=Environment.TickCount64;return true;
-    }
+    void ConfigureManualInput(){if(view!=null)view.AcquireUserInput=null;}
     async Task ToggleControl()
     {
         if(closing||previewOnly||!connected)return;
-        if((takeover||paused)&&workerReady.Task.IsCompletedSuccessfully&&writer!=null){
-            await Resume();
+        if(takeover){
+            if(workerReady.Task.IsCompletedSuccessfully&&writer!=null)await Resume();
+            else {takeover=false;UpdateState();}
             return;
         }
         if(!expanded)ToggleWindowSize();
         var result=await Pause(true);
         if(result["ok"]?.GetValue<bool>()==true&&!closing){
-            automaticTakeover=false;
+            awaitingHuman=false;
             view?.Focus();
         }
+    }
+    async Task<JsonObject> HandOff()
+    {
+        if(closing||startupCancellation.IsCancellationRequested)return Program.Fail("task_desktop_closed","任务窗口正在结束，拒绝新操作。");
+        if(previewOnly)return Program.Fail("task_desktop_preview_only","当前窗口仅供预览，不执行电脑动作。");
+        Show(); if(WindowState==FormWindowState.Minimized)WindowState=FormWindowState.Normal;
+        if(!expanded)ToggleWindowSize();
+        var result=await Pause(false);
+        if(result["ok"]?.GetValue<bool>()!=true)return result;
+        takeover=false;awaitingHuman=true;state="awaiting_human";lastError="";UpdateState();
+        return Snapshot();
     }
     ToolStripMenuItem MenuItem(string text,Func<Task> action)
     {
@@ -437,7 +441,7 @@ sealed class DesktopWindow : Form
         b.FlatAppearance.BorderSize=1;b.FlatAppearance.BorderColor=Palette.LineSoft;b.FlatAppearance.MouseOverBackColor=Palette.Hover;
         b.Click+=async(_,_)=>{try{await action();}catch(Exception e){Error(e.Message);}};return b;
     }
-    JsonObject Snapshot()=>new(){["ok"]=true,["instance_id"]=instance,["preview_only"]=previewOnly,["state"]=state,["windows_session_id"]=childSession==uint.MaxValue?null:childSession,["parent_windows_session_id"]=parentSession,["startup_isolation_ready"]=startupMarkersReady.Task.IsCompletedSuccessfully,["worker_ready"]=workerReady.Task.IsCompletedSuccessfully&&writer!=null&&connected,["paused"]=paused,["takeover"]=takeover,["visible"]=Visible&&!IsDisposed,["connected"]=connected,["message"]=lastError,["host_pid"]=Environment.ProcessId};
+    JsonObject Snapshot()=>new(){["ok"]=true,["instance_id"]=instance,["preview_only"]=previewOnly,["state"]=state,["windows_session_id"]=childSession==uint.MaxValue?null:childSession,["parent_windows_session_id"]=parentSession,["startup_isolation_ready"]=startupMarkersReady.Task.IsCompletedSuccessfully,["worker_ready"]=workerReady.Task.IsCompletedSuccessfully&&writer!=null&&connected,["paused"]=paused,["takeover"]=takeover,["awaiting_human"]=awaitingHuman,["visible"]=Visible&&!IsDisposed,["connected"]=connected,["message"]=lastError,["host_pid"]=Environment.ProcessId};
     void UpdateState()
     {
         badge.Text=UiText.Badge(state,paused);
@@ -446,11 +450,10 @@ sealed class DesktopWindow : Form
         loginSettings.Enabled=!previewOnly&&!opening;
         bool workerLive=connected&&!closing&&!previewOnly&&workerReady.Task.IsCompletedSuccessfully&&writer!=null;
         bool awaitingSignIn=connected&&!closing&&!previewOnly&&!loginCompleted.Task.IsCompletedSuccessfully&&!workerAuthenticated;
-        bool canResume=workerLive&&(takeover||paused);
-        bool canTakeOver=(workerLive&&!takeover&&!paused)||(awaitingSignIn&&!takeover);
-        controlToggle.Visible=canResume||canTakeOver;
-        controlToggle.Enabled=controlToggle.Visible&&state!="pausing";
-        if(canResume){
+        bool canAct=!closing&&!previewOnly&&connected&&(workerLive||awaitingSignIn||takeover||awaitingHuman);
+        controlToggle.Visible=canAct;
+        controlToggle.Enabled=canAct&&state!="pausing";
+        if(takeover){
             controlToggle.Text=UiText.ResumeHosting;
             controlToggle.AccessibleName=UiText.ResumeHosting;
             controlToggle.BackColor=Palette.Accent;
@@ -458,6 +461,14 @@ sealed class DesktopWindow : Form
             controlToggle.FlatAppearance.BorderColor=Palette.Accent;
             controlToggle.FlatAppearance.MouseOverBackColor=ControlPaint.Dark(Palette.Accent,0.08f);
             windowHints.SetToolTip(controlToggle,UiText.HintResumeHosting);
+        } else if(awaitingHuman){
+            controlToggle.Text=UiText.TakeOver;
+            controlToggle.AccessibleName=UiText.TakeOver;
+            controlToggle.BackColor=Palette.Accent;
+            controlToggle.ForeColor=Color.White;
+            controlToggle.FlatAppearance.BorderColor=Palette.Accent;
+            controlToggle.FlatAppearance.MouseOverBackColor=ControlPaint.Dark(Palette.Accent,0.08f);
+            windowHints.SetToolTip(controlToggle,UiText.HintAwaitingHuman);
         } else {
             controlToggle.Text=UiText.TakeOver;
             controlToggle.AccessibleName=UiText.TakeOver;
@@ -467,7 +478,7 @@ sealed class DesktopWindow : Form
             controlToggle.FlatAppearance.MouseOverBackColor=Palette.Hover;
             windowHints.SetToolTip(controlToggle,UiText.HintTakeOver);
         }
-        if(view!=null)view.AllowUserInput=takeover||(expanded&&connected&&!loginCompleted.Task.IsCompletedSuccessfully&&!workerAuthenticated);
+        if(view!=null)view.AllowUserInput=takeover;
         Program.Emit(new{ @event="state",state=Snapshot()});
     }
     void Error(string message){lastError=message;state="error";paused=true;UpdateState();if(view==null)notice.Text=UiText.NoticeUnavailable(UiText.Failure(message));}
@@ -504,7 +515,6 @@ sealed class DesktopWindow : Form
     void Poll()
     {
         if(view==null||closing||sessionInvalidated)return;
-        if(automaticTakeover&&!view.HasHeldUserInput&&Environment.TickCount64-lastManualInput>=10000){automaticTakeover=false;_=Resume();}
         try {
             int value=(int)((dynamic)view.Client).Connected;
             RefreshLiveSessions();
@@ -749,7 +759,7 @@ sealed class DesktopWindow : Form
         catch(Exception e){return Program.Fail("task_desktop_stop_unconfirmed","停止执行工具未获确认："+e.Message,true);}
     }
     async Task<JsonObject> Pause(bool manual){
-        automaticTakeover=false;long version=++manualInputVersion;
+        long version=++manualInputVersion;
         // Before a worker is authenticated there is no agent input to cancel.
         // Allow the human to complete Windows' own login UI inside this RDP view.
         if(manual&&connected&&!workerAuthenticated&&writer==null&&view!=null&&!closing&&!startupCancellation.IsCancellationRequested&&!File.Exists(Path.Combine(AppContext.BaseDirectory,"safety-hold.json"))) {
@@ -760,17 +770,17 @@ sealed class DesktopWindow : Form
         var stopped=await CancelWorker();
         if(closing||version!=manualInputVersion)return Program.Fail("task_desktop_control_changed","控制状态已改变，请重新观察。");
         if(stopped["ok"]?.GetValue<bool>()!=true){Error(stopped["message"]?.ToString()??"停止执行工具未获确认。");return stopped;}
-        takeover=manual;state=manual?"takeover":"ready";lastError="";UpdateState();return Snapshot();
+        takeover=manual;if(manual)awaitingHuman=false;state=manual?"takeover":"ready";lastError="";UpdateState();return Snapshot();
     }
     async Task<JsonObject> Resume(){
         if(closing||startupCancellation.IsCancellationRequested)return Program.Fail("task_desktop_closed","任务窗口正在结束，拒绝恢复操作。");
         if(writer==null||!connected||sessionInvalidated||workerIdentity==null||File.Exists(Path.Combine(AppContext.BaseDirectory,"safety-hold.json")))return Program.Fail("task_desktop_worker_unavailable","执行工具未就绪、已断开或启动已被拦截。");
         if(!LiveCached(workerIdentity.Session))return Program.Fail("task_desktop_session_changed","目标子会话已改变。");
-        long version=++manualInputVersion;automaticTakeover=false;paused=true;takeover=false;if(view!=null)view.AllowUserInput=false;
+        long version=++manualInputVersion;paused=true;takeover=false;awaitingHuman=false;if(view!=null)view.AllowUserInput=false;
         var r=await SendWorker("resume");
         if(r["ok"]?.GetValue<bool>()!=true)return r;
         if(closing||version!=manualInputVersion||view?.HasHeldUserInput==true)return Program.Fail("task_desktop_control_changed","手动操作或控制状态已改变，未交还 AI。");
-        paused=false;takeover=false;state="ready";lastError="";UpdateState();return Snapshot();
+        paused=false;takeover=false;awaitingHuman=false;state="ready";lastError="";UpdateState();return Snapshot();
     }
     async Task ReadCommands()
     {
@@ -788,7 +798,7 @@ sealed class DesktopWindow : Form
         try {
             result=command switch {
                 "status"=>Snapshot(),"preview"=>Snapshot(),"open"=>await Open(false),"login"=>await Open(false,true),"prepare"=>await Open(true),"retry"=>await RetryWorker(),
-                "pause"=>await Pause(false),"takeover"=>await Pause(true),"resume"=>await Resume(),
+                "pause"=>await Pause(false),"takeover"=>await Pause(true),"hand_off"=>await HandOff(),"resume"=>await Resume(),
                 "execute"=>await Execute(message["request"]?.AsObject()??new()),
                 "preview_snapshot"=>CapturePreview(),
                 "close"=>await CloseCommand(),_=>Program.Fail("task_desktop_unknown_command","不支持的窗口命令。")
@@ -808,7 +818,7 @@ sealed class DesktopWindow : Form
         if(closing||startupCancellation.IsCancellationRequested)return Program.Fail("task_desktop_closed","任务窗口正在结束，拒绝新操作。");
         if(previewOnly)return Program.Fail("task_desktop_preview_only","当前窗口仅供预览，不执行电脑动作。");
         string action=request["action"]?.ToString()??"";
-        if(action=="stop"){automaticTakeover=false;++manualInputVersion;var stopped=await SendWorker("stop",request);paused=true;takeover=false;state="ready";UpdateState();return stopped;}
+        if(action=="stop"){++manualInputVersion;var stopped=await SendWorker("stop",request);paused=true;takeover=false;awaitingHuman=false;state="ready";UpdateState();return stopped;}
         if(File.Exists(Path.Combine(AppContext.BaseDirectory,"safety-hold.json")))return Program.Fail("task_desktop_safety_hold","独立桌面操作已被安全拦截。");
         if(!connected||(paused&&Native.Mutation(action)))return Program.Fail("task_desktop_paused","任务桌面已暂停或断开，未执行操作。");
         if(workerIdentity==null||workerIdentity.Session!=childSession||!LiveCached(childSession)||childSession==(uint)parentSession)return Program.Fail("task_desktop_session_changed","目标子会话已改变。");

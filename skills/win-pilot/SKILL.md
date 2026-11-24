@@ -42,3 +42,7 @@ A snapshot reports what a click can actually reach: controls drawn with `opacity
 A native JavaScript dialog blocks the whole page: `browser_click` returns `dialog_opened` immediately when a click opens one, and subsequent actions return `error_code: "javascript_dialog_open"` with the dialog type and message instead of hanging. Answer it with `browser_dialog` (`accept: true|false`, `prompt_text` for prompts) before continuing.
 
 `browser_wait` waits for document readiness, a text change, `url_change` against `expected_url`, or a CSS `selector`. Cross-origin navigation and requests are limited to the current frame's origin unless you pass the target in `allowed_origins`; there are no implicit site exceptions. `browser_request` sends form encoding by default and JSON with `json`, and copies a named cookie into a form field with `csrf_cookie`/`csrf_field`.
+
+## Human hand-off
+
+When a step requires manual user action (sign-in, 2FA, CAPTCHA, UAC, payment, or confirmation), call `hand_off` (with `reason`) to pause AI and highlight the **Take over** button in the task desktop window, tell the user what to do, and call `wait_for_control` to wait until the user clicks **Hand back**; re-observe once control returns.

@@ -23,10 +23,11 @@ static class UiText
     internal static string ResizeToggle => T("放大任务窗口", "Expand the task window");
     internal static string ResizeCollapse => T("收回悬浮窗", "Collapse the task window");
     internal static string TakeOver => T("接管", "Take over");
-    internal static string ResumeHosting => T("恢复托管", "Hand back");
-    internal static string HintTakeOver => T("暂停 AI 并手动操作任务桌面", "Pause AI and take manual control");
-    internal static string HintResumeHosting => T("交还给 AI 继续托管", "Return control to AI");
-    internal static string HintResize => T("放大 / 收回任务窗口", "Expand / collapse the task window");
+    internal static string ResumeHosting => T("交还托管", "Hand back");
+    internal static string HintTakeOver => T("点击接管后才能手动操作任务桌面", "Click to take manual control of the task desktop");
+    internal static string HintAwaitingHuman => T("需要你操作：点击接管开始，完成后点击交还托管", "Action needed: click Take over, then Hand back when done");
+    internal static string HintResumeHosting => T("操作完成后交还给 AI 继续托管", "Return control to AI");
+    internal static string HintResize => T("放大 / 收回任务窗口（仅观看，需点接管才能操控）", "Expand / collapse (view only; click Take over to interact)");
     internal static string HintPin => T("置顶 / 取消置顶", "Always on top / normal");
     internal static string HintClose => T("关闭任务窗口", "Close the task window");
 
@@ -42,7 +43,8 @@ static class UiText
         "login_settings" => T("首次登录设置", "Sign-in setup needed"),
         "awaiting_windows_login" => T("请登录 Windows", "Sign in to Windows"),
         "connecting" => T("正在连接", "Connecting"),
-        "takeover" => T("人工接管", "You have control"),
+        "awaiting_human" => T("等待接管", "Needs your action"),
+        "takeover" => T("人工操控中", "Manual control"),
         "needs_preparation" => T("需要准备", "Preparation needed"),
         "error" => T("连接失败", "Connection failed"),
         "disconnected" => T("已断开", "Disconnected"),
