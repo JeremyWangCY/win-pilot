@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-Expected for this release: version `0.6.4`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
+Expected for this release: version `0.6.5`, platform `win32`, and every required doctor check marked `ok`. Doctor checks installed prerequisites; a successful connection is required to verify a task session.
 
 ### Settings
 
