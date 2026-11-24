@@ -51,6 +51,9 @@ static class Program
         string instance=Guid.NewGuid().ToString();
         for(int i=0;i+1<args.Length;i++) if(args[i]=="--instance-id") instance=Guid.Parse(args[i+1]).ToString();
         Application.Run(new DesktopWindow(instance,args.Contains("--preview")));
+        // Force clean process exit once the window closes so blocked stdio reads
+        // or background RDP COM threads never delay the parent's stdout drain.
+        Environment.Exit(0);
     }
 }
 

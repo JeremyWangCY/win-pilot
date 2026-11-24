@@ -75,7 +75,11 @@ static class DisplayScale
     {
         if(recorded=="[]")return;
         try{
-            var start=new ProcessStartInfo(Environment.ProcessPath!){UseShellExecute=false,CreateNoWindow=true};
+            // UseShellExecute=true avoids bInheritHandles=TRUE so the detached
+            // watcher never holds the host's redirected stdout/stderr pipes open.
+            var start=new ProcessStartInfo(Environment.ProcessPath!){
+                UseShellExecute=true,WindowStyle=ProcessWindowStyle.Hidden,
+            };
             start.ArgumentList.Add("--restore-display-scale");start.ArgumentList.Add(recorded);
             Process.Start(start)?.Dispose();
         }catch{ /* the scale guard is best effort and never blocks cleanup */ }
