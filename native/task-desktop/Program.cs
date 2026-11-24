@@ -82,11 +82,16 @@ static class Native
         try{if(success)return bytes>=4;if(error is 2 or 7022)return false;throw new System.ComponentModel.Win32Exception(error);}finally{if(buffer!=IntPtr.Zero)WTSFreeMemory(buffer);}
     }
     [DllImport("user32.dll")] internal static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] internal static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll",SetLastError=true)]internal static extern bool PrintWindow(IntPtr window,IntPtr dc,uint flags);
     [DllImport("user32.dll",EntryPoint="SendMessageW")]internal static extern IntPtr SendWindowMessage(IntPtr window,int message,IntPtr wParam,IntPtr lParam);
+    [DllImport("user32.dll",EntryPoint="PostMessageW")]internal static extern bool PostWindowMessage(IntPtr window,int message,IntPtr wParam,IntPtr lParam);
     [DllImport("user32.dll")] internal static extern bool IsChild(IntPtr parent,IntPtr child);
     internal delegate bool ChildWindowVisitor(IntPtr window,IntPtr state);
+    [DllImport("user32.dll")]internal static extern bool EnumWindows(ChildWindowVisitor visitor,IntPtr state);
     [DllImport("user32.dll")]internal static extern bool EnumChildWindows(IntPtr parent,ChildWindowVisitor visitor,IntPtr state);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)]internal static extern int GetClassNameW(IntPtr hwnd,StringBuilder text,int maxCount);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)]internal static extern int GetWindowTextW(IntPtr hwnd,StringBuilder text,int maxCount);
     [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint process);
     [DllImport("kernel32.dll")] internal static extern bool ProcessIdToSessionId(uint process,out uint session);
     internal static bool WindowBelongsToSession(IntPtr window,uint session){
@@ -269,7 +274,7 @@ sealed class DesktopWindow : Form
         uint? reported=ChildSessionQuery.ReportedChild(out uint value)?value:null;
         return ChildSessionQuery.TryResolve(LiveSnapshot(),sessionBaseline,(uint)parentSession,reported,out sid,out pending);
     }
-    readonly Button windowSize,pinWindow;
+    readonly Button controlToggle,windowSize,pinWindow;
     readonly ToolStripMenuItem loginSettings;
     readonly ContextMenuStrip windowMenu=new();
     readonly ToolTip windowHints=new(){ShowAlways=true};
@@ -289,10 +294,13 @@ sealed class DesktopWindow : Form
         var work=Screen.PrimaryScreen!.WorkingArea;Location=new(Math.Max(work.Left,work.Right-Width-16),Math.Max(work.Top,work.Bottom-Height-16));
         BackColor=Palette.Paper; ForeColor=Palette.Ink; Font=new Font("Microsoft YaHei UI",9);
         var top=new Panel(){Dock=DockStyle.Top,Height=32};
-        var tools=new FlowLayoutPanel(){Dock=DockStyle.Right,Width=104,Padding=new Padding(0,3,2,2),WrapContents=false};
+        var tools=new FlowLayoutPanel(){Dock=DockStyle.Right,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Padding=new Padding(0,3,2,2),WrapContents=false};
         loginSettings=MenuItem(UiText.MenuLoginSettings,()=>{using var dialog=new LoginSettingsDialog();dialog.ShowDialog(this);dialog.Login?.Dispose();return Task.CompletedTask;});
         windowMenu.BackColor=Palette.Paper;windowMenu.ForeColor=ForeColor;windowMenu.Font=Font;
         windowMenu.Items.Add(loginSettings);top.ContextMenuStrip=windowMenu;badge.ContextMenuStrip=windowMenu;
+        controlToggle=Button(UiText.TakeOver,ToggleControl);controlToggle.Name="task-window-control";controlToggle.AccessibleName=UiText.TakeOver;
+        controlToggle.AutoSize=true;controlToggle.AutoSizeMode=AutoSizeMode.GrowAndShrink;controlToggle.MinimumSize=new(0,25);controlToggle.MaximumSize=new(0,25);
+        controlToggle.Padding=new Padding(7,0,7,0);controlToggle.Margin=new Padding(2,0,4,0);controlToggle.Font=new Font("Microsoft YaHei UI",8.5f);controlToggle.TabStop=false;controlToggle.Visible=false;
         windowSize=Button("",()=>{ToggleWindowSize();return Task.CompletedTask;});windowSize.Name="task-window-size";windowSize.AccessibleName=UiText.ResizeToggle;
         windowSize.Paint+=(_,e)=>PaintGlyph(e.Graphics,windowSize.ClientRectangle,expanded?Glyph.Restore:Glyph.Expand);
         pinWindow=Button("",()=>{TopMost=!TopMost;pinWindow!.Invalidate();return Task.CompletedTask;});pinWindow.Name="task-window-pin";pinWindow.AccessibleName=UiText.PinToggle;
@@ -309,8 +317,8 @@ sealed class DesktopWindow : Form
             float cy=badge.Padding.Top+badge.Font.Height/2f;
             using var dot=new SolidBrush(StateTone());e.Graphics.FillEllipse(dot,10.5f,cy-3.5f,7,7);
         };
-        windowHints.SetToolTip(windowSize,UiText.HintResize);windowHints.SetToolTip(pinWindow,UiText.HintPin);windowHints.SetToolTip(closeWindow,UiText.HintClose);
-        tools.Controls.AddRange([windowSize,pinWindow,closeWindow]);top.Controls.Add(badge);top.Controls.Add(tools);
+        windowHints.SetToolTip(controlToggle,UiText.HintTakeOver);windowHints.SetToolTip(windowSize,UiText.HintResize);windowHints.SetToolTip(pinWindow,UiText.HintPin);windowHints.SetToolTip(closeWindow,UiText.HintClose);
+        tools.Controls.AddRange([controlToggle,windowSize,pinWindow,closeWindow]);top.Controls.Add(badge);top.Controls.Add(tools);
         Controls.Add(canvas);Controls.Add(top);canvas.Controls.Add(notice);
         Point? dragOrigin=null;Point windowOrigin=default;
         foreach(var surface in new Control[]{top,badge}){
@@ -363,6 +371,20 @@ sealed class DesktopWindow : Form
         if(result["ok"]?.GetValue<bool>()!=true||!expanded||closing||version!=manualInputVersion)return false;
         view?.Focus();
         automaticTakeover=true;lastManualInput=Environment.TickCount64;return true;
+    }
+    async Task ToggleControl()
+    {
+        if(closing||previewOnly||!connected)return;
+        if((takeover||paused)&&workerReady.Task.IsCompletedSuccessfully&&writer!=null){
+            await Resume();
+            return;
+        }
+        if(!expanded)ToggleWindowSize();
+        var result=await Pause(true);
+        if(result["ok"]?.GetValue<bool>()==true&&!closing){
+            automaticTakeover=false;
+            view?.Focus();
+        }
     }
     ToolStripMenuItem MenuItem(string text,Func<Task> action)
     {
@@ -422,7 +444,30 @@ sealed class DesktopWindow : Form
         if(previewOnly)badge.Text=UiText.PreviewBadge;
         badge.Invalidate();
         loginSettings.Enabled=!previewOnly&&!opening;
-        if(view!=null)view.AllowUserInput=expanded&&(takeover||(connected&&!loginCompleted.Task.IsCompletedSuccessfully&&!workerAuthenticated));
+        bool workerLive=connected&&!closing&&!previewOnly&&workerReady.Task.IsCompletedSuccessfully&&writer!=null;
+        bool awaitingSignIn=connected&&!closing&&!previewOnly&&!loginCompleted.Task.IsCompletedSuccessfully&&!workerAuthenticated;
+        bool canResume=workerLive&&(takeover||paused);
+        bool canTakeOver=(workerLive&&!takeover&&!paused)||(awaitingSignIn&&!takeover);
+        controlToggle.Visible=canResume||canTakeOver;
+        controlToggle.Enabled=controlToggle.Visible&&state!="pausing";
+        if(canResume){
+            controlToggle.Text=UiText.ResumeHosting;
+            controlToggle.AccessibleName=UiText.ResumeHosting;
+            controlToggle.BackColor=Palette.Accent;
+            controlToggle.ForeColor=Color.White;
+            controlToggle.FlatAppearance.BorderColor=Palette.Accent;
+            controlToggle.FlatAppearance.MouseOverBackColor=ControlPaint.Dark(Palette.Accent,0.08f);
+            windowHints.SetToolTip(controlToggle,UiText.HintResumeHosting);
+        } else {
+            controlToggle.Text=UiText.TakeOver;
+            controlToggle.AccessibleName=UiText.TakeOver;
+            controlToggle.BackColor=Palette.Paper;
+            controlToggle.ForeColor=Palette.Ink;
+            controlToggle.FlatAppearance.BorderColor=Palette.Line;
+            controlToggle.FlatAppearance.MouseOverBackColor=Palette.Hover;
+            windowHints.SetToolTip(controlToggle,UiText.HintTakeOver);
+        }
+        if(view!=null)view.AllowUserInput=takeover||(expanded&&connected&&!loginCompleted.Task.IsCompletedSuccessfully&&!workerAuthenticated);
         Program.Emit(new{ @event="state",state=Snapshot()});
     }
     void Error(string message){lastError=message;state="error";paused=true;UpdateState();if(view==null)notice.Text=UiText.NoticeUnavailable(UiText.Failure(message));}
@@ -846,6 +891,25 @@ static class Worker
     // cannot be closed from here and is judged by its traffic in SessionProbe.
     static readonly string[] AutorunRemoteClients={"GameViewer"};
 
+    internal static bool IsKnownChildSessionSystemAppErrorDialog(string className,string title)=>
+        className=="#32770"&&
+        title.Contains(@"SystemApps\MicrosoftWindows.Client.CBS",StringComparison.OrdinalIgnoreCase);
+
+    static void DismissSystemAppStartupDialogs()
+    {
+        var cls=new StringBuilder(64);
+        var title=new StringBuilder(512);
+        Native.EnumWindows((hwnd,_)=>{
+            if(!Native.IsWindowVisible(hwnd))return true;
+            cls.Clear();title.Clear();
+            if(Native.GetClassNameW(hwnd,cls,cls.Capacity)<=0)return true;
+            if(Native.GetWindowTextW(hwnd,title,title.Capacity)<=0)return true;
+            if(IsKnownChildSessionSystemAppErrorDialog(cls.ToString(),title.ToString()))
+                Native.PostWindowMessage(hwnd,0x0010,IntPtr.Zero,IntPtr.Zero);
+            return true;
+        },IntPtr.Zero);
+    }
+
     static void CloseAutorunRemoteClients(int session)
     {
         foreach(var name in AutorunRemoteClients)
@@ -853,6 +917,7 @@ static class Worker
                 try { if(process.SessionId==session)process.Kill(); } catch(Exception) { }
                 finally { process.Dispose(); }
             }
+        DismissSystemAppStartupDialogs();
     }
 
     public static async Task Run(string configPath)
@@ -880,7 +945,7 @@ static class Worker
         // The child session logs on as this user, so HKCU\Run starts the user's
         // remote-control tray clients here too. Close this session's copies for as
         // long as the worker runs; the user's own session keeps its client.
-        using var autorunSweep=new System.Threading.Timer(_=>CloseAutorunRemoteClients(session),null,0,5000);
+        using var autorunSweep=new System.Threading.Timer(_=>CloseAutorunRemoteClients(session),null,0,2000);
         var gate=new SemaphoreSlim(1,1);var write=new SemaphoreSlim(1,1);string? activeCancel=null;bool paused=false,draining=false;var operations=new List<Task>();
         var helperProtocol=new HelperProtocol(helper.StandardInput,helper.StandardOutput);
         async Task Reply(string id,JsonObject result){await write.WaitAsync();try{await writer.WriteLineAsync(new JsonObject(){["id"]=id,["result"]=result}.ToJsonString());}finally{write.Release();}}

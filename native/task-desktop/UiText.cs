@@ -22,7 +22,11 @@ static class UiText
     internal static string PinToggle => T("切换置顶", "Toggle always-on-top");
     internal static string ResizeToggle => T("放大任务窗口", "Expand the task window");
     internal static string ResizeCollapse => T("收回悬浮窗", "Collapse the task window");
-    internal static string HintResize => T("放大后可接管，空闲 10 秒交还", "Expand to take over · hands back after 10s idle");
+    internal static string TakeOver => T("接管", "Take over");
+    internal static string ResumeHosting => T("恢复托管", "Hand back");
+    internal static string HintTakeOver => T("暂停 AI 并手动操作任务桌面", "Pause AI and take manual control");
+    internal static string HintResumeHosting => T("交还给 AI 继续托管", "Return control to AI");
+    internal static string HintResize => T("放大 / 收回任务窗口", "Expand / collapse the task window");
     internal static string HintPin => T("置顶 / 取消置顶", "Always on top / normal");
     internal static string HintClose => T("关闭任务窗口", "Close the task window");
 
