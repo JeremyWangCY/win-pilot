@@ -86,7 +86,7 @@ win-pilot status --json
 win-pilot doctor --probe --json
 ```
 
-本版预期版本为 `0.6.5`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
+本版预期版本为 `0.6.6`、平台为 `win32`，doctor 的必要检查全部为 `ok`。doctor 检查安装条件；独立任务会话是否可用仍需实际连接验证。
 
 ### 更新
 

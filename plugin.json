@@ -1,7 +1,7 @@
 {
   "name": "win-pilot",
   "displayName": "Win-Pilot",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "Windows computer-use plugin for AI agents: UI Automation, window-bound screenshots, background-first verified input, independent task desktop, and optional isolated Chromium control.",
   "logo": "icon.svg",
   "suggestedPrompts": [
