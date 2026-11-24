@@ -234,7 +234,7 @@ sealed class DesktopWindow : Form
     readonly string pipeName, configPath, helperPath;
     readonly Panel canvas=new(){Dock=DockStyle.Fill,BackColor=Palette.PaperTile};
     readonly Label notice=new(){Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleCenter,ForeColor=Palette.InkFaint,Font=new Font("Microsoft YaHei UI",13)};
-    readonly Label badge=new(){AutoSize=false,Dock=DockStyle.Fill,ForeColor=Palette.Ink,Padding=new Padding(24,7,0,0),AutoEllipsis=true};
+    readonly Label badge=new(){AutoSize=false,Dock=DockStyle.Fill,ForeColor=Palette.Ink,TextAlign=ContentAlignment.MiddleLeft,Padding=new Padding(24,0,0,0),AutoEllipsis=true};
     readonly CancellationTokenSource lifetime=new();
     readonly CancellationTokenSource startupCancellation=new();
     readonly Dictionary<string,TaskCompletionSource<JsonObject>> pending=new();
@@ -296,14 +296,14 @@ sealed class DesktopWindow : Form
         ClientSize=new(432,300);MinimumSize=new(360,240);StartPosition=FormStartPosition.Manual;TopMost=true;Padding=new Padding(1);
         var work=Screen.PrimaryScreen!.WorkingArea;Location=new(Math.Max(work.Left,work.Right-Width-16),Math.Max(work.Top,work.Bottom-Height-16));
         BackColor=Palette.Paper; ForeColor=Palette.Ink; Font=new Font("Microsoft YaHei UI",9);
-        var top=new Panel(){Dock=DockStyle.Top,Height=32};
-        var tools=new FlowLayoutPanel(){Dock=DockStyle.Right,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Padding=new Padding(0,3,2,2),WrapContents=false};
+        var top=new Panel(){Dock=DockStyle.Top,Height=36};
+        var tools=new FlowLayoutPanel(){Dock=DockStyle.Right,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Padding=new Padding(0,5,4,5),WrapContents=false};
         loginSettings=MenuItem(UiText.MenuLoginSettings,()=>{using var dialog=new LoginSettingsDialog();dialog.ShowDialog(this);dialog.Login?.Dispose();return Task.CompletedTask;});
         windowMenu.BackColor=Palette.Paper;windowMenu.ForeColor=ForeColor;windowMenu.Font=Font;
         windowMenu.Items.Add(loginSettings);top.ContextMenuStrip=windowMenu;badge.ContextMenuStrip=windowMenu;
         controlToggle=Button(UiText.TakeOver,ToggleControl);controlToggle.Name="task-window-control";controlToggle.AccessibleName=UiText.TakeOver;
-        controlToggle.AutoSize=true;controlToggle.AutoSizeMode=AutoSizeMode.GrowAndShrink;controlToggle.MinimumSize=new(0,25);controlToggle.MaximumSize=new(0,25);
-        controlToggle.Padding=new Padding(7,0,7,0);controlToggle.Margin=new Padding(2,0,4,0);controlToggle.Font=new Font("Microsoft YaHei UI",8.5f);controlToggle.TabStop=false;controlToggle.Visible=false;
+        controlToggle.AutoSize=false;controlToggle.Size=new(58,26);controlToggle.TextAlign=ContentAlignment.MiddleCenter;
+        controlToggle.Padding=Padding.Empty;controlToggle.Margin=new Padding(2,0,6,0);controlToggle.Font=new Font("Microsoft YaHei UI",8.5f);controlToggle.TabStop=false;controlToggle.Visible=false;
         windowSize=Button("",()=>{ToggleWindowSize();return Task.CompletedTask;});windowSize.Name="task-window-size";windowSize.AccessibleName=UiText.ResizeToggle;
         windowSize.Paint+=(_,e)=>PaintGlyph(e.Graphics,windowSize.ClientRectangle,expanded?Glyph.Restore:Glyph.Expand);
         pinWindow=Button("",()=>{TopMost=!TopMost;pinWindow!.Invalidate();return Task.CompletedTask;});pinWindow.Name="task-window-pin";pinWindow.AccessibleName=UiText.PinToggle;
@@ -313,11 +313,11 @@ sealed class DesktopWindow : Form
         closeWindow.MouseEnter+=(_,_)=>{closeHot=true;closeWindow.Invalidate();};
         closeWindow.MouseLeave+=(_,_)=>{closeHot=false;closeWindow.Invalidate();};
         closeWindow.Paint+=(_,e)=>PaintGlyph(e.Graphics,closeWindow.ClientRectangle,Glyph.Close,ink:closeHot?Color.White:null);
-        foreach(var button in new[]{windowSize,pinWindow,closeWindow}){button.AutoSize=false;button.Size=new(30,25);button.Margin=new Padding(2,0,1,0);button.FlatAppearance.BorderSize=0;button.FlatAppearance.MouseOverBackColor=Palette.Hover;button.FlatAppearance.MouseDownBackColor=Palette.LineSoft;button.TabStop=false;}
+        foreach(var button in new[]{windowSize,pinWindow,closeWindow}){button.AutoSize=false;button.Size=new(30,26);button.Margin=new Padding(2,0,1,0);button.FlatAppearance.BorderSize=0;button.FlatAppearance.MouseOverBackColor=Palette.Hover;button.FlatAppearance.MouseDownBackColor=Palette.LineSoft;button.TabStop=false;}
         closeWindow.FlatAppearance.MouseOverBackColor=Palette.Danger;closeWindow.FlatAppearance.MouseDownBackColor=ControlPaint.Dark(Palette.Danger,0.1f);
         badge.Paint+=(_,e)=>{
             e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            float cy=badge.Padding.Top+badge.Font.Height/2f;
+            float cy=badge.ClientSize.Height/2f;
             using var dot=new SolidBrush(StateTone());e.Graphics.FillEllipse(dot,10.5f,cy-3.5f,7,7);
         };
         windowHints.SetToolTip(controlToggle,UiText.HintTakeOver);windowHints.SetToolTip(windowSize,UiText.HintResize);windowHints.SetToolTip(pinWindow,UiText.HintPin);windowHints.SetToolTip(closeWindow,UiText.HintClose);
@@ -483,6 +483,9 @@ sealed class DesktopWindow : Form
             controlToggle.FlatAppearance.MouseOverBackColor=Palette.Hover;
             windowHints.SetToolTip(controlToggle,UiText.HintTakeOver);
         }
+        int btnH=Math.Max(26,windowSize.Height);
+        int textW=TextRenderer.MeasureText(controlToggle.Text,controlToggle.Font,Size.Empty,TextFormatFlags.SingleLine).Width;
+        controlToggle.Size=new Size(textW+Math.Max(20,btnH),btnH);
         if(view!=null)view.AllowUserInput=takeover;
         Program.Emit(new{ @event="state",state=Snapshot()});
     }
