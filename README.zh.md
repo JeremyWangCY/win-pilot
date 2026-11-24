@@ -22,7 +22,7 @@ Win-Pilot 提供 Windows 电脑操控，优先适配 DeepSeek Harness。`compute
 | 通用后备入口 | 支持工具的 Agent 使用 stdio MCP；仅支持 shell 的 Agent 使用 JSON CLI + Skill |
 | Schema 可移植性 | 工具 Schema 持续验证 OpenAI 与 Gemini 系列消费者 |
 | DSH Provider 生命周期 | 配置表单要求 DSH 0.2.0-rc.2+；占用唯一的 `computerUse` Provider 槽位 |
-| 可选独立任务桌面 | Windows 子会话，默认432×300无标题栏小窗，展开后自动接管与空闲交还 |
+| 可选独立任务桌面 | Windows 子会话，默认 432×300 无标题栏小窗。两种尺寸在点击接管前都只可查看，只有交还托管才会把控制权交回 |
 
 ## 环境要求
 
@@ -105,6 +105,8 @@ DSH profile 需要单独重启。需要刷新 Win-Pilot 管理的 Skill 副本�
 
 ## 使用方法
 
+版本 0.6.6 把任务桌面的接管改成明确操作。放大窗口不再取得控制权，空闲 10 秒也不会自动交还。点击接管会暂停执行工具并解锁输入，点击交还托管才会交回。按住按键或鼠标按钮会阻止这次交还。`hand_off` 暂停并等待接管，`wait_for_control` 等到交还托管。远程会话检查仍是启发式，不承诺子会话不可见。
+
 0.6.4 把原先仅限 DSH 的七项设置统一开放到 `~/.win-pilot/config.json`（支持 `WIN_PILOT_CONFIG`）与 `win-pilot config` 热更新命令，全 Agent 通用（DSH 修改也会自动镜像同步）；将 `browserControl` 改为默认关闭以避免与宿主自带浏览器控制冲突；新增 Antigravity 原生插件清单（`plugin.json` 与 `mcp_config.json`）并统一了设置面板视觉风格；同时修复了多项桌面与浏览器实战问题（点击触发原生 JS 弹窗不再卡死 12 秒、`browser_dialog` 不再误报失败、默认 DOM 点击前先做遮挡校验、`get_window_state` 自动提示 `active_popup` 弹窗、PowerShell Helper C# DLL 缓存加速、带 `url` 的无头 `launch_app` 直接返回初始 `tab_id`、以及独立桌面首次启动优先无弹窗 `open` 并在 35 秒内可靠确认注销）。
 
 0.6.3 让浏览器通道只报告"点击真正能落到"的控件：不可见或被遮挡的元素会被标记或拒绝，而不是静默点到别处；按键覆盖完整命名集合；原生对话框会被报告而不是让页面卡死；新增 hover、下拉选择与截图。同时给虚拟桌面加上可恢复的生命周期：桌面进程死亡或留下孤儿会话时返回 `task_desktop_closed`、`task_desktop_host_lost`、`task_desktop_cleanup_unconfirmed` 或 `task_desktop_orphan_session` 并给出恢复步骤，`task_desktop`（`status` / `restart`）可重建桌面且不重放输入。
@@ -182,9 +184,9 @@ win-pilot config path                     # 查看当前配置文件路径
 
 `desktopEnvironment` 默认 `current`（当前桌面），可选 `task`（独立任务窗口）。保存后从下一次电脑操作起切换，同一聊天也生效。切换前先取消并清理旧控制会话，释放旧浏览器控制权，再要求重新列出窗口或截取桌面后才能输入；旧目标不可沿用，清理失败则停止切换。关闭时，模型工具定义、运行时技能和诊断不宣传独立桌面选项。开启后，电脑动作、观察、剪贴板和恢复都使用同一任务桌面；连接失败不会转到主桌面。浏览器动作只能使用同一任务启动的浏览器。
 
-小窗采用浅色、无原生标题栏的样式，默认432×300，用彩色圆点显示状态，工具栏只留放大收回、置顶和关闭。放大后直接点击、拖动或输入即可接管；AI 停止输入确认后才交付第一个手势。空闲10秒后交还 AI，按住鼠标或按键期间不会自动交还。缩小后为只读预览；右键工具栏可打开本机登录设置。首次完成 Windows 功能准备与本机登录，可选择通过当前用户 DPAPI 和凭据管理器记住登录，密码只在本机窗口输入。需要 .NET 8 Windows Desktop Runtime 及可用的 Windows 子会话功能；更换 Windows 用户、密码或系统策略后可能需要重新设置。
+小窗采用浅色、无原生标题栏的样式，默认 432×300，用彩色圆点显示状态。工具栏包含放大收回、置顶、关闭，以及接管 / 交还托管。两种尺寸在点击接管之前都只可查看。只有这次点击会请求执行工具暂停，暂停确认后才会交付键鼠输入。交还托管是把控制权交回 AI 的唯一路径，没有空闲计时，也不会在 10 秒后自动交还。按住按键或鼠标按钮时，交还托管不会完成，直到松开。`hand_off` 会放大窗口、暂停执行工具并等待接管，它本身不解锁输入。右键工具栏可打开本机登录设置。首次完成 Windows 功能准备与本机登录，可选择通过当前用户 DPAPI 和凭据管理器记住登录，密码只在本机窗口输入。Windows 登录画面同样在点击接管前只可查看。需要 .NET 8 Windows Desktop Runtime 及可用的 Windows 子会话功能；更换 Windows 用户、密码或系统策略后可能需要重新设置。它不是虚拟机。
 
-独立桌面不会出现在远程画面里：远程控制接入时不会打开；打开后才有人接入，动作会改在当前桌面执行，选 `remoteControlPolicy: refuse` 则直接停止。UU（网易 GameViewer）按流量判断是否有人接入，空闲的 UU 不会阻止独立桌面，独立桌面内自启的 UU 托盘会被关闭。关闭独立桌面时，若远程控制软件在注销期间改动了主桌面的显示缩放，会自动恢复。
+Windows 没有接口能对其他程序隐藏子会话。`lib/remote-session-guard.js` 是只读启发式检查。探测失败、活动的非子会话 `WTSClientProtocolType` 非 0，或已画像的串流进程正在传媒体时，打开和登录会被拒绝。对 UU 的 GameViewerServer，媒体指至少两个 UDP 端点，或任意非 443 的 TCP。空闲的 UU 和 GameViewer 托盘客户端不算观看者。子会话之外的未画像产品不会仅因已安装就被拦截；列在子会话内部的未画像进程算作已接入。任务桌面自己的回环 RDP 不是外部观看者。桌面已经打开之后才有人接入时，下一步动作调用 `inspectExposure()`：默认 `remoteControlPolicy: fallback` 改在当前桌面执行并报告 `remote_control_fallback`；`refuse` 返回 `task_desktop_remote_in_use` 且不执行。这两种选择都不会断开观看者，也不能证明子会话没有被看到。关闭独立桌面时，若远程控制软件在注销期间改动了主桌面的显示缩放，仍会恢复。
 
 独立桌面可能比打开它的进程活得更久。若那个进程没确认清理就退出，Windows 子会话会残留下来，阻塞之后所有尝试——过去这表现为永久的 `task_desktop_unavailable`。现在失败会说清原因：`task_desktop_cleanup_unconfirmed` 或 `task_desktop_orphan_session`，并给出子会话 ID 和 `how_to_recover`；`task_desktop`（`task_desktop_command: "status"` / `"restart"`）用于查看状态和重建桌面，且绝不重放输入。报出孤儿会话时，先结束该会话（例如 `logoff 6`）再调用 `restart`；只要它还在，新桌面就起不来。
 
