@@ -297,14 +297,25 @@ sealed class DesktopWindow : Form
         ClientSize=new(432,300);MinimumSize=new(360,240);StartPosition=FormStartPosition.Manual;TopMost=true;Padding=new Padding(1);
         var work=Screen.PrimaryScreen!.WorkingArea;Location=new(Math.Max(work.Left,work.Right-Width-16),Math.Max(work.Top,work.Bottom-Height-16));
         BackColor=Palette.Paper; ForeColor=Palette.Ink; Font=new Font("Microsoft YaHei UI",9);
-        var top=new Panel(){Dock=DockStyle.Top,Height=36};
-        var tools=new FlowLayoutPanel(){Dock=DockStyle.Right,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Padding=new Padding(0,5,4,5),WrapContents=false};
+        var top=new Panel(){Dock=DockStyle.Top,Height=38};
+        var tools=new FlowLayoutPanel(){Dock=DockStyle.Right,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Padding=new Padding(0,6,6,6),WrapContents=false};
         loginSettings=MenuItem(UiText.MenuLoginSettings,()=>{using var dialog=new LoginSettingsDialog();dialog.ShowDialog(this);dialog.Login?.Dispose();return Task.CompletedTask;});
         windowMenu.BackColor=Palette.Paper;windowMenu.ForeColor=ForeColor;windowMenu.Font=Font;
         windowMenu.Items.Add(loginSettings);top.ContextMenuStrip=windowMenu;badge.ContextMenuStrip=windowMenu;
         controlToggle=Button(UiText.TakeOver,ToggleControl);controlToggle.Name="task-window-control";controlToggle.AccessibleName=UiText.TakeOver;
-        controlToggle.AutoSize=false;controlToggle.Size=new(58,26);controlToggle.TextAlign=ContentAlignment.MiddleCenter;
-        controlToggle.Padding=Padding.Empty;controlToggle.Margin=new Padding(2,0,6,0);controlToggle.Font=new Font("Microsoft YaHei UI",8.5f);controlToggle.TabStop=false;controlToggle.Visible=false;
+        controlToggle.AutoSize=false;controlToggle.Size=new(64,26);controlToggle.TextAlign=ContentAlignment.MiddleCenter;
+        controlToggle.Padding=Padding.Empty;controlToggle.Margin=new Padding(2,0,8,0);controlToggle.Font=new Font("Microsoft YaHei UI",8.5f);controlToggle.TabStop=false;controlToggle.Visible=false;
+        controlToggle.FlatAppearance.BorderSize=0;controlToggle.FlatAppearance.MouseOverBackColor=Palette.Paper;controlToggle.FlatAppearance.MouseDownBackColor=Palette.Paper;
+        bool controlHot=false;
+        controlToggle.MouseEnter+=(_,_)=>{controlHot=true;controlToggle.Invalidate();};
+        controlToggle.MouseLeave+=(_,_)=>{controlHot=false;controlToggle.Invalidate();};
+        controlToggle.Paint+=(_,e)=>{
+            bool highlighted=takeover||awaitingHuman;
+            Color bg=highlighted?(controlHot?ControlPaint.Dark(Palette.Accent,0.08f):Palette.Accent):(controlHot?Palette.Hover:Palette.PaperTile);
+            Color fg=highlighted?Color.White:Palette.Ink;
+            Color bd=highlighted?bg:Palette.Line;
+            PaintPillButton(e.Graphics,controlToggle.ClientRectangle,controlToggle.Text,controlToggle.Font,bg,fg,bd);
+        };
         windowSize=Button("",()=>{ToggleWindowSize();return Task.CompletedTask;});windowSize.Name="task-window-size";windowSize.AccessibleName=UiText.ResizeToggle;
         windowSize.Paint+=(_,e)=>PaintGlyph(e.Graphics,windowSize.ClientRectangle,expanded?Glyph.Restore:Glyph.Expand);
         pinWindow=Button("",()=>{TopMost=!TopMost;pinWindow!.Invalidate();return Task.CompletedTask;});pinWindow.Name="task-window-pin";pinWindow.AccessibleName=UiText.PinToggle;
@@ -405,6 +416,20 @@ sealed class DesktopWindow : Form
     // and looks nothing like the rest of the product; these are fixed 20x20
     // strokes on a 1.4px grid in the same ink as the labels.
     enum Glyph { Expand, Restore, Pin, Close }
+    static void PaintPillButton(Graphics g,Rectangle bounds,string text,Font font,Color fill,Color ink,Color border)
+    {
+        g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.Clear(Palette.Paper);
+        var rect=new RectangleF(0.5f,0.5f,Math.Max(1,bounds.Width-1.5f),Math.Max(1,bounds.Height-1.5f));
+        float r=rect.Height/2f;
+        using var path=new System.Drawing.Drawing2D.GraphicsPath();
+        path.AddArc(rect.X,rect.Y,r*2,r*2,90,180);
+        path.AddArc(rect.Right-r*2,rect.Y,r*2,r*2,270,180);
+        path.CloseFigure();
+        using(var brush=new SolidBrush(fill))g.FillPath(brush,path);
+        using(var pen=new Pen(border,1f))g.DrawPath(pen,path);
+        TextRenderer.DrawText(g,text,font,bounds,ink,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter|TextFormatFlags.SingleLine|TextFormatFlags.NoPadding);
+    }
     static void PaintGlyph(Graphics g,Rectangle bounds,Glyph glyph,bool active=false,Color? ink=null)
     {
         g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
@@ -462,31 +487,20 @@ sealed class DesktopWindow : Form
         if(takeover){
             controlToggle.Text=UiText.ResumeHosting;
             controlToggle.AccessibleName=UiText.ResumeHosting;
-            controlToggle.BackColor=Palette.Accent;
-            controlToggle.ForeColor=Color.White;
-            controlToggle.FlatAppearance.BorderColor=Palette.Accent;
-            controlToggle.FlatAppearance.MouseOverBackColor=ControlPaint.Dark(Palette.Accent,0.08f);
             windowHints.SetToolTip(controlToggle,UiText.HintResumeHosting);
         } else if(awaitingHuman){
             controlToggle.Text=UiText.TakeOver;
             controlToggle.AccessibleName=UiText.TakeOver;
-            controlToggle.BackColor=Palette.Accent;
-            controlToggle.ForeColor=Color.White;
-            controlToggle.FlatAppearance.BorderColor=Palette.Accent;
-            controlToggle.FlatAppearance.MouseOverBackColor=ControlPaint.Dark(Palette.Accent,0.08f);
             windowHints.SetToolTip(controlToggle,UiText.HintAwaitingHuman);
         } else {
             controlToggle.Text=UiText.TakeOver;
             controlToggle.AccessibleName=UiText.TakeOver;
-            controlToggle.BackColor=Palette.Paper;
-            controlToggle.ForeColor=Palette.Ink;
-            controlToggle.FlatAppearance.BorderColor=Palette.Line;
-            controlToggle.FlatAppearance.MouseOverBackColor=Palette.Hover;
             windowHints.SetToolTip(controlToggle,UiText.HintTakeOver);
         }
         int btnH=Math.Max(26,windowSize.Height);
-        int textW=TextRenderer.MeasureText(controlToggle.Text,controlToggle.Font,Size.Empty,TextFormatFlags.SingleLine).Width;
-        controlToggle.Size=new Size(textW+Math.Max(20,btnH),btnH);
+        int textW=TextRenderer.MeasureText(controlToggle.Text,controlToggle.Font,Size.Empty,TextFormatFlags.SingleLine|TextFormatFlags.NoPadding).Width;
+        controlToggle.Size=new Size(textW+Math.Max(24,btnH),btnH);
+        controlToggle.Invalidate();
         if(view!=null)view.AllowUserInput=takeover;
         Program.Emit(new{ @event="state",state=Snapshot()});
     }

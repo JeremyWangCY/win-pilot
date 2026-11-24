@@ -8,17 +8,17 @@
 // too.
 static class Palette
 {
-    internal static readonly System.Drawing.Color Paper     = System.Drawing.Color.FromArgb(0xFF,0xFF,0xFF); // neutral-bluish-00
-    internal static readonly System.Drawing.Color PaperTile = System.Drawing.Color.FromArgb(0xF9,0xFA,0xFB); // neutral-bluish-50
-    internal static readonly System.Drawing.Color Ink       = System.Drawing.Color.FromArgb(0x0F,0x11,0x15); // neutral-bluish-1000, also brand-primary
-    internal static readonly System.Drawing.Color InkSoft   = System.Drawing.Color.FromArgb(0x61,0x66,0x6B); // neutral-bluish-700, label-secondary
-    internal static readonly System.Drawing.Color InkFaint  = System.Drawing.Color.FromArgb(0x97,0x9D,0xA6); // neutral-bluish-500
-    internal static readonly System.Drawing.Color Line      = System.Drawing.Color.FromArgb(0xE1,0xE5,0xEE); // neutral-bluish-200
-    internal static readonly System.Drawing.Color LineSoft  = System.Drawing.Color.FromArgb(0xEB,0xEE,0xF2); // neutral-bluish-100
-    // State dot tones, shared with the status pill so both surfaces read the same.
-    internal static readonly System.Drawing.Color Accent    = System.Drawing.Color.FromArgb(0x56,0x86,0xFE); // deepseek-450
-    internal static readonly System.Drawing.Color Amber     = System.Drawing.Color.FromArgb(0xF5,0xB0,0x42);
-    internal static readonly System.Drawing.Color Hover     = System.Drawing.Color.FromArgb(0xF1,0xF3,0xF5); // neutral-bluish-75
-    internal static readonly System.Drawing.Color Danger    = System.Drawing.Color.FromArgb(0xEF,0x44,0x44); // static-red-500
-    internal static readonly System.Drawing.Color Shadow    = System.Drawing.Color.FromArgb(0x1A,0x00,0x00,0x00); // border-l2
+    internal static readonly System.Drawing.Color Paper     = System.Drawing.Color.FromArgb(0xFF,0xFF,0xFF); // warm studio surface
+    internal static readonly System.Drawing.Color PaperTile = System.Drawing.Color.FromArgb(0xF6,0xF5,0xF1); // warm stone subtle surface
+    internal static readonly System.Drawing.Color Ink       = System.Drawing.Color.FromArgb(0x1C,0x1B,0x18); // warm charcoal primary
+    internal static readonly System.Drawing.Color InkSoft   = System.Drawing.Color.FromArgb(0x6B,0x67,0x5E); // warm stone secondary
+    internal static readonly System.Drawing.Color InkFaint  = System.Drawing.Color.FromArgb(0x9C,0x9A,0x92); // warm stone tertiary
+    internal static readonly System.Drawing.Color Line      = System.Drawing.Color.FromArgb(0xE7,0xE5,0xDE); // warm stone border
+    internal static readonly System.Drawing.Color LineSoft  = System.Drawing.Color.FromArgb(0xF0,0xEF,0xEA); // warm stone hairline
+    // Single cobalt accent + amber for active manual takeover dot.
+    internal static readonly System.Drawing.Color Accent    = System.Drawing.Color.FromArgb(0x3B,0x6E,0xF6);
+    internal static readonly System.Drawing.Color Amber     = System.Drawing.Color.FromArgb(0xD9,0x77,0x06);
+    internal static readonly System.Drawing.Color Hover     = System.Drawing.Color.FromArgb(0xF2,0xF1,0xEC);
+    internal static readonly System.Drawing.Color Danger    = System.Drawing.Color.FromArgb(0xDC,0x26,0x26);
+    internal static readonly System.Drawing.Color Shadow    = System.Drawing.Color.FromArgb(0x1A,0x1C,0x1B,0x18);
 }
