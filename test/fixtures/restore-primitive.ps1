@@ -14,7 +14,7 @@ $helper = Join-Path $PSScriptRoot '..\..\lib\win-pilot-helper.ps1'
 # the next class.
 $src = Get-Content $helper -Raw
 $body = $null
-foreach ($m in [regex]::Matches($src, "(?s)Add-Type -TypeDefinition @'\r?\n(.*?)\r?\n'@")) {
+foreach ($m in [regex]::Matches($src, "(?s)-TypeDefinition @'\r?\n(.*?)\r?\n'@")) {
   if ($m.Groups[1].Value -match 'class DshWin32') { $body = $m.Groups[1].Value; break }
 }
 if (-not $body) { Write-Output 'FAIL: DshWin32 type definition not found in the helper bundle'; exit 1 }

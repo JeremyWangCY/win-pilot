@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $bundle = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../../lib/win-pilot-helper.ps1'))
-$definition = [regex]::Match($bundle, "(?s)Add-Type -TypeDefinition @'\r?\n(.*?)\r?\n'@")
+$definition = [regex]::Match($bundle, "(?s)-TypeDefinition @'\r?\n(.*?)\r?\n'@")
 if (-not $definition.Success) { throw 'Native helper Add-Type source was not found' }
 Add-Type -TypeDefinition $definition.Groups[1].Value
 Add-Type -AssemblyName System.Windows.Forms
