@@ -1557,14 +1557,25 @@ function Invoke-ActionRequest {
       # as a URI scheme, so only treat it as a protocol when the colon is not
       # followed by a slash.
       $isActivationProtocol = $filePath -match '^[A-Za-z][A-Za-z0-9+.-]*:(?![\\/])'
+      if (-not $isActivationProtocol -and $filePath -notmatch '[\\/]' -and $env:LOCALAPPDATA) {
+        $aliasName = if ($filePath -match '\.[A-Za-z0-9]+$') { $filePath } else { "$filePath.exe" }
+        $aliasPath = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\$aliasName"
+        if (Test-Path -LiteralPath $aliasPath) { $filePath = $aliasPath }
+      }
       [WinPilotInputMonitor]::Check(); [WinPilotInputMonitor]::MarkDispatched()
       if ($foregroundLaunch) {
-        $proc = if ($isActivationProtocol) {
-          Start-Process -FilePath explorer.exe -ArgumentList $filePath -WindowStyle Normal -PassThru
-        } elseif ($argList.Count -gt 0) {
-          Start-Process -FilePath $filePath -ArgumentList $argList -WindowStyle Normal -PassThru
-        } else {
-          Start-Process -FilePath $filePath -WindowStyle Normal -PassThru
+        try {
+          $proc = if ($isActivationProtocol) {
+            Start-Process -FilePath explorer.exe -ArgumentList $filePath -WindowStyle Normal -PassThru
+          } elseif ($argList.Count -gt 0) {
+            Start-Process -FilePath $filePath -ArgumentList $argList -WindowStyle Normal -PassThru
+          } else {
+            Start-Process -FilePath $filePath -WindowStyle Normal -PassThru
+          }
+        } catch {
+          $inner = $_.Exception.InnerException
+          $reason = if ($inner) { $inner.Message } else { $_.Exception.Message }
+          throw "launch_failed: $filePath ($reason)"
         }
       } else {
         $launchArgs = if ($argList.Count -gt 0) { [string]::Join(' ', [string[]]$argList) } else { '' }

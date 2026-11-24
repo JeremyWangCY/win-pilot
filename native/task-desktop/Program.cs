@@ -98,9 +98,10 @@ static class Native
     [DllImport("user32.dll",CharSet=CharSet.Unicode)]internal static extern int GetWindowTextW(IntPtr hwnd,StringBuilder text,int maxCount);
     [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint process);
     [DllImport("kernel32.dll")] internal static extern bool ProcessIdToSessionId(uint process,out uint session);
-    internal static bool WindowBelongsToSession(IntPtr window,uint session){
+    internal static bool WindowBelongsToOtherSession(IntPtr window,uint session){
+        if(!IsWindow(window))return false;
         GetWindowThreadProcessId(window,out uint process);
-        return IsWindow(window)&&ProcessIdToSessionId(process,out uint actual)&&actual==session;
+        return !ProcessIdToSessionId(process,out uint actual)||actual!=session;
     }
     [DllImport("user32.dll")] internal static extern short VkKeyScanW(char ch);
     [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
@@ -983,7 +984,9 @@ static class Worker
                 else if(paused&&Native.Mutation(msg["request"]?["action"]?.ToString()??""))result=Program.Fail("task_desktop_paused","任务已暂停。");
                 // HWND lookup must run inside the target session: the host has
                 // a different window namespace, even for an identical number.
-                else if(msg["request"]?["hwnd"] is JsonValue window&&!Native.WindowBelongsToSession(new IntPtr(window.GetValue<long>()),(uint)session))result=Program.Fail("task_desktop_wrong_window","窗口不属于独立任务桌面。");
+                // A closed window (!IsWindow) belongs to no session and must pass
+                // through so close_window postconditions see window_not_found.
+                else if(msg["request"]?["hwnd"] is JsonValue window&&Native.WindowBelongsToOtherSession(new IntPtr(window.GetValue<long>()),(uint)session))result=Program.Fail("task_desktop_wrong_window","窗口不属于独立任务桌面。");
                 else {
                     var request=msg["request"]!.DeepClone().AsObject();request["id"]=id;
                     activeCancel=Path.Combine(Path.GetTempPath(),"win-pilot","task-cancel-"+Guid.NewGuid()+".signal");Directory.CreateDirectory(Path.GetDirectoryName(activeCancel)!);
