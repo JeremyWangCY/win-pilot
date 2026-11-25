@@ -9,9 +9,9 @@ DeepSeek Harness 0.2.0-rc.2+ is the primary integration. In Settings → Win-Pil
 | Current / 当前桌面 | Background-first; model schemas, skills and diagnostics do not advertise an alternate desktop. 后台优先，不向 AI 提供独立桌面选项。 |
 | Task / 独立任务桌面 | All native actions, clipboard, observation and recovery use the owned child session. Failure does not fall back to the main desktop. 操作及观察绑定同一子会话，失败不转到主桌面。 |
 
-The compact light window has no native caption. Expand to interact directly. Before manual input is delivered, the worker confirms AI input has stopped. After 10 seconds without input and without a held key/button, the AI can resume. Pin changes always-on-top; close ends only the owned task session. Right-click the toolbar for local sign-in settings.
+The compact light window has no native caption. Expand and collapse are view-only. Click Take over before any input is delivered; that click waits until the worker confirms AI input has stopped. Hand back is the only return to the AI. There is no 10-second idle hand-back. A held key or mouse button blocks Hand back from completing. Pin changes always-on-top; close ends only the owned task session. Right-click the toolbar for local sign-in settings.
 
-浅色小窗去掉原生标题栏。放大后直接操作；首次手动输入会等待 AI 停止确认。空闲10秒且没有按住鼠标或按键后，AI 可继续。置顶按钮切换置顶，关闭只清理本窗口拥有的任务会话。右键工具栏可进入本机登录设置。
+浅色小窗去掉原生标题栏。放大和缩小都只可查看。点击接管后才会交付输入，并等待执行工具确认 AI 已停止。交还托管是交回 AI 的唯一路径，没有 10 秒空闲交还。按住按键或鼠标按钮时交还不会完成。置顶按钮切换置顶，关闭只清理本窗口拥有的任务会话。右键工具栏可进入本机登录设置。
 
 Windows feature setup may require one UAC authorization. Optional remembered sign-in uses current-user DPAPI and an application-owned Credential Manager entry. Passwords are entered only in the local dialog and do not pass through model messages. Changed Windows users, passwords or policy can require setup again. .NET 8 Windows Desktop Runtime and supported Windows child sessions are required.
 
@@ -75,9 +75,9 @@ Windows 没有任何接口能把子会话对其他程序保留起来。UU 远程
 - **创建会话之前**：某个活动会话的 `WTSClientProtocolType` 非 0 且**不是**我们的子会话，才是真正的外部远程会话（远程桌面等）。仅用 `WTSGetActiveConsoleSessionId` 不够：子会话活动时它仍返回控制台会话号。
 - **会话运行期间**：子会话本身就是回环 RDP、按定义处于活动状态，所以它的存在绝不能当作暴露——否则每次正常运行都会被拦截。真正的证据是远控串流进程（UU 的 `GameViewerServer`、AnyDesk、ToDesk、RustDesk 等）运行在子会话**内部**，手机接入时正是这个状态。
 
-`remoteControlPolicy` chooses the outcome: `fallback` (default) runs the action on the current desktop and reports `remote_control_fallback`; `refuse` returns `task_desktop_remote_in_use` without running anything. Both decisions are made before a child session exists, so the remote screen cannot move. The reverse order — desktop already open, remote attaches afterwards — is reported by `inspectExposure()` instead of being silently tolerated.
+`remoteControlPolicy` chooses the outcome when this heuristic already sees a conflict. `fallback` (default) runs the action on the current desktop and reports `remote_control_fallback`; `refuse` returns `task_desktop_remote_in_use` without running anything. Refusing open or login happens before a child session exists. If a viewer attaches after the desktop is open, `inspectExposure()` applies the same policy to the next action. That does not disconnect the viewer and does not prove the child session was unseen.
 
-`remoteControlPolicy` 决定处理方式：`fallback`（默认）改在当前桌面执行并回报 `remote_control_fallback`；`refuse` 直接返回 `task_desktop_remote_in_use`，不执行任何动作。两种判断都发生在子会话创建之前，因此远程画面不会被带走。反向顺序——桌面已存在、之后才接入远控——由 `inspectExposure()` 报告，而不是静默容忍。
+`remoteControlPolicy` 按同一启发式处理已看到的冲突：`fallback`（默认）改在当前桌面执行并回报 `remote_control_fallback`；`refuse` 直接返回 `task_desktop_remote_in_use`，不执行任何动作。拒绝打开或登录发生在子会话创建之前。桌面已经打开之后才有人接入时，`inspectExposure()` 对下一步动作使用同一策略。这不会断开观看者，也不能证明子会话没有被看到。
 
 Measured on 2026-10-29: with the phone attached, `status` reported `remote_in_use`/`allow=false` for the live child session and `login` was refused before any native host started.
 
