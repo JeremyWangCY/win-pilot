@@ -99,4 +99,22 @@ function fixture({sid=3}={}) {
   await p.close()
 }
 
-console.log('task desktop recovery check PASSED (crashed host replaced, closed provider restarted, recovery hints present)')
+// 5. Explicit command('close') tears down the host, confirms cleanup, resets to idle, and allows reopening later.
+{
+  const f=fixture(),p=createTaskDesktopProvider({inspectSessions,spawn:f.spawn,inspectHost:()=>({available:true})})
+  assert.equal((await p.execute('list_windows')).ok,true)
+  assert.equal(f.spawns,1)
+  const tornDown=await p.command('close')
+  assert.equal(tornDown.ok,true,JSON.stringify(tornDown))
+  assert.equal(tornDown.closed,true)
+  assert.equal(tornDown.cleanup_confirmed,true)
+  assert.equal(tornDown.state,'idle')
+  assert.equal(p.isTerminal(),false,'explicit close resets provider to idle instead of terminal')
+  const idleAgain=await p.command('close')
+  assert.equal(idleAgain.ok,true,'closing an already-idle task desktop is an idempotent no-op')
+  assert.equal((await p.execute('list_windows')).ok,true,'a later task can reopen seamlessly after explicit close')
+  assert.equal(f.spawns,2)
+  await p.close()
+}
+
+console.log('task desktop recovery check PASSED (crashed host replaced, closed provider restarted, explicit close resets to idle)')

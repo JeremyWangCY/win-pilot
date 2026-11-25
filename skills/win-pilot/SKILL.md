@@ -46,3 +46,5 @@ A native JavaScript dialog blocks the whole page: `browser_click` returns `dialo
 ## Human hand-off
 
 When a step requires manual user action (sign-in, 2FA, CAPTCHA, UAC, payment, or confirmation), call `hand_off` (with `reason`) to pause AI and highlight the **Take over** button in the task desktop window, tell the user what to do, and call `wait_for_control` to wait until the user clicks **Hand back**; re-observe once control returns.
+
+When finished with an isolated Task Desktop session, call `task_desktop` with `task_desktop_command: "close"` to close the task window and log off its Windows child session cleanly.
